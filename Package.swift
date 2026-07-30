@@ -22,5 +22,6 @@ let package = Package(
             resources: [.copy("Resources")]
         ),
         .testTarget(name: "EpubKitTests", dependencies: ["EpubKit"]),
+        .testTarget(name: "ReaderUITests", dependencies: ["ReaderUI", "EpubKit"]),
     ]
 )

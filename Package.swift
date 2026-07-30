@@ -15,5 +15,6 @@ let package = Package(
             name: "EpubKit",
             dependencies: [.product(name: "ZIPFoundation", package: "ZIPFoundation")]
         ),
+        .testTarget(name: "EpubKitTests", dependencies: ["EpubKit"]),
     ]
 )

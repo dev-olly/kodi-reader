@@ -159,12 +159,15 @@ final class AppModel {
 
     // MARK: - Annotations
 
-    func addHighlight(color: HighlightColor) {
+    /// Creates a highlight from the current selection and clears it.
+    /// Returns the new annotation so the UI can open the note editor immediately.
+    @discardableResult
+    func addHighlight(color: HighlightColor) -> Annotation? {
         guard
             let reader,
             let selection = reader.selection,
             let bookID = book?.bookID
-        else { return }
+        else { return nil }
 
         let annotation = Annotation(
             locator: selection.locator,
@@ -174,6 +177,7 @@ final class AppModel {
         )
         mutateAnnotations(bookID: bookID) { $0.append(annotation) }
         reader.clearSelection()
+        return annotation
     }
 
     func updateNote(_ note: String, for id: UUID) {

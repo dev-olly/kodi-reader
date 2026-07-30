@@ -1,9 +1,10 @@
 import EpubKit
 import SwiftUI
 
-/// Colour picker shown next to a fresh selection.
+/// Colour picker shown next to a fresh selection, plus a way to open a note.
 struct HighlightPalette: View {
     let onPick: (HighlightColor) -> Void
+    let onAddNote: () -> Void
     let onDismiss: () -> Void
 
     var body: some View {
@@ -15,6 +16,16 @@ struct HighlightPalette: View {
                 .buttonStyle(.plain)
                 .help(color.displayName)
             }
+
+            Divider().frame(height: 20)
+
+            Button(action: onAddNote) {
+                Label("Note", systemImage: "text.badge.plus")
+                    .labelStyle(.titleAndIcon)
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .help("Highlight and add a note")
 
             Divider().frame(height: 20)
 
@@ -50,14 +61,16 @@ struct HighlightPalette: View {
     }
 }
 
-/// Note editor shown when a highlight is clicked.
+/// Note editor shown when creating or editing a highlight's note.
 struct NoteEditor: View {
     let annotation: Annotation
+    var autofocus: Bool = false
     let onSave: (String) -> Void
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
 
     @State private var text: String = ""
+    @FocusState private var isNoteFocused: Bool
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -93,6 +106,7 @@ struct NoteEditor: View {
                 .scrollContentBackground(.hidden)
                 .padding(6)
                 .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
+                .focused($isNoteFocused)
                 .overlay(alignment: .topLeading) {
                     if text.isEmpty {
                         Text("Add a note…")
@@ -115,7 +129,13 @@ struct NoteEditor: View {
         }
         .padding(16)
         .frame(width: 330)
-        .onAppear { text = annotation.note ?? "" }
+        .onAppear {
+            text = annotation.note ?? ""
+            if autofocus {
+                // Let the popover finish presenting before stealing focus.
+                DispatchQueue.main.async { isNoteFocused = true }
+            }
+        }
     }
 }
 
@@ -133,7 +153,7 @@ struct AnnotationsInspector: View {
                 ContentUnavailableView(
                     "No Notes Yet",
                     systemImage: "highlighter",
-                    description: Text("Select text while reading to highlight it.")
+                    description: Text("Select text while reading to highlight it and add a note.")
                 )
             } else {
                 List {
@@ -174,36 +194,50 @@ struct AnnotationsInspector: View {
     }
 
     private func row(for annotation: Annotation) -> some View {
-        Button { onSelect(annotation.locator) } label: {
-            HStack(alignment: .top, spacing: 10) {
-                RoundedRectangle(cornerRadius: 2)
-                    .fill(annotation.color.swiftUIColor)
-                    .frame(width: 4)
+        HStack(alignment: .top, spacing: 10) {
+            Button { onSelect(annotation.locator) } label: {
+                HStack(alignment: .top, spacing: 10) {
+                    RoundedRectangle(cornerRadius: 2)
+                        .fill(annotation.color.swiftUIColor)
+                        .frame(width: 4)
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(annotation.text)
-                        .font(.callout)
-                        .lineLimit(3)
-                    if let note = annotation.note, !note.isEmpty {
-                        Text(note)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(2)
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(annotation.text)
+                            .font(.callout)
+                            .lineLimit(3)
+                        if let note = annotation.note, !note.isEmpty {
+                            Text(note)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+                        if let chapter = annotation.chapterTitle {
+                            Text(chapter)
+                                .font(.caption2)
+                                .foregroundStyle(.tertiary)
+                        }
                     }
-                    if let chapter = annotation.chapterTitle {
-                        Text(chapter)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
+                    Spacer(minLength: 0)
                 }
-                Spacer(minLength: 0)
+                .padding(.vertical, 3)
+                .contentShape(.rect)
             }
-            .padding(.vertical, 3)
-            .contentShape(.rect)
+            .buttonStyle(.plain)
+
+            Button {
+                onEdit(annotation)
+            } label: {
+                Image(systemName: annotation.hasNote ? "note.text" : "square.and.pencil")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .help(annotation.hasNote ? "Edit note" : "Add note")
         }
-        .buttonStyle(.plain)
         .contextMenu {
-            Button("Edit Note…") { onEdit(annotation) }
+            Button(annotation.hasNote ? "Edit Note…" : "Add Note…") { onEdit(annotation) }
             Button("Copy Text") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(annotation.text, forType: .string)

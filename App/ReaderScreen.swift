@@ -11,6 +11,8 @@ struct ReaderScreen: View {
     @Environment(AppModel.self) private var model
     @State private var isShowingTypography = false
     @State private var editingAnnotation: Annotation?
+    /// True when the note editor was opened from the selection palette's Add Note.
+    @State private var noteEditorAutofocus = false
     @State private var chromeVisible = true
 
     var body: some View {
@@ -28,7 +30,7 @@ struct ReaderScreen: View {
                 annotations: model.record?.annotations ?? [],
                 bookmarks: model.record?.bookmarks ?? [],
                 onSelect: { reader.go(to: $0) },
-                onEdit: { editingAnnotation = $0 },
+                onEdit: { openNoteEditor($0, autofocus: !$0.hasNote) },
                 onDelete: { model.deleteAnnotation($0.id) }
             )
             .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
@@ -64,6 +66,7 @@ struct ReaderScreen: View {
         .popover(item: $editingAnnotation) { annotation in
             NoteEditor(
                 annotation: annotation,
+                autofocus: noteEditorAutofocus,
                 onSave: { model.updateNote($0, for: annotation.id) },
                 onChangeColor: { model.changeColor($0, for: annotation.id) },
                 onDelete: {
@@ -80,11 +83,17 @@ struct ReaderScreen: View {
     private var selectionPopover: some View {
         if let selection = reader.selection {
             HighlightPalette(
-                onPick: { model.addHighlight(color: $0) },
+                onPick: { _ = model.addHighlight(color: $0) },
+                onAddNote: {
+                    // Yellow is the default highlight colour when noting in one step.
+                    if let created = model.addHighlight(color: .yellow) {
+                        openNoteEditor(created, autofocus: true)
+                    }
+                },
                 onDismiss: { reader.clearSelection() }
             )
             .offset(
-                x: max(12, selection.rect.midX - 130),
+                x: max(12, selection.rect.midX - 160),
                 y: max(12, selection.rect.maxY + 10)
             )
             .transition(.scale(scale: 0.94).combined(with: .opacity))
@@ -92,7 +101,13 @@ struct ReaderScreen: View {
     }
 
     private func handleHighlightActivated(id: UUID, rect: CGRect) {
-        editingAnnotation = model.annotation(with: id)
+        guard let annotation = model.annotation(with: id) else { return }
+        openNoteEditor(annotation, autofocus: !annotation.hasNote)
+    }
+
+    private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
+        noteEditorAutofocus = autofocus
+        editingAnnotation = annotation
     }
 
     // MARK: - Toolbar

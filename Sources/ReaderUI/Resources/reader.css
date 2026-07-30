@@ -1,0 +1,210 @@
+/*
+ * Reader chrome injected into every spine document.
+ *
+ * Pagination is a CSS multi-column layout: the body becomes a column box one
+ * viewport tall, content overflows sideways into further columns, and turning
+ * a page scrolls the document by exactly one viewport width.
+ *
+ * The stride only equals the viewport width if the column gap is twice the
+ * horizontal margin, so reader.js always derives --column-gap that way. With
+ * that invariant, one and two column layouts both advance by 100vw.
+ */
+
+:root {
+  --page-margin-x: 72px;
+  --page-margin-y: 56px;
+  --column-gap: 144px; /* kept at 2 * --page-margin-x by reader.js */
+  --column-width: 600px;
+
+  --font-size: 19px;
+  --line-height: 1.6;
+  --font-family: -apple-system, "SF Pro Text", "Iowan Old Style", Georgia, serif;
+  --paragraph-spacing: 0.6em;
+  --text-align: start;
+  --hyphens: auto;
+
+  --color-text: #1c1b19;
+  --color-background: #fbf8f3;
+  --color-link: #1a6fd4;
+  --color-selection: rgba(88, 172, 250, 0.35);
+}
+
+html {
+  /* Programmatic scrollLeft still works with hidden overflow, which gives us
+     paging without ever showing a scrollbar. */
+  overflow: hidden;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  background-color: var(--color-background);
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+body {
+  box-sizing: border-box;
+  height: 100vh;
+  margin: 0;
+  padding: var(--page-margin-y) var(--page-margin-x);
+
+  column-width: var(--column-width);
+  column-gap: var(--column-gap);
+  column-fill: auto;
+
+  font-family: var(--font-family);
+  font-size: var(--font-size);
+  line-height: var(--line-height);
+  color: var(--color-text);
+  background-color: var(--color-background);
+  text-align: var(--text-align);
+  hyphens: var(--hyphens);
+  -webkit-hyphens: var(--hyphens);
+  word-wrap: break-word;
+
+  /* Selection is driven by our own popover, so suppress the callout. */
+  -webkit-touch-callout: none;
+}
+
+::selection {
+  background-color: var(--color-selection);
+}
+
+/*
+ * The book's own colours rarely suit a dark theme, so descendants inherit
+ * ours instead.
+ *
+ * `body` must not be in this list: it would inherit from <html>, which has no
+ * colour of its own, and so override the theme colour set above. That reads
+ * fine on a light theme, where the default black is what you wanted anyway,
+ * and turns a dark theme into black text on a black page.
+ */
+body p,
+body div,
+body span,
+body li,
+body td,
+body th,
+body blockquote,
+body h1,
+body h2,
+body h3,
+body h4,
+body h5,
+body h6 {
+  color: inherit;
+  background-color: transparent;
+}
+
+p {
+  margin-top: 0;
+  margin-bottom: var(--paragraph-spacing);
+  orphans: 2;
+  widows: 2;
+}
+
+a {
+  color: var(--color-link);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Headings must not straddle a page boundary. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  break-inside: avoid;
+  break-after: avoid;
+  line-height: 1.25;
+}
+
+/* Nothing may exceed one page, or content would be clipped between columns. */
+img,
+svg,
+video,
+canvas,
+table,
+pre {
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--page-margin-y));
+  break-inside: avoid;
+}
+
+img,
+svg {
+  height: auto;
+  object-fit: contain;
+}
+
+pre,
+code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/* Page-break hints from the book itself. */
+.page-break,
+[style*="page-break-before"] {
+  break-before: column;
+}
+
+/*
+ * Highlight overlay.
+ *
+ * Rects are absolutely positioned in document coordinates and painted over
+ * the text. Compositing them with multiply (or screen on dark themes) keeps
+ * the glyphs legible through the tint, the way a real highlighter behaves,
+ * and painting on top is what lets a click reach the rect to open its note.
+ * The layer itself ignores pointer events so only the rects are targets.
+ */
+#reader-highlight-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.reader-highlight-rect {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+  mix-blend-mode: var(--highlight-blend-mode, multiply);
+  transition: filter 120ms ease;
+}
+
+.reader-highlight-rect:hover {
+  filter: brightness(0.94);
+}
+
+.reader-highlight-rect[data-style="underline"] {
+  background-color: transparent !important;
+  border-bottom: 2px solid var(--highlight-underline-color, #e5a50a);
+  border-radius: 0;
+}
+
+.reader-highlight-rect[data-has-note="true"]::after {
+  content: "";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #e5a50a;
+  mix-blend-mode: normal;
+}

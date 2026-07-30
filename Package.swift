@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "EpubKit", targets: ["EpubKit"]),
+        .library(name: "ReaderUI", targets: ["ReaderUI"]),
     ],
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.20"),
@@ -15,6 +16,7 @@ let package = Package(
             name: "EpubKit",
             dependencies: [.product(name: "ZIPFoundation", package: "ZIPFoundation")]
         ),
+        .target(name: "ReaderUI", dependencies: ["EpubKit"]),
         .testTarget(name: "EpubKitTests", dependencies: ["EpubKit"]),
     ]
 )

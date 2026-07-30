@@ -1,0 +1,47 @@
+name: Folio
+options:
+  bundleIdPrefix: com.olly
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+  groupSortPosition: top
+  # Xcode 16 introduced project format 77, which earlier Xcodes refuse to open.
+  # The 15.3 format is readable by every Xcode from 15 through 26, so the
+  # project builds regardless of which toolchain is selected.
+  projectFormat: xcode15_3
+
+packages:
+  EpubReaderCore:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    DEAD_CODE_STRIPPING: YES
+    ENABLE_HARDENED_RUNTIME: YES
+    # Personal build; signed to run locally rather than for distribution.
+    CODE_SIGN_IDENTITY: "-"
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  # Deliberately not "Books", which would collide with Apple's own app in
+  # Spotlight, the Dock, and `open -a`.
+  Folio:
+    type: application
+    platform: macOS
+    sources:
+      - path: App
+    dependencies:
+      - package: EpubReaderCore
+        product: EpubKit
+      - package: EpubReaderCore
+        product: ReaderUI
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.olly.Folio
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Folio.entitlements
+        ENABLE_PREVIEWS: YES
+        COMBINE_HIDPI_IMAGES: YES

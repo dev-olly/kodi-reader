@@ -140,4 +140,16 @@ final class EPUBBookTests: XCTestCase {
             }
         }
     }
+
+    func testMissingFileIsAccessErrorNotBadArchive() {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("missing-\(UUID().uuidString).epub")
+        XCTAssertFalse(FileManager.default.fileExists(atPath: url.path))
+
+        XCTAssertThrowsError(try EPUBBook(fileURL: url)) { error in
+            guard case .cannotAccessFile = error as? EPUBError else {
+                return XCTFail("Expected cannotAccessFile, got \(error)")
+            }
+        }
+    }
 }

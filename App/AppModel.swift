@@ -58,6 +58,12 @@ final class AppModel {
 
         let didScope = url.startAccessingSecurityScopedResource()
         do {
+            // Without a security scope the sandbox cannot read user-selected
+            // files after relaunch; fail early with a clear message.
+            if !didScope, !FileManager.default.isReadableFile(atPath: url.path) {
+                throw EPUBError.cannotAccessFile(url)
+            }
+
             let book = try EPUBBook(fileURL: url)
             let existing = store.record(for: book.bookID)
 
@@ -70,11 +76,8 @@ final class AppModel {
             record.author = book.author
             record.lastOpenedAt = Date()
             record.lastKnownPath = url.path
-            record.fileBookmark = try? url.bookmarkData(
-                options: .withSecurityScope,
-                includingResourceValuesForKeys: nil,
-                relativeTo: nil
-            )
+            record.fileBookmark = makeSecurityScopedBookmark(for: url)
+                ?? existing?.fileBookmark
             store.upsert(record)
 
             let controller = ReaderController(settings: settings)
@@ -93,24 +96,63 @@ final class AppModel {
     }
 
     /// Reopens a book from the recents list using its saved bookmark.
+    ///
+    /// Bare path fallbacks are unsafe under the sandbox: without a
+    /// security-scoped bookmark the file is visible but unreadable, which used
+    /// to surface as a bogus “not a readable EPUB” error. When the bookmark is
+    /// missing or dead, ask the user to locate the file again.
     func reopen(_ record: BookRecord) {
         if let data = record.fileBookmark {
             var isStale = false
-            if let url = try? URL(
-                resolvingBookmarkData: data,
-                options: .withSecurityScope,
-                relativeTo: nil,
-                bookmarkDataIsStale: &isStale
-            ) {
+            do {
+                let url = try URL(
+                    resolvingBookmarkData: data,
+                    options: [.withSecurityScope],
+                    relativeTo: nil,
+                    bookmarkDataIsStale: &isStale
+                )
                 open(url: url)
                 return
+            } catch {
+                // Fall through to Locate…
             }
         }
-        if let path = record.lastKnownPath, FileManager.default.fileExists(atPath: path) {
-            open(url: URL(fileURLWithPath: path))
-            return
+
+        locateAndOpen(record)
+    }
+
+    /// Asks the user to re-grant access to a book whose bookmark is missing.
+    private func locateAndOpen(_ record: BookRecord) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.epub]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        panel.prompt = "Locate"
+        panel.message = "Folio needs permission to open “\(record.title)” again. Choose the EPUB file."
+
+        if let path = record.lastKnownPath {
+            let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
+            if FileManager.default.fileExists(atPath: directory.path) {
+                panel.directoryURL = directory
+            }
+            panel.nameFieldStringValue = URL(fileURLWithPath: path).lastPathComponent
         }
-        errorMessage = "\"\(record.title)\" could not be found. It may have been moved or deleted."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        open(url: url)
+    }
+
+    /// Creates an app-scoped bookmark so Recents can reopen the file later.
+    private func makeSecurityScopedBookmark(for url: URL) -> Data? {
+        do {
+            return try url.bookmarkData(
+                options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+                includingResourceValuesForKeys: nil,
+                relativeTo: nil
+            )
+        } catch {
+            return nil
+        }
     }
 
     func closeBook() {
@@ -242,8 +284,10 @@ final class AppModel {
     /// Markdown export of every annotation that has a note body.
     func exportNotesMarkdown() -> String {
         let title = book?.title ?? record?.title ?? "Untitled"
+        let author = book?.author ?? record?.author ?? "Unknown Author"
         return NoteMarkdown.exportDocument(
             bookTitle: title,
+            author: author,
             annotations: record?.annotations ?? []
         )
     }

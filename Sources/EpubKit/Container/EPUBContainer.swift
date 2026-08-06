@@ -20,7 +20,7 @@ public final class EPUBContainer: @unchecked Sendable {
         do {
             archive = try Archive(url: fileURL, accessMode: .read)
         } catch {
-            throw EPUBError.notAZipArchive(fileURL)
+            throw Self.mapOpenError(error, fileURL: fileURL)
         }
 
         var index: [String: Entry] = [:]
@@ -28,6 +28,37 @@ public final class EPUBContainer: @unchecked Sendable {
             index[entry.path.lowercased()] = entry
         }
         entriesByLowercasedPath = index
+    }
+
+    /// Permission / missing-file failures must not be reported as a bad EPUB.
+    private static func mapOpenError(_ error: Error, fileURL: URL) -> EPUBError {
+        let nsError = error as NSError
+        if isAccessError(nsError) {
+            return .cannotAccessFile(fileURL)
+        }
+        // Some ZIP failures wrap the underlying Cocoa error.
+        if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+           isAccessError(underlying) {
+            return .cannotAccessFile(fileURL)
+        }
+        return .notAZipArchive(fileURL)
+    }
+
+    private static func isAccessError(_ error: NSError) -> Bool {
+        if error.domain == NSCocoaErrorDomain {
+            switch error.code {
+            case NSFileReadNoPermissionError,
+                 NSFileReadNoSuchFileError,
+                 NSFileNoSuchFileError:
+                return true
+            default:
+                break
+            }
+        }
+        if error.domain == NSPOSIXErrorDomain {
+            return error.code == Int(EACCES) || error.code == Int(EPERM) || error.code == Int(ENOENT)
+        }
+        return false
     }
 
     public func contains(_ path: String) -> Bool {

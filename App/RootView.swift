@@ -38,7 +38,17 @@ struct RootView: View {
 
     private func loadDroppedBook(from providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
-        _ = provider.loadObject(ofClass: URL.self) { url, _ in
+        // Prefer the file URL representation so the drop carries a
+        // security-scoped bookmark Folio can persist for Recents.
+        provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+            let url: URL?
+            if let data = item as? Data {
+                url = URL(dataRepresentation: data, relativeTo: nil)
+            } else if let itemURL = item as? URL {
+                url = itemURL
+            } else {
+                url = nil
+            }
             guard let url, url.pathExtension.lowercased() == "epub" else { return }
             DispatchQueue.main.async { model.open(url: url) }
         }

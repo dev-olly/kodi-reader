@@ -2,6 +2,9 @@ import Foundation
 
 public enum EPUBError: LocalizedError, Equatable {
     case notAZipArchive(URL)
+    /// The file exists (or did) but the process cannot read it — typical when
+    /// a sandboxed app loses its security-scoped bookmark.
+    case cannotAccessFile(URL)
     case missingContainerXML
     case missingRootFile
     case missingOPF(String)
@@ -13,6 +16,8 @@ public enum EPUBError: LocalizedError, Equatable {
         switch self {
         case let .notAZipArchive(url):
             return "\"\(url.lastPathComponent)\" is not a readable EPUB archive."
+        case let .cannotAccessFile(url):
+            return "Folio doesn’t have permission to read \"\(url.lastPathComponent)\". Open it again with File → Open, or choose Locate when prompted from Recents."
         case .missingContainerXML:
             return "The archive is missing META-INF/container.xml, so it is not a valid EPUB."
         case .missingRootFile:

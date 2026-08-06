@@ -1,5 +1,7 @@
+import AppKit
 import EpubKit
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Colour picker shown next to a fresh selection, plus a way to open a note.
 struct HighlightPalette: View {
@@ -61,91 +63,35 @@ struct HighlightPalette: View {
     }
 }
 
-/// Note editor shown when creating or editing a highlight's note.
-struct NoteEditor: View {
-    let annotation: Annotation
-    var autofocus: Bool = false
-    let onSave: (String) -> Void
-    let onChangeColor: (HighlightColor) -> Void
-    let onDelete: () -> Void
+private enum NotesFilter: String, CaseIterable, Identifiable {
+    case all
+    case withNotes
+    case highlightsOnly
 
-    @State private var text: String = ""
-    @FocusState private var isNoteFocused: Bool
-    @Environment(\.dismiss) private var dismiss
+    var id: String { rawValue }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text(annotation.text)
-                .font(.callout)
-                .italic()
-                .lineLimit(4)
-                .foregroundStyle(.secondary)
-
-            Divider()
-
-            HStack(spacing: 8) {
-                ForEach(HighlightColor.allCases, id: \.self) { color in
-                    Button { onChangeColor(color) } label: {
-                        Circle()
-                            .fill(color == .underline ? Color.clear : color.swiftUIColor)
-                            .frame(width: 18, height: 18)
-                            .overlay {
-                                Circle().strokeBorder(
-                                    annotation.color == color ? Color.accentColor : .black.opacity(0.15),
-                                    lineWidth: annotation.color == color ? 2 : 1
-                                )
-                            }
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-
-            TextEditor(text: $text)
-                .font(.body)
-                .frame(height: 110)
-                .scrollContentBackground(.hidden)
-                .padding(6)
-                .background(.quaternary.opacity(0.4), in: .rect(cornerRadius: 6))
-                .focused($isNoteFocused)
-                .overlay(alignment: .topLeading) {
-                    if text.isEmpty {
-                        Text("Add a note…")
-                            .foregroundStyle(.tertiary)
-                            .padding(.horizontal, 11)
-                            .padding(.vertical, 12)
-                            .allowsHitTesting(false)
-                    }
-                }
-
-            HStack {
-                Button("Delete Highlight", role: .destructive) { onDelete() }
-                Spacer()
-                Button("Done") {
-                    onSave(text)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(16)
-        .frame(width: 330)
-        .onAppear {
-            text = annotation.note ?? ""
-            if autofocus {
-                // Let the popover finish presenting before stealing focus.
-                DispatchQueue.main.async { isNoteFocused = true }
-            }
+    var label: String {
+        switch self {
+        case .all: return "All"
+        case .withNotes: return "With notes"
+        case .highlightsOnly: return "Highlights only"
         }
     }
 }
 
-/// Sidebar listing every highlight and bookmark in the book.
+/// Sidebar listing bookmarks and a searchable notes library for the open book.
 struct AnnotationsInspector: View {
     let annotations: [Annotation]
     let bookmarks: [Bookmark]
+    let chapterTitles: [String]
     let onSelect: (Locator) -> Void
     let onEdit: (Annotation) -> Void
     let onDelete: (Annotation) -> Void
+    let onExport: () -> Void
+
+    @State private var query = ""
+    @State private var filter: NotesFilter = .all
+    @State private var chapterFilter: String = ""
 
     var body: some View {
         Group {
@@ -156,41 +102,104 @@ struct AnnotationsInspector: View {
                     description: Text("Select text while reading to highlight it and add a note.")
                 )
             } else {
-                List {
-                    if !bookmarks.isEmpty {
-                        Section("Bookmarks") {
-                            ForEach(bookmarks) { bookmark in
-                                Button { onSelect(bookmark.locator) } label: {
-                                    Label(
-                                        bookmark.chapterTitle ?? "Bookmark",
-                                        systemImage: "bookmark.fill"
-                                    )
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(.rect)
+                VStack(spacing: 0) {
+                    controls
+                    List {
+                        if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
+                            Section("Bookmarks") {
+                                ForEach(bookmarks) { bookmark in
+                                    Button { onSelect(bookmark.locator) } label: {
+                                        Label(
+                                            bookmark.chapterTitle ?? "Bookmark",
+                                            systemImage: "bookmark.fill"
+                                        )
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(.rect)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
-                    }
 
-                    if !annotations.isEmpty {
-                        Section("Highlights") {
-                            ForEach(sortedAnnotations) { annotation in
-                                row(for: annotation)
+                        Section("Notes") {
+                            if filteredAnnotations.isEmpty {
+                                Text("No matches")
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                ForEach(filteredAnnotations) { annotation in
+                                    row(for: annotation)
+                                }
                             }
                         }
                     }
+                    .listStyle(.inset)
                 }
-                .listStyle(.inset)
             }
         }
         .navigationTitle("Notes")
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button(action: onExport) {
+                    Label("Export", systemImage: "square.and.arrow.up")
+                }
+                .help("Export notes as Markdown")
+                .disabled(annotations.filter(\.hasNote).isEmpty)
+            }
+        }
     }
 
-    private var sortedAnnotations: [Annotation] {
-        annotations.sorted {
-            ($0.locator.spineIndex, $0.createdAt) < ($1.locator.spineIndex, $1.createdAt)
+    private var controls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            TextField("Search notes", text: $query)
+                .textFieldStyle(.roundedBorder)
+
+            Picker("Filter", selection: $filter) {
+                ForEach(NotesFilter.allCases) { item in
+                    Text(item.label).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+
+            if !chapterTitles.isEmpty {
+                Picker("Chapter", selection: $chapterFilter) {
+                    Text("All chapters").tag("")
+                    ForEach(chapterTitles, id: \.self) { title in
+                        Text(title).tag(title)
+                    }
+                }
+                .labelsHidden()
+            }
         }
+        .padding(12)
+    }
+
+    private var filteredAnnotations: [Annotation] {
+        annotations
+            .sorted {
+                ($0.locator.spineIndex, $0.createdAt) < ($1.locator.spineIndex, $1.createdAt)
+            }
+            .filter { annotation in
+                switch filter {
+                case .all: break
+                case .withNotes:
+                    if !annotation.hasNote { return false }
+                case .highlightsOnly:
+                    if annotation.hasNote { return false }
+                }
+
+                if !chapterFilter.isEmpty, annotation.chapterTitle != chapterFilter {
+                    return false
+                }
+
+                guard !query.isEmpty else { return true }
+                let haystack = [
+                    annotation.text,
+                    annotation.note ?? "",
+                    annotation.chapterTitle ?? "",
+                ].joined(separator: "\n")
+                return haystack.localizedCaseInsensitiveContains(query)
+            }
     }
 
     private func row(for annotation: Annotation) -> some View {
@@ -202,11 +211,19 @@ struct AnnotationsInspector: View {
                         .frame(width: 4)
 
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(annotation.text)
-                            .font(.callout)
-                            .lineLimit(3)
-                        if let note = annotation.note, !note.isEmpty {
-                            Text(note)
+                        HStack(spacing: 6) {
+                            Text(annotation.title)
+                                .font(.callout.weight(.medium))
+                                .lineLimit(3)
+                            if annotation.isOrphaned {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.orange)
+                                    .help("Quote not found in chapter")
+                            }
+                        }
+                        if annotation.hasNote {
+                            Text(annotation.plainNotePreview)
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
@@ -238,9 +255,15 @@ struct AnnotationsInspector: View {
         }
         .contextMenu {
             Button(annotation.hasNote ? "Edit Note…" : "Add Note…") { onEdit(annotation) }
-            Button("Copy Text") {
+            Button("Copy Quote") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(annotation.text, forType: .string)
+            }
+            if annotation.hasNote {
+                Button("Copy Note") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(annotation.note ?? "", forType: .string)
+                }
             }
             Divider()
             Button("Delete", role: .destructive) { onDelete(annotation) }
@@ -258,5 +281,20 @@ extension HighlightColor {
         case .purple: return Color(red: 0.75, green: 0.56, blue: 0.98)
         case .underline: return Color(red: 0.90, green: 0.65, blue: 0.04)
         }
+    }
+}
+
+/// Presents a save panel and writes the book's notes as Markdown.
+enum NotesExporter {
+    static func presentSavePanel(bookTitle: String, markdown: String) {
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.plainText]
+        panel.canCreateDirectories = true
+        panel.isExtensionHidden = false
+        panel.nameFieldStringValue = "Notes — \(bookTitle).md"
+        panel.message = "Export notes as Markdown"
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        try? markdown.write(to: url, atomically: true, encoding: .utf8)
     }
 }

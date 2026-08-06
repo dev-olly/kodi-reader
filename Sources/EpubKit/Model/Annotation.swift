@@ -1,17 +1,31 @@
 import Foundation
 
-/// A highlighted range, optionally carrying a note.
+/// Whether a highlight's locator still points at the quoted text in the book.
+public enum AnchorStatus: String, Codable, Sendable, Hashable {
+    /// Locator resolved cleanly.
+    case resolved
+    /// Locator was broken; repaired by searching for the stored quote.
+    case repaired
+    /// Quote could not be found in the chapter; note is kept, highlight is not painted.
+    case orphaned
+    /// Not yet checked this session (or loaded from an older library file).
+    case unknown
+}
+
+/// A highlighted range, optionally carrying a markdown note.
 public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID
     public var locator: Locator
-    /// The highlighted text, kept so the annotation is still meaningful in a
-    /// list and so a damaged anchor can be reported rather than silently lost.
+    /// The highlighted text — also the note's title. Immutable quote for repair.
     public var text: String
+    /// Markdown body. Plain text from older builds remains valid markdown.
     public var note: String?
     public var color: HighlightColor
     public var chapterTitle: String?
     public var createdAt: Date
     public var modifiedAt: Date
+    /// Last known anchor health; defaults to `.unknown` when decoding old JSON.
+    public var anchorStatus: AnchorStatus
 
     public init(
         id: UUID = UUID(),
@@ -21,7 +35,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         color: HighlightColor = .yellow,
         chapterTitle: String? = nil,
         createdAt: Date = Date(),
-        modifiedAt: Date = Date()
+        modifiedAt: Date = Date(),
+        anchorStatus: AnchorStatus = .unknown
     ) {
         self.id = id
         self.locator = locator
@@ -31,10 +46,21 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         self.chapterTitle = chapterTitle
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
+        self.anchorStatus = anchorStatus
     }
 
     public var hasNote: Bool {
         !(note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    public var isOrphaned: Bool { anchorStatus == .orphaned }
+
+    /// Quote used as the note title in the UI.
+    public var title: String { text }
+
+    /// Note body with common markdown markers stripped, for list previews.
+    public var plainNotePreview: String {
+        NoteMarkdown.plainPreview(of: note ?? "")
     }
 
     /// Shape the reader runtime expects in `__reader.setHighlights`.
@@ -43,6 +69,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
             "id": id.uuidString,
             "color": color.cssValue,
             "style": color == .underline ? "underline" : "fill",
+            "text": text,
             "start": [
                 "elementPath": locator.start.elementPath,
                 "offset": locator.start.offset,
@@ -53,6 +80,148 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         }
         if hasNote { payload["note"] = note }
         return payload
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(UUID.self, forKey: .id)
+        locator = try container.decode(Locator.self, forKey: .locator)
+        text = try container.decode(String.self, forKey: .text)
+        note = try container.decodeIfPresent(String.self, forKey: .note)
+        color = try container.decode(HighlightColor.self, forKey: .color)
+        chapterTitle = try container.decodeIfPresent(String.self, forKey: .chapterTitle)
+        createdAt = try container.decode(Date.self, forKey: .createdAt)
+        modifiedAt = try container.decode(Date.self, forKey: .modifiedAt)
+        // Older library files omit this field.
+        anchorStatus = try container.decodeIfPresent(AnchorStatus.self, forKey: .anchorStatus) ?? .unknown
+    }
+}
+
+/// Markdown helpers shared by the editor, inspector, and export.
+public enum NoteMarkdown {
+    /// Strips a small set of markdown markers for list previews.
+    public static func plainPreview(of markdown: String) -> String {
+        var text = markdown
+        let patterns = [
+            #"\*\*(.+?)\*\*"#,
+            #"__(.+?)__"#,
+            #"\*(.+?)\*"#,
+            #"_(.+?)_"#,
+            #"\[(.+?)\]\(.+?\)"#,
+            #"^#{1,6}\s+"#,
+            #"^[-*+]\s+"#,
+            #"^\d+\.\s+"#,
+            #"`([^`]+)`"#,
+        ]
+        for pattern in patterns {
+            text = text.replacingOccurrences(
+                of: pattern,
+                with: "$1",
+                options: [.regularExpression]
+            )
+        }
+        return text
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Wraps `selection` with `prefix`/`suffix`, or inserts markers around the caret.
+    public static func wrap(
+        _ source: String,
+        selection: Range<String.Index>,
+        prefix: String,
+        suffix: String
+    ) -> (text: String, selection: Range<String.Index>) {
+        let selected = String(source[selection])
+        let replacement = prefix + selected + suffix
+        var result = source
+        result.replaceSubrange(selection, with: replacement)
+        let start = selection.lowerBound
+        let end = result.index(start, offsetBy: replacement.count)
+        if selected.isEmpty {
+            // Place caret between the markers.
+            let caret = result.index(start, offsetBy: prefix.count)
+            return (result, caret..<caret)
+        }
+        return (result, start..<end)
+    }
+
+    /// Prefixes each line of the selection (or the current line) with `marker`.
+    public static func prefixLines(
+        _ source: String,
+        selection: Range<String.Index>,
+        marker: String
+    ) -> (text: String, selection: Range<String.Index>) {
+        let lineStart = source[..<selection.lowerBound].lastIndex(of: "\n").map {
+            source.index(after: $0)
+        } ?? source.startIndex
+        let lineEnd = source[selection.upperBound...].firstIndex(of: "\n") ?? source.endIndex
+        let block = String(source[lineStart..<lineEnd])
+        let lines = block.split(separator: "\n", omittingEmptySubsequences: false)
+        let numbered = marker.hasSuffix(". ")
+        let rewritten = lines.enumerated().map { index, line -> String in
+            let content = String(line)
+            if numbered {
+                if content.range(of: #"^\d+\.\s"#, options: .regularExpression) != nil {
+                    return content
+                }
+                return "\(index + 1). " + content
+            }
+            if content.hasPrefix(marker) { return content }
+            return marker + content
+        }.joined(separator: "\n")
+
+        var result = source
+        result.replaceSubrange(lineStart..<lineEnd, with: rewritten)
+        let end = result.index(lineStart, offsetBy: rewritten.count)
+        return (result, lineStart..<end)
+    }
+
+    /// Builds a markdown export for every annotation that has a note body.
+    public static func exportDocument(bookTitle: String, annotations: [Annotation]) -> String {
+        var parts: [String] = ["# Notes — \(bookTitle)", ""]
+        let noted = annotations
+            .filter(\.hasNote)
+            .sorted {
+                ($0.locator.spineIndex, $0.createdAt) < ($1.locator.spineIndex, $1.createdAt)
+            }
+
+        if noted.isEmpty {
+            parts.append("_No notes yet._")
+            parts.append("")
+            return parts.joined(separator: "\n")
+        }
+
+        for annotation in noted {
+            parts.append("## \(annotation.text)")
+            if let chapter = annotation.chapterTitle, !chapter.isEmpty {
+                parts.append("*\(chapter)*")
+                parts.append("")
+            }
+            parts.append(annotation.note ?? "")
+            parts.append("")
+            parts.append("---")
+            parts.append("")
+        }
+        return parts.joined(separator: "\n")
+    }
+}
+
+/// Result of resolving one highlight in the current spine document.
+public struct AnchorResolution: Sendable, Hashable {
+    public var id: UUID
+    public var status: AnchorStatus
+    /// Present when the locator was repaired.
+    public var locator: Locator?
+
+    public init(id: UUID, status: AnchorStatus, locator: Locator? = nil) {
+        self.id = id
+        self.status = status
+        self.locator = locator
     }
 }
 

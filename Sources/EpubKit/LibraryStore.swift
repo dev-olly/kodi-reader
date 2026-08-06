@@ -6,8 +6,12 @@ import Foundation
 /// even after years of reading, and a plain file keeps the app dependency-free
 /// and the data trivially inspectable and backup-friendly.
 public final class LibraryStore: @unchecked Sendable {
+    /// Current on-disk schema. v1 notes decode as-is; missing `anchorStatus`
+    /// defaults to `.unknown` on the Annotation type.
+    public static let currentVersion = 2
+
     private struct Payload: Codable {
-        var version: Int = 1
+        var version: Int = LibraryStore.currentVersion
         var books: [String: BookRecord] = [:]
         var settingsJSON: Data?
     }
@@ -18,6 +22,13 @@ public final class LibraryStore: @unchecked Sendable {
     private let lock = NSLock()
     /// Coalesces the frequent position updates that arrive while reading.
     private var pendingSave: DispatchWorkItem?
+
+    /// Schema version of the loaded (or empty) store.
+    public var schemaVersion: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return payload.version
+    }
 
     public convenience init(applicationName: String = "EpubReader") throws {
         let support = try FileManager.default.url(
@@ -38,7 +49,15 @@ public final class LibraryStore: @unchecked Sendable {
 
     private static func load(from url: URL) -> Payload? {
         guard let data = try? Data(contentsOf: url) else { return nil }
-        return try? JSONDecoder().decode(Payload.self, from: data)
+        guard var payload = try? JSONDecoder().decode(Payload.self, from: data) else {
+            return nil
+        }
+        // v1 → v2 is a no-op body migration: Annotation.anchorStatus is optional
+        // on decode. Bumping the version ensures the next write stamps v2.
+        if payload.version < currentVersion {
+            payload.version = currentVersion
+        }
+        return payload
     }
 
     // MARK: - Books

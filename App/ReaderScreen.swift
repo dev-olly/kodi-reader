@@ -29,15 +29,42 @@ struct ReaderScreen: View {
             AnnotationsInspector(
                 annotations: model.record?.annotations ?? [],
                 bookmarks: model.record?.bookmarks ?? [],
+                chapterTitles: chapterTitles,
                 onSelect: { reader.go(to: $0) },
                 onEdit: { openNoteEditor($0, autofocus: !$0.hasNote) },
-                onDelete: { model.deleteAnnotation($0.id) }
+                onDelete: { model.deleteAnnotation($0.id) },
+                onExport: {
+                    NotesExporter.presentSavePanel(
+                        bookTitle: book.title,
+                        markdown: model.exportNotesMarkdown()
+                    )
+                }
             )
-            .inspectorColumnWidth(min: 260, ideal: 320, max: 420)
+            .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
         }
         .toolbar { toolbarContent }
         .task { model.startReading() }
         .onAppear { reader.onHighlightActivated = handleHighlightActivated }
+        .sheet(item: $editingAnnotation) { annotation in
+            // Re-read from the model so color/status updates while the sheet is open.
+            NoteSheet(
+                annotation: model.annotation(with: annotation.id) ?? annotation,
+                autofocus: noteEditorAutofocus,
+                onSave: { model.updateNote($0, for: annotation.id) },
+                onChangeColor: { model.changeColor($0, for: annotation.id) },
+                onDelete: {
+                    model.deleteAnnotation(annotation.id)
+                    editingAnnotation = nil
+                }
+            )
+        }
+    }
+
+    private var chapterTitles: [String] {
+        let titles = (model.record?.annotations ?? [])
+            .compactMap(\.chapterTitle)
+            .filter { !$0.isEmpty }
+        return Array(Set(titles)).sorted()
     }
 
     // MARK: - Page
@@ -63,18 +90,6 @@ struct ReaderScreen: View {
         .overlay(alignment: .topLeading) { selectionPopover }
         .animation(.easeInOut(duration: 0.18), value: chromeVisible)
         .animation(.easeInOut(duration: 0.18), value: reader.isLoading)
-        .popover(item: $editingAnnotation) { annotation in
-            NoteEditor(
-                annotation: annotation,
-                autofocus: noteEditorAutofocus,
-                onSave: { model.updateNote($0, for: annotation.id) },
-                onChangeColor: { model.changeColor($0, for: annotation.id) },
-                onDelete: {
-                    model.deleteAnnotation(annotation.id)
-                    editingAnnotation = nil
-                }
-            )
-        }
     }
 
     /// Anchored to the selection's own rect, which the runtime reports in
@@ -85,7 +100,6 @@ struct ReaderScreen: View {
             HighlightPalette(
                 onPick: { _ = model.addHighlight(color: $0) },
                 onAddNote: {
-                    // Yellow is the default highlight colour when noting in one step.
                     if let created = model.addHighlight(color: .yellow) {
                         openNoteEditor(created, autofocus: true)
                     }

@@ -200,7 +200,9 @@
     var node = document.body;
     for (var i = 0; i < path.length; i++) {
       var next = node.childNodes[path[i]];
-      if (!next) return node;
+      // A missing step must fail hard: falling back to a parent would make a
+      // broken locator look resolved and skip quote-based repair.
+      if (!next) return null;
       node = next;
     }
     return node;
@@ -298,6 +300,7 @@
   function rangeFromPosition(position) {
     try {
       var node = nodeAtPath(position.elementPath || []);
+      if (!node) return null;
       var range = document.createRange();
       var maxOffset =
         node.nodeType === Node.TEXT_NODE
@@ -314,8 +317,11 @@
 
   function rangeFromLocator(locator) {
     try {
-      var startNode = nodeAtPath(locator.start.elementPath || []);
-      var endNode = nodeAtPath((locator.end || locator.start).elementPath || []);
+      var startNode = nodeAtPath((locator.start && locator.start.elementPath) || []);
+      var endNode = nodeAtPath(
+        ((locator.end || locator.start) && (locator.end || locator.start).elementPath) || []
+      );
+      if (!startNode || !endNode) return null;
       var range = document.createRange();
 
       var startMax =
@@ -327,8 +333,11 @@
           ? endNode.textContent.length
           : endNode.childNodes.length;
 
-      range.setStart(startNode, clamp(locator.start.offset || 0, 0, startMax));
-      range.setEnd(endNode, clamp((locator.end || locator.start).offset || 0, 0, endMax));
+      range.setStart(startNode, clamp((locator.start && locator.start.offset) || 0, 0, startMax));
+      range.setEnd(
+        endNode,
+        clamp(((locator.end || locator.start) && (locator.end || locator.start).offset) || 0, 0, endMax)
+      );
       return range.collapsed ? null : range;
     } catch (error) {
       return null;
@@ -453,21 +462,136 @@
     renderHighlights();
   }
 
+  function normalizeWhitespace(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /*
+   * When a locator is stale, find the stored quote in the document and rebuild
+   * a locator from the first match. Whitespace is collapsed so soft hyphens
+   * and line breaks in the EPUB do not defeat the search.
+   */
+  function rangeFromQuote(quote) {
+    var needle = normalizeWhitespace(quote);
+    if (!needle) return null;
+
+    var layer = document.getElementById(LAYER_ID);
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        if (!node.textContent || !node.textContent.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    var nodes = [];
+    var full = "";
+    var map = []; // full-string index → { node, offset }
+    var node;
+    while ((node = walker.nextNode())) {
+      var text = node.textContent;
+      for (var i = 0; i < text.length; i++) {
+        var ch = text.charAt(i);
+        if (/\s/.test(ch)) {
+          if (full.length === 0 || full.charAt(full.length - 1) === " ") continue;
+          full += " ";
+          map.push({ node: node, offset: i });
+        } else {
+          full += ch;
+          map.push({ node: node, offset: i });
+        }
+      }
+      nodes.push(node);
+    }
+    full = full.replace(/\s+$/, "");
+
+    var index = full.indexOf(needle);
+    if (index < 0) return null;
+
+    var startInfo = map[index];
+    var endInfo = map[index + needle.length - 1];
+    if (!startInfo || !endInfo) return null;
+
+    try {
+      var range = document.createRange();
+      range.setStart(startInfo.node, startInfo.offset);
+      range.setEnd(endInfo.node, endInfo.offset + 1);
+      return range;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function locatorPayloadFromRange(range) {
+    return {
+      start: {
+        elementPath: pathOfNode(range.startContainer),
+        offset: range.startOffset,
+      },
+      end: {
+        elementPath: pathOfNode(range.endContainer),
+        offset: range.endOffset,
+      },
+    };
+  }
+
+  /*
+   * Resolve each highlight: use the locator when it still works, otherwise
+   * repair from the stored quote, otherwise mark orphaned and skip painting.
+   */
+  function resolveHighlight(highlight) {
+    var range = rangeFromLocator(highlight);
+    if (range) {
+      return { status: "resolved", range: range, locator: null };
+    }
+
+    if (highlight.text) {
+      var repaired = rangeFromQuote(highlight.text);
+      if (repaired) {
+        return {
+          status: "repaired",
+          range: repaired,
+          locator: locatorPayloadFromRange(repaired),
+        };
+      }
+    }
+
+    return { status: "orphaned", range: null, locator: null };
+  }
+
   function renderHighlights() {
     var layer = highlightLayer();
     layer.textContent = "";
-    if (state.highlights.length === 0) return;
+    if (state.highlights.length === 0) {
+      post({ type: "highlightsResolved", results: [] });
+      return;
+    }
 
     var scrollLeft = document.documentElement.scrollLeft;
     var scrollTop = document.documentElement.scrollTop;
     var fragment = document.createDocumentFragment();
+    var results = [];
 
     for (var i = 0; i < state.highlights.length; i++) {
       var highlight = state.highlights[i];
-      var range = rangeFromLocator(highlight);
-      if (!range) continue;
+      var resolved = resolveHighlight(highlight);
+      var entry = { id: highlight.id, status: resolved.status };
+      if (resolved.locator) entry.locator = resolved.locator;
+      results.push(entry);
 
-      var rects = range.getClientRects();
+      if (!resolved.range) continue;
+
+      // Keep the in-memory highlight locator updated so later paints work.
+      if (resolved.locator) {
+        highlight.start = resolved.locator.start;
+        highlight.end = resolved.locator.end;
+      }
+
+      var rects = resolved.range.getClientRects();
       for (var r = 0; r < rects.length; r++) {
         var rect = rects[r];
         if (rect.width < 1 || rect.height < 1) continue;
@@ -489,6 +613,7 @@
       }
     }
     layer.appendChild(fragment);
+    post({ type: "highlightsResolved", results: results });
   }
 
   // ----------------------------------------------------------------- theme

@@ -149,6 +149,9 @@ final class AppModel {
         controller.onSettingsChanged = { [weak self] updated in
             self?.settings = updated
         }
+        controller.onAnchorsResolved = { [weak self] resolutions in
+            self?.applyAnchorResolutions(resolutions)
+        }
     }
 
     /// Called once the reader view is on screen and able to load content.
@@ -182,10 +185,14 @@ final class AppModel {
 
     func updateNote(_ note: String, for id: UUID) {
         guard let bookID = book?.bookID else { return }
-        mutateAnnotations(bookID: bookID) { annotations in
+        mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
             guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
             annotations[index].note = note.isEmpty ? nil : note
             annotations[index].modifiedAt = Date()
+        }
+        // Refresh the note-dot on painted highlights without a full re-resolve.
+        if let annotations = record?.annotations {
+            reader?.setAnnotations(annotations)
         }
     }
 
@@ -207,12 +214,52 @@ final class AppModel {
         record?.annotations.first { $0.id == id }
     }
 
-    private func mutateAnnotations(bookID: String, _ transform: (inout [Annotation]) -> Void) {
+    /// Persists locator repairs and orphan/resolved status from the reader runtime.
+    func applyAnchorResolutions(_ resolutions: [AnchorResolution]) {
+        guard let bookID = book?.bookID, var record, !resolutions.isEmpty else { return }
+
+        var changed = false
+        for resolution in resolutions {
+            guard let index = record.annotations.firstIndex(where: { $0.id == resolution.id }) else {
+                continue
+            }
+            if record.annotations[index].anchorStatus != resolution.status {
+                record.annotations[index].anchorStatus = resolution.status
+                changed = true
+            }
+            if let locator = resolution.locator, record.annotations[index].locator != locator {
+                record.annotations[index].locator = locator
+                changed = true
+            }
+        }
+
+        guard changed else { return }
+        // Avoid a re-resolve loop: repairs are already painted in the web view.
+        self.record = record
+        store.update(bookID) { $0.annotations = record.annotations }
+    }
+
+    /// Markdown export of every annotation that has a note body.
+    func exportNotesMarkdown() -> String {
+        let title = book?.title ?? record?.title ?? "Untitled"
+        return NoteMarkdown.exportDocument(
+            bookTitle: title,
+            annotations: record?.annotations ?? []
+        )
+    }
+
+    private func mutateAnnotations(
+        bookID: String,
+        pushToReader: Bool = true,
+        _ transform: (inout [Annotation]) -> Void
+    ) {
         guard var record else { return }
         transform(&record.annotations)
         self.record = record
         store.update(bookID) { $0.annotations = record.annotations }
-        reader?.setAnnotations(record.annotations)
+        if pushToReader {
+            reader?.setAnnotations(record.annotations)
+        }
     }
 
     // MARK: - Bookmarks

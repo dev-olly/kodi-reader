@@ -145,9 +145,85 @@ final class HighlightTests: XCTestCase {
         )
     }
 
+    /// A broken locator should still paint when the quote exists in the chapter.
+    func testRepairsBrokenLocatorFromQuote() throws {
+        let (reader, chapter) = try loadTextChapter()
+
+        let quote = try XCTUnwrap(firstParagraphSnippet(reader), "No paragraph text to quote")
+        var resolutions: [AnchorResolution] = []
+        reader.onAnchorsResolved = { resolutions = $0 }
+
+        let broken = Annotation(
+            locator: Locator(
+                spineIndex: chapter,
+                start: TextPosition(elementPath: [999, 999], offset: 0),
+                end: TextPosition(elementPath: [999, 999], offset: 5)
+            ),
+            text: quote,
+            color: .yellow
+        )
+        reader.setAnnotations([broken])
+
+        let count = waitForNumber(
+            reader,
+            "document.querySelectorAll('.reader-highlight-rect').length"
+        ) { $0 > 0 }
+        XCTAssertGreaterThan(count ?? 0, 0, "Repaired highlight produced no rects")
+
+        XCTAssertTrue(spin(timeout: 5) { resolutions.contains { $0.status == .repaired } })
+        let repaired = try XCTUnwrap(resolutions.first { $0.status == .repaired })
+        XCTAssertNotNil(repaired.locator)
+        XCTAssertNotEqual(repaired.locator?.start.elementPath, [999, 999])
+    }
+
+    func testOrphansMissingQuote() throws {
+        let (reader, chapter) = try loadTextChapter()
+
+        var resolutions: [AnchorResolution] = []
+        reader.onAnchorsResolved = { resolutions = $0 }
+
+        reader.setAnnotations([
+            Annotation(
+                locator: Locator(
+                    spineIndex: chapter,
+                    start: TextPosition(elementPath: [999], offset: 0)
+                ),
+                text: "this-quote-definitely-does-not-exist-in-frankenstein-xyz",
+                color: .pink
+            )
+        ])
+
+        XCTAssertTrue(spin(timeout: 5) { resolutions.contains { $0.status == .orphaned } })
+        let count = waitForNumber(
+            reader,
+            "document.querySelectorAll('.reader-highlight-rect').length"
+        ) { $0 == 0 }
+        XCTAssertEqual(count, 0)
+    }
+
     // MARK: - Harness
 
     private var reportedPosition: TextPosition?
+
+    private func firstParagraphSnippet(_ reader: ReaderController) -> String? {
+        var snippet: String?
+        var settled = false
+        let script = """
+        (function () {
+          var p = document.querySelector('p');
+          if (!p) return null;
+          var text = (p.textContent || '').replace(/\\s+/g, ' ').trim();
+          return text.slice(0, 40);
+        })()
+        """
+        reader.evaluateForTesting(script) { value in
+            snippet = value as? String
+            settled = true
+        }
+        _ = spin(timeout: 5) { settled }
+        guard let snippet, snippet.count >= 12 else { return nil }
+        return snippet
+    }
 
     private func loadTextChapter() throws -> (ReaderController, Int) {
         let url = SampleBooks.url(SampleBooks.frankenstein)

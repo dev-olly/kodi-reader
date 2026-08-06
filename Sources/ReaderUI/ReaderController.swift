@@ -48,6 +48,8 @@ public final class ReaderController {
     public var onSettingsChanged: ((ReaderSettings) -> Void)?
     /// Fires when a highlight is clicked, with viewport coordinates.
     public var onHighlightActivated: ((UUID, CGRect) -> Void)?
+    /// Fires after highlights are painted, with resolve/repair/orphan results.
+    public var onAnchorsResolved: (([AnchorResolution]) -> Void)?
 
     // MARK: - Private
 
@@ -295,6 +297,8 @@ public final class ReaderController {
             selection = nil
         case "highlightTapped":
             handleHighlightTapped(body)
+        case "highlightsResolved":
+            handleHighlightsResolved(body)
         case "link":
             handleLink(body)
         case "reachedEnd":
@@ -381,6 +385,45 @@ public final class ReaderController {
             let id = UUID(uuidString: idString)
         else { return }
         onHighlightActivated?(id, decodeRect(body["rect"] as? [String: Any]))
+    }
+
+    private func handleHighlightsResolved(_ body: [String: Any]) {
+        guard let rawResults = body["results"] as? [[String: Any]] else { return }
+
+        let resolutions: [AnchorResolution] = rawResults.compactMap { raw in
+            guard
+                let idString = raw["id"] as? String,
+                let id = UUID(uuidString: idString),
+                let statusRaw = raw["status"] as? String,
+                let status = AnchorStatus(rawValue: statusRaw)
+            else { return nil }
+
+            var repaired: Locator?
+            if status == .repaired, let locatorBody = raw["locator"] as? [String: Any] {
+                guard
+                    let startRaw = locatorBody["start"] as? [String: Any],
+                    let start = decodePosition(startRaw)
+                else { return AnchorResolution(id: id, status: status) }
+                let end = (locatorBody["end"] as? [String: Any]).flatMap(decodePosition)
+                repaired = Locator(spineIndex: spineIndex, start: start, end: end)
+            }
+            return AnchorResolution(id: id, status: status, locator: repaired)
+        }
+
+        // Keep the in-memory annotation list in sync so later paints use the
+        // repaired locators without waiting for a store round-trip.
+        if !resolutions.isEmpty {
+            for resolution in resolutions {
+                guard let index = annotations.firstIndex(where: { $0.id == resolution.id }) else {
+                    continue
+                }
+                annotations[index].anchorStatus = resolution.status
+                if let locator = resolution.locator {
+                    annotations[index].locator = locator
+                }
+            }
+            onAnchorsResolved?(resolutions)
+        }
     }
 
     private func handleLink(_ body: [String: Any]) {

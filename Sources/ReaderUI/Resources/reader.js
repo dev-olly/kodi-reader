@@ -618,11 +618,90 @@
 
   // ----------------------------------------------------------------- theme
 
+  var SURFACE_ATTR = "data-reader-surface";
+  var LIGHT_BG_LUMINANCE = 0.6;
+
   function applyStyles(variables) {
     var root = document.documentElement;
     Object.keys(variables || {}).forEach(function (key) {
       root.style.setProperty(key, variables[key]);
     });
+    remapAuthorSurfaces();
+  }
+
+  function parseRGBA(color) {
+    if (!color || color === "transparent") return null;
+    var match = /^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)$/.exec(
+      color
+    );
+    if (!match) return null;
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      a: match[4] === undefined ? 1 : Number(match[4]),
+    };
+  }
+
+  function relativeLuminance(r, g, b) {
+    function channel(value) {
+      var c = value / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  }
+
+  function pageIsDark() {
+    var bg = getComputedStyle(document.documentElement).getPropertyValue("--color-background").trim();
+    if (!bg) return false;
+    // Hex from our theme variables (#rrggbb).
+    var hex = /^#([0-9a-f]{6})$/i.exec(bg);
+    if (hex) {
+      var n = parseInt(hex[1], 16);
+      return relativeLuminance((n >> 16) & 255, (n >> 8) & 255, n & 255) < 0.5;
+    }
+    var rgba = parseRGBA(bg);
+    return rgba ? relativeLuminance(rgba.r, rgba.g, rgba.b) < 0.5 : false;
+  }
+
+  function clearRemappedSurfaces() {
+    var nodes = document.querySelectorAll("[" + SURFACE_ATTR + "]");
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].style.removeProperty("background-color");
+      nodes[i].removeAttribute(SURFACE_ATTR);
+    }
+  }
+
+  function isReaderChrome(el) {
+    if (!el || el.nodeType !== 1) return true;
+    if (el.id === LAYER_ID) return true;
+    if (el.classList && (el.classList.contains("reader-highlight-rect") || el.classList.contains("reader-highlight-layer"))) {
+      return true;
+    }
+    return !!(el.closest && el.closest("#" + LAYER_ID));
+  }
+
+  /*
+   * EPUB callouts often keep a light paper fill in dark mode while we force
+   * light text — remap those fills to --color-surface so the box stays visible
+   * and readable.
+   */
+  function remapAuthorSurfaces() {
+    clearRemappedSurfaces();
+    if (!pageIsDark() || !document.body) return;
+
+    var elements = document.body.querySelectorAll("*");
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      if (isReaderChrome(el)) continue;
+
+      var rgba = parseRGBA(getComputedStyle(el).backgroundColor);
+      if (!rgba || rgba.a < 0.08) continue;
+      if (relativeLuminance(rgba.r, rgba.g, rgba.b) < LIGHT_BG_LUMINANCE) continue;
+
+      el.style.setProperty("background-color", "var(--color-surface)", "important");
+      el.setAttribute(SURFACE_ATTR, "1");
+    }
   }
 
   /* Typography changes reflow the text, so re-page around the current spot. */
@@ -632,6 +711,7 @@
       if (key in settings) settings[key] = options[key];
     });
     if (options && options.variables) applyStyles(options.variables);
+    else remapAuthorSurfaces();
     relayout(anchor);
     notifyPageChanged();
   }
@@ -700,7 +780,10 @@
           if (key in settings) settings[key] = options[key];
         });
         if (options.variables) applyStyles(options.variables);
+        else remapAuthorSurfaces();
         if (typeof options.spineIndex === "number") state.spineIndex = options.spineIndex;
+      } else {
+        remapAuthorSurfaces();
       }
 
       applyLayout();

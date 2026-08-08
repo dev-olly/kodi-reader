@@ -1,4 +1,4 @@
-# Folio
+# Kodi Reader
 
 A lightweight native EPUB reader for macOS. Paginated reading, typography and
 theme controls, and highlights with notes — without the store, the sync, or the
@@ -18,14 +18,14 @@ brew install xcodegen
 
 ```sh
 xcodegen generate
-open Folio.xcodeproj
+open KodiReader.xcodeproj
 ```
 
 Or from the command line:
 
 ```sh
 xcodegen generate
-xcodebuild -project Folio.xcodeproj -scheme Folio -configuration Debug build
+xcodebuild -project KodiReader.xcodeproj -scheme KodiReader -configuration Debug build
 ```
 
 The `.xcodeproj` is generated from `project.yml` and is not committed, so
@@ -102,8 +102,8 @@ readable. Drawing them on top rather than behind is what lets a click land on a
 highlight and open its note.
 
 **Storage** is a single JSON file in Application Support holding reading
-positions, annotations, bookmarks, and settings. Reopening a book across
-launches uses a security-scoped bookmark, since the app is sandboxed.
+positions, annotations, bookmarks, and settings. Opened books are copied into
+the app’s sandbox library so Recents can reopen them without asking again.
 
 ## Not included
 
@@ -113,10 +113,11 @@ welcome screen lists what you were reading recently.
 
 ## Renaming the app
 
-The product name lives in one place, `project.yml`:
+The product name lives in `project.yml`:
 
 ```yaml
-PRODUCT_NAME: Folio
+PRODUCT_NAME: Kodi Reader
 ```
 
-Change it and re-run `xcodegen generate`.
+Change it and re-run `xcodegen generate`. The bundle identifier (`com.olly.Folio`)
+is separate so existing sandboxed library data keeps working across renames.

@@ -31,44 +31,49 @@ public struct ReaderWebView: NSViewRepresentable {
 /// Keyboard handling for page turns.
 ///
 /// The web view swallows key events, so the shortcuts live on an invisible
-/// SwiftUI layer above it rather than in the responder chain.
+/// SwiftUI layer above it rather than in the responder chain. Disabled while
+/// the note editor is open so arrows/space move the caret instead.
 public struct ReaderKeyboardShortcuts: ViewModifier {
     private let controller: ReaderController
+    private let enabled: Bool
 
-    public init(controller: ReaderController) {
+    public init(controller: ReaderController, enabled: Bool = true) {
         self.controller = controller
+        self.enabled = enabled
     }
 
     public func body(content: Content) -> some View {
         content
             .background {
-                VStack(spacing: 0) {
-                    Button("") { controller.previousPage() }
-                        .keyboardShortcut(.leftArrow, modifiers: [])
-                    Button("") { controller.nextPage() }
-                        .keyboardShortcut(.rightArrow, modifiers: [])
-                    Button("") { controller.previousPage() }
-                        .keyboardShortcut(.upArrow, modifiers: [])
-                    Button("") { controller.nextPage() }
-                        .keyboardShortcut(.downArrow, modifiers: [])
-                    Button("") { controller.nextPage() }
-                        .keyboardShortcut(.space, modifiers: [])
-                    Button("") { controller.previousPage() }
-                        .keyboardShortcut(.space, modifiers: [.shift])
-                    Button("") { controller.previousPage() }
-                        .keyboardShortcut(.pageUp, modifiers: [])
-                    Button("") { controller.nextPage() }
-                        .keyboardShortcut(.pageDown, modifiers: [])
+                if enabled {
+                    VStack(spacing: 0) {
+                        Button("") { controller.previousPage() }
+                            .keyboardShortcut(.leftArrow, modifiers: [])
+                        Button("") { controller.nextPage() }
+                            .keyboardShortcut(.rightArrow, modifiers: [])
+                        Button("") { controller.previousPage() }
+                            .keyboardShortcut(.upArrow, modifiers: [])
+                        Button("") { controller.nextPage() }
+                            .keyboardShortcut(.downArrow, modifiers: [])
+                        Button("") { controller.nextPage() }
+                            .keyboardShortcut(.space, modifiers: [])
+                        Button("") { controller.previousPage() }
+                            .keyboardShortcut(.space, modifiers: [.shift])
+                        Button("") { controller.previousPage() }
+                            .keyboardShortcut(.pageUp, modifiers: [])
+                        Button("") { controller.nextPage() }
+                            .keyboardShortcut(.pageDown, modifiers: [])
+                    }
+                    .opacity(0)
+                    .accessibilityHidden(true)
                 }
-                .opacity(0)
-                .accessibilityHidden(true)
             }
     }
 }
 
 public extension View {
-    func readerKeyboardShortcuts(_ controller: ReaderController) -> some View {
-        modifier(ReaderKeyboardShortcuts(controller: controller))
+    func readerKeyboardShortcuts(_ controller: ReaderController, enabled: Bool = true) -> some View {
+        modifier(ReaderKeyboardShortcuts(controller: controller, enabled: enabled))
     }
 }
 #endif

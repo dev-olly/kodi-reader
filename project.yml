@@ -1,4 +1,4 @@
-name: Folio
+name: KodiReader
 options:
   bundleIdPrefix: com.olly
   deploymentTarget:
@@ -28,7 +28,7 @@ settings:
 targets:
   # Deliberately not "Books", which would collide with Apple's own app in
   # Spotlight, the Dock, and `open -a`.
-  Folio:
+  KodiReader:
     type: application
     platform: macOS
     sources:
@@ -40,8 +40,9 @@ targets:
         product: ReaderUI
     settings:
       base:
+        PRODUCT_NAME: Kodi Reader
         PRODUCT_BUNDLE_IDENTIFIER: com.olly.Folio
         INFOPLIST_FILE: App/Info.plist
-        CODE_SIGN_ENTITLEMENTS: App/Folio.entitlements
+        CODE_SIGN_ENTITLEMENTS: App/KodiReader.entitlements
         ENABLE_PREVIEWS: YES
         COMBINE_HIDPI_IMAGES: YES

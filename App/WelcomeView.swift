@@ -12,7 +12,7 @@ struct WelcomeView: View {
                     .font(.system(size: 52, weight: .thin))
                     .foregroundStyle(.tertiary)
 
-                Text("Folio")
+                Text("Kodi Reader")
                     .font(.system(size: 26, weight: .semibold, design: .serif))
 
                 Text("Drop an EPUB here, or open one to start reading.")

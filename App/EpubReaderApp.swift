@@ -1,13 +1,17 @@
+import AppKit
 import ReaderUI
 import SwiftUI
 
 @main
 struct EpubReaderApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
-        WindowGroup {
+        // Single `Window` (not WindowGroup): one reader surface, and closing
+        // the traffic-light quits instead of leaving a Dock zombie.
+        Window("Kodi Reader", id: "main") {
             RootView()
                 .environment(model)
                 .frame(minWidth: 640, minHeight: 480)
@@ -26,12 +30,11 @@ struct EpubReaderApp: App {
 
     @CommandsBuilder
     private var readerCommands: some Commands {
-        CommandGroup(replacing: .newItem) {
+        // Keep the system New Item group; only append Open / Close Book.
+        CommandGroup(after: .newItem) {
             Button("Open Book…") { model.presentOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
-        }
 
-        CommandGroup(after: .newItem) {
             Button("Close Book") { model.closeBook() }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
                 .disabled(model.book == nil)
@@ -40,13 +43,17 @@ struct EpubReaderApp: App {
         CommandMenu("Go") {
             Button("Next Page") { model.reader?.nextPage() }
                 .keyboardShortcut(.rightArrow, modifiers: [])
+                .disabled(model.isNoteEditorOpen)
             Button("Previous Page") { model.reader?.previousPage() }
                 .keyboardShortcut(.leftArrow, modifiers: [])
+                .disabled(model.isNoteEditorOpen)
             Divider()
             Button("Next Chapter") { model.reader?.goToNextChapter() }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
+                .disabled(model.isNoteEditorOpen)
             Button("Previous Chapter") { model.reader?.goToPreviousChapter() }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
+                .disabled(model.isNoteEditorOpen)
         }
 
         CommandMenu("View") {
@@ -68,6 +75,46 @@ struct EpubReaderApp: App {
                 .keyboardShortcut("+", modifiers: .command)
             Button("Smaller Text") { model.settings.fontSize = max(12, model.settings.fontSize - 1) }
                 .keyboardShortcut("-", modifiers: .command)
+        }
+    }
+}
+
+/// Quits when the last window closes and opts out of AppKit window restoration
+/// so we never resurrect the phantom AppWindow-N scenes from earlier launches.
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    private var windowObserver: NSObjectProtocol?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        // Don't reopen previously restored windows on next launch.
+        UserDefaults.standard.set(false, forKey: "NSQuitAlwaysKeepsWindows")
+    }
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        disableRestoration(on: NSApp.windows)
+        windowObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let window = note.object as? NSWindow else { return }
+            self?.disableRestoration(on: [window])
+        }
+    }
+
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        if let windowObserver {
+            NotificationCenter.default.removeObserver(windowObserver)
+        }
+    }
+
+    private func disableRestoration(on windows: [NSWindow]) {
+        for window in windows {
+            window.isRestorable = false
+            window.identifier = NSUserInterfaceItemIdentifier("kodi-reader-main")
         }
     }
 }

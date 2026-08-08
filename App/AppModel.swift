@@ -16,6 +16,8 @@ final class AppModel {
     var errorMessage: String?
     var isShowingContents = false
     var isShowingAnnotations = false
+    /// True while the note editor sheet is presented — disables page-turn shortcuts.
+    var isNoteEditorOpen = false
 
     /// Settings live outside any single book so they persist across opens.
     var settings: ReaderSettings {
@@ -64,9 +66,20 @@ final class AppModel {
                 throw EPUBError.cannotAccessFile(url)
             }
 
-            let book = try EPUBBook(fileURL: url)
-            let existing = store.record(for: book.bookID)
+            let provisional = try EPUBBook(fileURL: url)
+            // Durable copy inside the container — Recents opens this forever.
+            let importedURL = try store.importBook(from: url, bookID: provisional.bookID)
+            let readingFromImport = importedURL.resolvingSymlinksInPath().path
+                != url.resolvingSymlinksInPath().path
+            let book = readingFromImport
+                ? try EPUBBook(fileURL: importedURL)
+                : provisional
 
+            if readingFromImport, didScope {
+                url.stopAccessingSecurityScopedResource()
+            }
+
+            let existing = store.record(for: book.bookID)
             var record = existing ?? BookRecord(
                 id: book.bookID,
                 title: book.title,
@@ -75,15 +88,25 @@ final class AppModel {
             record.title = book.title
             record.author = book.author
             record.lastOpenedAt = Date()
-            record.lastKnownPath = url.path
-            record.fileBookmark = makeSecurityScopedBookmark(for: url)
-                ?? existing?.fileBookmark
+            record.importedRelativePath = LibraryStore.relativeImportedPath(for: book.bookID)
+
+            // Preserve the user's original path/bookmark when reopening an import.
+            if store.isImportedURL(url) {
+                record.lastKnownPath = existing?.lastKnownPath ?? record.lastKnownPath
+                record.fileBookmark = existing?.fileBookmark
+            } else {
+                record.lastKnownPath = url.path
+                record.fileBookmark = makeSecurityScopedBookmark(for: url)
+                    ?? existing?.fileBookmark
+            }
+
             store.upsert(record)
+            store.flush()
 
             let controller = ReaderController(settings: settings)
             wire(controller, bookID: book.bookID)
 
-            scopedURL = didScope ? url : nil
+            scopedURL = (!readingFromImport && didScope) ? url : nil
             self.book = book
             self.record = record
             reader = controller
@@ -95,13 +118,13 @@ final class AppModel {
         }
     }
 
-    /// Reopens a book from the recents list using its saved bookmark.
-    ///
-    /// Bare path fallbacks are unsafe under the sandbox: without a
-    /// security-scoped bookmark the file is visible but unreadable, which used
-    /// to surface as a bogus “not a readable EPUB” error. When the bookmark is
-    /// missing or dead, ask the user to locate the file again.
+    /// Reopens a book from Recents, preferring the imported library copy.
     func reopen(_ record: BookRecord) {
+        if let imported = store.existingImportedURL(for: record) {
+            open(url: imported)
+            return
+        }
+
         if let data = record.fileBookmark {
             var isStale = false
             do {
@@ -121,14 +144,14 @@ final class AppModel {
         locateAndOpen(record)
     }
 
-    /// Asks the user to re-grant access to a book whose bookmark is missing.
+    /// One-time re-grant for books opened before library import existed.
     private func locateAndOpen(_ record: BookRecord) {
         let panel = NSOpenPanel()
         panel.allowedContentTypes = [.epub]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Locate"
-        panel.message = "Folio needs permission to open “\(record.title)” again. Choose the EPUB file."
+        panel.message = "Kodi Reader needs permission to open “\(record.title)” again. Choose the EPUB file."
 
         if let path = record.lastKnownPath {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
@@ -142,7 +165,7 @@ final class AppModel {
         open(url: url)
     }
 
-    /// Creates an app-scoped bookmark so Recents can reopen the file later.
+    /// Best-effort bookmark of the original file; Recents does not depend on it.
     private func makeSecurityScopedBookmark(for url: URL) -> Data? {
         do {
             return try url.bookmarkData(

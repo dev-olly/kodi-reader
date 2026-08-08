@@ -5,6 +5,8 @@ import SwiftUI
 struct TableOfContentsView: View {
     let book: EPUBBook
     let reader: ReaderController
+    /// Called after the user jumps to an entry so the host can dismiss a popover.
+    var onSelect: (() -> Void)? = nil
 
     @State private var query = ""
 
@@ -25,10 +27,10 @@ struct TableOfContentsView: View {
                         outline
                     }
                 }
-                .listStyle(.sidebar)
+                .listStyle(.plain)
             }
         }
-        .searchable(text: $query, placement: .sidebar, prompt: "Search contents")
+        .searchable(text: $query, placement: .automatic, prompt: "Search contents")
         .navigationTitle("Contents")
     }
 
@@ -37,16 +39,22 @@ struct TableOfContentsView: View {
         // A flat search result list is easier to scan than a filtered tree.
         if query.isEmpty {
             ForEach(book.publication.toc) { entry in
-                TOCRow(entry: entry, reader: reader)
+                TOCRow(entry: entry, reader: reader, onSelect: jump)
             }
         } else {
             ForEach(filtered) { entry in
-                Button { reader.go(to: entry) } label: {
+                Button { jump(entry) } label: {
                     Text(entry.title).lineLimit(2)
                 }
                 .buttonStyle(.plain)
             }
         }
+    }
+
+    private func jump(_ entry: TOCEntry) {
+        guard !entry.path.isEmpty else { return }
+        reader.go(to: entry)
+        onSelect?()
     }
 
     private var filtered: [TOCEntry] {
@@ -60,6 +68,7 @@ struct TableOfContentsView: View {
 private struct TOCRow: View {
     let entry: TOCEntry
     let reader: ReaderController
+    let onSelect: (TOCEntry) -> Void
 
     var body: some View {
         if entry.children.isEmpty {
@@ -67,7 +76,7 @@ private struct TOCRow: View {
         } else {
             DisclosureGroup {
                 ForEach(entry.children) { child in
-                    TOCRow(entry: child, reader: reader)
+                    TOCRow(entry: child, reader: reader, onSelect: onSelect)
                 }
             } label: {
                 row
@@ -77,8 +86,7 @@ private struct TOCRow: View {
 
     private var row: some View {
         Button {
-            guard !entry.path.isEmpty else { return }
-            reader.go(to: entry)
+            onSelect(entry)
         } label: {
             Text(entry.title)
                 .lineLimit(2)
@@ -87,5 +95,6 @@ private struct TOCRow: View {
         }
         .buttonStyle(.plain)
         .foregroundStyle(entry.path.isEmpty ? .secondary : .primary)
+        .disabled(entry.path.isEmpty)
     }
 }

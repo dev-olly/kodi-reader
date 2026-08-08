@@ -150,6 +150,26 @@ public enum NoteMarkdown {
         return (result, start..<end)
     }
 
+    /// Wraps the selection in a fenced code block, or inserts an empty fence at the caret.
+    public static func fenceCodeBlock(
+        _ source: String,
+        selection: Range<String.Index>
+    ) -> (text: String, selection: Range<String.Index>) {
+        let selected = String(source[selection])
+        let prefix = "```\n"
+        let suffix = "\n```"
+        let replacement = prefix + selected + suffix
+        var result = source
+        result.replaceSubrange(selection, with: replacement)
+        let start = selection.lowerBound
+        if selected.isEmpty {
+            let caret = result.index(start, offsetBy: prefix.count)
+            return (result, caret..<caret)
+        }
+        let end = result.index(start, offsetBy: replacement.count)
+        return (result, start..<end)
+    }
+
     /// Prefixes each line of the selection (or the current line) with `marker`.
     public static func prefixLines(
         _ source: String,
@@ -182,8 +202,18 @@ public enum NoteMarkdown {
     }
 
     /// Builds a markdown export for every annotation that has a note body.
-    public static func exportDocument(bookTitle: String, annotations: [Annotation]) -> String {
-        var parts: [String] = ["# Notes — \(bookTitle)", ""]
+    ///
+    /// Each entry includes the highlighted passage as a blockquote and a
+    /// citation line (chapter, author, title), then the user's note.
+    public static func exportDocument(
+        bookTitle: String,
+        author: String,
+        annotations: [Annotation]
+    ) -> String {
+        let authorLine = author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? "Unknown Author"
+            : author
+        var parts: [String] = ["# Notes — \(bookTitle)", authorLine, ""]
         let noted = annotations
             .filter(\.hasNote)
             .sorted {
@@ -197,17 +227,35 @@ public enum NoteMarkdown {
         }
 
         for annotation in noted {
-            parts.append("## \(annotation.text)")
-            if let chapter = annotation.chapterTitle, !chapter.isEmpty {
-                parts.append("*\(chapter)*")
-                parts.append("")
-            }
+            let chapter = annotation.chapterTitle?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let chapterHeading = (chapter?.isEmpty == false) ? chapter! : "Untitled section"
+
+            parts.append("### \(chapterHeading)")
+            parts.append("")
+            parts.append(blockquote(annotation.text))
+            parts.append("")
+            parts.append("*— \(chapterHeading), \(authorLine), \(bookTitle)*")
+            parts.append("")
             parts.append(annotation.note ?? "")
             parts.append("")
             parts.append("---")
             parts.append("")
         }
         return parts.joined(separator: "\n")
+    }
+
+    /// Prefixes each line with `> ` for a Markdown blockquote.
+    public static func blockquote(_ text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return ">" }
+        return trimmed
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line -> String in
+                let content = String(line)
+                return content.isEmpty ? ">" : "> \(content)"
+            }
+            .joined(separator: "\n")
     }
 }
 
@@ -253,9 +301,12 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var id: String
     public var title: String
     public var author: String
-    /// Security-scoped bookmark, so a sandboxed app can reopen the file.
+    /// Security-scoped bookmark for the original user-selected file (best-effort).
     public var fileBookmark: Data?
+    /// Original path the user opened from (display / Locate hint only).
     public var lastKnownPath: String?
+    /// Copy inside Application Support, e.g. `Books/<id>.epub` — primary reopen source.
+    public var importedRelativePath: String?
     public var lastOpenedAt: Date
     public var position: Locator?
     public var progress: Double
@@ -268,6 +319,7 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         author: String,
         fileBookmark: Data? = nil,
         lastKnownPath: String? = nil,
+        importedRelativePath: String? = nil,
         lastOpenedAt: Date = Date(),
         position: Locator? = nil,
         progress: Double = 0,
@@ -279,6 +331,7 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         self.author = author
         self.fileBookmark = fileBookmark
         self.lastKnownPath = lastKnownPath
+        self.importedRelativePath = importedRelativePath
         self.lastOpenedAt = lastOpenedAt
         self.position = position
         self.progress = progress

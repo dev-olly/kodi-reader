@@ -43,22 +43,49 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(result.text, "1. one\n2. two")
     }
 
+    func testFenceCodeBlockWrapsSelection() {
+        let source = "before print() after"
+        let range = source.range(of: "print()")!
+        let result = NoteMarkdown.fenceCodeBlock(source, selection: range)
+        XCTAssertEqual(result.text, "before ```\nprint()\n``` after")
+        XCTAssertEqual(String(result.text[result.selection]), "```\nprint()\n```")
+    }
+
+    func testFenceCodeBlockEmptyCaret() {
+        let source = "ab"
+        let caret = source.index(source.startIndex, offsetBy: 1)
+        let result = NoteMarkdown.fenceCodeBlock(source, selection: caret..<caret)
+        XCTAssertEqual(result.text, "a```\n\n```b")
+        let expectedCaret = result.text.index(result.text.startIndex, offsetBy: 5) // after "a```\n"
+        XCTAssertEqual(result.selection, expectedCaret..<expectedCaret)
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),
-            text: "quoted passage",
+            text: "quoted passage\nsecond line",
             note: "My **note**",
             chapterTitle: "Chapter 1"
         )
         let markdown = NoteMarkdown.exportDocument(
             bookTitle: "Frankenstein",
+            author: "Mary Wollstonecraft Shelley",
             annotations: [annotation]
         )
         XCTAssertTrue(markdown.contains("# Notes — Frankenstein"))
-        XCTAssertTrue(markdown.contains("## quoted passage"))
-        XCTAssertTrue(markdown.contains("*Chapter 1*"))
+        XCTAssertTrue(markdown.contains("Mary Wollstonecraft Shelley"))
+        XCTAssertTrue(markdown.contains("### Chapter 1"))
+        XCTAssertTrue(markdown.contains("> quoted passage"))
+        XCTAssertTrue(markdown.contains("> second line"))
+        XCTAssertTrue(
+            markdown.contains(
+                "*— Chapter 1, Mary Wollstonecraft Shelley, Frankenstein*"
+            )
+        )
         XCTAssertTrue(markdown.contains("My **note**"))
         XCTAssertTrue(markdown.contains("---"))
+        // Quote is source material, not the section heading.
+        XCTAssertFalse(markdown.contains("## quoted passage"))
     }
 
     func testExportSkipsHighlightsWithoutNotes() {
@@ -66,9 +93,33 @@ final class NoteMarkdownTests: XCTestCase {
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [], offset: 0)),
             text: "no note here"
         )
-        let markdown = NoteMarkdown.exportDocument(bookTitle: "Book", annotations: [bare])
+        let markdown = NoteMarkdown.exportDocument(
+            bookTitle: "Book",
+            author: "Author",
+            annotations: [bare]
+        )
         XCTAssertTrue(markdown.contains("_No notes yet._"))
         XCTAssertFalse(markdown.contains("no note here"))
+    }
+
+    func testExportUsesUntitledSectionWhenChapterMissing() {
+        let annotation = Annotation(
+            locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [], offset: 0)),
+            text: "a quote",
+            note: "body"
+        )
+        let markdown = NoteMarkdown.exportDocument(
+            bookTitle: "Book",
+            author: "Author",
+            annotations: [annotation]
+        )
+        XCTAssertTrue(markdown.contains("### Untitled section"))
+        XCTAssertTrue(markdown.contains("*— Untitled section, Author, Book*"))
+    }
+
+    func testBlockquotePrefixesEachLine() {
+        XCTAssertEqual(NoteMarkdown.blockquote("one\n\ntwo"), "> one\n>\n> two")
+        XCTAssertEqual(NoteMarkdown.blockquote("  "), ">")
     }
 
     func testAnnotationDecodesWithoutAnchorStatus() throws {

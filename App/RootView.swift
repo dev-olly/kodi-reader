@@ -39,7 +39,7 @@ struct RootView: View {
     private func loadDroppedBook(from providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }
         // Prefer the file URL representation so the drop carries a
-        // security-scoped bookmark Folio can persist for Recents.
+        // security-scoped bookmark Kodi Reader can persist for Recents.
         provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
             let url: URL?
             if let data = item as? Data {

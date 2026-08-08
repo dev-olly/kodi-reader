@@ -23,6 +23,16 @@ public final class LibraryStore: @unchecked Sendable {
     /// Coalesces the frequent position updates that arrive while reading.
     private var pendingSave: DispatchWorkItem?
 
+    /// Directory containing `library.json` and the `Books/` import folder.
+    public var rootDirectory: URL {
+        fileURL.deletingLastPathComponent()
+    }
+
+    /// Durable copies of opened EPUBs live here so Recents never needs sandbox re-grants.
+    public var booksDirectory: URL {
+        rootDirectory.appendingPathComponent("Books", isDirectory: true)
+    }
+
     /// Schema version of the loaded (or empty) store.
     public var schemaVersion: Int {
         lock.lock()
@@ -45,6 +55,65 @@ public final class LibraryStore: @unchecked Sendable {
     public init(fileURL: URL) {
         self.fileURL = fileURL
         payload = LibraryStore.load(from: fileURL) ?? Payload()
+    }
+
+    // MARK: - Imported book files
+
+    /// Relative path stored on `BookRecord.importedRelativePath`.
+    public static func relativeImportedPath(for bookID: String) -> String {
+        "Books/\(sanitizedFileName(for: bookID)).epub"
+    }
+
+    public static func sanitizedFileName(for bookID: String) -> String {
+        let allowed = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+        let scalars = bookID.unicodeScalars.map { allowed.contains($0) ? Character($0) : "-" }
+        let name = String(scalars)
+        return name.isEmpty ? "book" : String(name.prefix(120))
+    }
+
+    public func importedURL(for bookID: String) -> URL {
+        booksDirectory.appendingPathComponent(
+            Self.sanitizedFileName(for: bookID) + ".epub",
+            isDirectory: false
+        )
+    }
+
+    /// Resolved imported file URL when the copy exists on disk.
+    public func existingImportedURL(for record: BookRecord) -> URL? {
+        if let relative = record.importedRelativePath {
+            let url = rootDirectory.appendingPathComponent(relative)
+            if FileManager.default.fileExists(atPath: url.path) { return url }
+        }
+        let fallback = importedURL(for: record.id)
+        return FileManager.default.fileExists(atPath: fallback.path) ? fallback : nil
+    }
+
+    public func isImportedURL(_ url: URL) -> Bool {
+        let books = booksDirectory.resolvingSymlinksInPath().path
+        let path = url.resolvingSymlinksInPath().path
+        return path == books || path.hasPrefix(books + "/")
+    }
+
+    /// Copies `source` into `Books/` unless it is already the imported file.
+    @discardableResult
+    public func importBook(from source: URL, bookID: String) throws -> URL {
+        try FileManager.default.createDirectory(at: booksDirectory, withIntermediateDirectories: true)
+        let destination = importedURL(for: bookID)
+        let sourcePath = source.resolvingSymlinksInPath().path
+        let destPath = destination.resolvingSymlinksInPath().path
+        if sourcePath == destPath {
+            return destination
+        }
+        if FileManager.default.fileExists(atPath: destPath) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.copyItem(at: source, to: destination)
+        return destination
+    }
+
+    public func removeImportedBook(bookID: String) {
+        let url = importedURL(for: bookID)
+        try? FileManager.default.removeItem(at: url)
     }
 
     private static func load(from url: URL) -> Payload? {
@@ -90,6 +159,7 @@ public final class LibraryStore: @unchecked Sendable {
         lock.lock()
         payload.books.removeValue(forKey: bookID)
         lock.unlock()
+        removeImportedBook(bookID: bookID)
         scheduleSave()
     }
 

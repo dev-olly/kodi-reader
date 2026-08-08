@@ -49,7 +49,7 @@ final class SnapshotTests: XCTestCase {
 
     func testRenderTwoPageSpread() throws {
         var settings = ReaderSettings()
-        settings.theme = .sepia
+        settings.theme = .light
         settings.twoPageSpread = true
         try renderPage(
             named: "two-page-spread",
@@ -79,7 +79,7 @@ final class SnapshotTests: XCTestCase {
 
     func testRenderHighlight() throws {
         var settings = ReaderSettings()
-        settings.theme = .sepia
+        settings.theme = .light
         settings.twoPageSpread = false
         try renderPage(
             named: "highlight",

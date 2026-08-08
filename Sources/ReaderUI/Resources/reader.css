@@ -11,20 +11,21 @@
  */
 
 :root {
-  --page-margin-x: 72px;
-  --page-margin-y: 56px;
-  --column-gap: 144px; /* kept at 2 * --page-margin-x by reader.js */
+  --page-margin-x: 128px;
+  --page-margin-y: 76px;
+  --column-gap: 256px; /* kept at 2 * --page-margin-x by reader.js */
   --column-width: 600px;
 
   --font-size: 19px;
-  --line-height: 1.6;
+  --line-height: 1.68;
   --font-family: -apple-system, "SF Pro Text", "Iowan Old Style", Georgia, serif;
-  --paragraph-spacing: 0.6em;
+  --paragraph-spacing: 0.75em;
   --text-align: start;
   --hyphens: auto;
 
-  --color-text: #1c1b19;
-  --color-background: #fbf8f3;
+  --color-text: #1a1a1a;
+  --color-background: #ffffff;
+  --color-surface: #f2f2f2;
   --color-link: #1a6fd4;
   --color-selection: rgba(88, 172, 250, 0.35);
 }
@@ -70,13 +71,17 @@ body {
 }
 
 /*
- * The book's own colours rarely suit a dark theme, so descendants inherit
- * ours instead.
+ * The book's own colours and absolute font sizes rarely suit a reader chrome,
+ * so descendants take ours instead.
  *
  * `body` must not be in this list: it would inherit from <html>, which has no
  * colour of its own, and so override the theme colour set above. That reads
  * fine on a light theme, where the default black is what you wanted anyway,
  * and turns a dark theme into black text on a black page.
+ *
+ * Font size is `1em` (not `inherit` on every node) so Text Size changes to
+ * `--font-size` on body actually scale the page; EPUB stylesheets that pin
+ * `12pt` / `14px` on paragraphs would otherwise ignore the slider.
  */
 body p,
 body div,
@@ -91,8 +96,47 @@ body h3,
 body h4,
 body h5,
 body h6 {
-  color: inherit;
+  /* Beat EPUB text colours; leave backgrounds non-!important so dark-mode
+     JS can still see author callout fills and remap them to --color-surface. */
+  color: var(--color-text) !important;
   background-color: transparent;
+  font-family: inherit;
+}
+
+body a {
+  color: var(--color-link) !important;
+  background-color: transparent;
+  font-family: inherit;
+}
+
+body p,
+body div,
+body span,
+body li,
+body td,
+body th,
+body blockquote,
+body a {
+  font-size: 1em;
+  line-height: inherit;
+}
+
+/* Relative heading scale, still tied to the reader's body font size. */
+body h1 { font-size: 1.6em; line-height: 1.25; }
+body h2 { font-size: 1.4em; line-height: 1.25; }
+body h3 { font-size: 1.25em; line-height: 1.25; }
+body h4 { font-size: 1.15em; line-height: 1.25; }
+body h5 { font-size: 1.1em; line-height: 1.25; }
+body h6 { font-size: 1.05em; line-height: 1.25; }
+
+/* Figure captions: small italic secondary text (beat EPUB h5/bold rules). */
+body figcaption,
+body .figure-container-h5,
+body .figure-container > h5 {
+  font-size: 0.78em !important;
+  line-height: 1.4 !important;
+  font-weight: normal !important;
+  font-style: italic !important;
 }
 
 p {
@@ -103,7 +147,6 @@ p {
 }
 
 a {
-  color: var(--color-link);
   text-decoration: none;
 }
 
@@ -120,7 +163,6 @@ h5,
 h6 {
   break-inside: avoid;
   break-after: avoid;
-  line-height: 1.25;
 }
 
 /* Nothing may exceed one page, or content would be clipped between columns. */
@@ -145,6 +187,28 @@ pre,
 code {
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+/* Block code on theme surface so dark mode never keeps EPUB light paper. */
+body pre {
+  color: var(--color-text) !important;
+  background-color: var(--color-surface) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-sizing: border-box;
+  padding: 0.9em 1.1em !important;
+  margin: 0.85em 0 !important;
+}
+
+body pre code {
+  color: var(--color-text) !important;
+  background-color: transparent !important;
+  font-family: inherit;
+  padding: 0 !important;
+}
+
+body code {
+  color: var(--color-text) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
 table {

@@ -122,6 +122,9 @@ struct NoteSheet: View {
                 prefixLines(with: "1. ")
             }
             formatButton("link", help: "Link") { wrap("[", "](url)") }
+            formatButton("chevron.left.forwardslash.chevron.right", help: "Code block") {
+                insertCodeBlock()
+            }
 
             Spacer()
 
@@ -223,6 +226,19 @@ struct NoteSheet: View {
             return
         }
         let result = NoteMarkdown.prefixLines(text, selection: range, marker: marker)
+        text = result.text
+        selectedRange = NSRange(result.selection, in: result.text)
+    }
+
+    private func insertCodeBlock() {
+        guard let range = Range(selectedRange, in: text) else {
+            let end = text.endIndex
+            let result = NoteMarkdown.fenceCodeBlock(text, selection: end..<end)
+            text = result.text
+            selectedRange = NSRange(result.selection, in: result.text)
+            return
+        }
+        let result = NoteMarkdown.fenceCodeBlock(text, selection: range)
         text = result.text
         selectedRange = NSRange(result.selection, in: result.text)
     }

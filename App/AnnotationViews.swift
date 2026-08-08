@@ -142,7 +142,7 @@ struct AnnotationsInspector: View {
                 Button(action: onExport) {
                     Label("Export", systemImage: "square.and.arrow.up")
                 }
-                .help("Export notes as Markdown")
+                .quickHelp("Export notes as Markdown")
                 .disabled(annotations.filter(\.hasNote).isEmpty)
             }
         }
@@ -251,7 +251,7 @@ struct AnnotationsInspector: View {
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .help(annotation.hasNote ? "Edit note" : "Add note")
+            .quickHelp(annotation.hasNote ? "Edit note" : "Add note")
         }
         .contextMenu {
             Button(annotation.hasNote ? "Edit Note…" : "Add Note…") { onEdit(annotation) }

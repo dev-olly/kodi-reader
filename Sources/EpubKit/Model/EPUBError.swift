@@ -17,7 +17,7 @@ public enum EPUBError: LocalizedError, Equatable {
         case let .notAZipArchive(url):
             return "\"\(url.lastPathComponent)\" is not a readable EPUB archive."
         case let .cannotAccessFile(url):
-            return "Folio doesn’t have permission to read \"\(url.lastPathComponent)\". Open it again with File → Open, or choose Locate when prompted from Recents."
+            return "Kodi Reader doesn’t have permission to read \"\(url.lastPathComponent)\". Open it again with File → Open, or choose Locate when prompted from Recents."
         case .missingContainerXML:
             return "The archive is missing META-INF/container.xml, so it is not a valid EPUB."
         case .missingRootFile:

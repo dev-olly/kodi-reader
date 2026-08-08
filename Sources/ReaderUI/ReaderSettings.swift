@@ -3,8 +3,6 @@ import SwiftUI
 
 public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     case light
-    case sepia
-    case quiet
     case dark
 
     public var id: String { rawValue }
@@ -12,34 +10,37 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     public var displayName: String {
         switch self {
         case .light: return "Light"
-        case .sepia: return "Sepia"
-        case .quiet: return "Quiet"
         case .dark: return "Dark"
         }
     }
 
+    /// Soft off-white on charcoal in dark mode — readable without harsh glare.
     var textColor: String {
         switch self {
         case .light: return "#1a1a1a"
-        case .sepia: return "#4a3c2c"
-        case .quiet: return "#d8d6d2"
-        case .dark: return "#c9c7c4"
+        case .dark: return "#dcdcdc"
         }
     }
 
     var backgroundColor: String {
         switch self {
         case .light: return "#ffffff"
-        case .sepia: return "#faf0dc"
-        case .quiet: return "#42403d"
-        case .dark: return "#101010"
+        case .dark: return "#1c1c1e"
+        }
+    }
+
+    /// Elevated panels / EPUB callouts remapped in dark mode.
+    var surfaceColor: String {
+        switch self {
+        case .light: return "#f2f2f2"
+        case .dark: return "#2c2c2e"
         }
     }
 
     var linkColor: String {
         switch self {
-        case .light, .sepia: return "#1a6fd4"
-        case .quiet, .dark: return "#6cb0f5"
+        case .light: return "#1a6fd4"
+        case .dark: return "#6cb0f5"
         }
     }
 
@@ -48,7 +49,7 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 
     public var isDark: Bool {
-        self == .dark || self == .quiet
+        self == .dark
     }
 
     /// Multiply darkens a highlight on light paper; on dark themes it would
@@ -60,19 +61,33 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     /// SwiftUI equivalents, so the window chrome can match the page.
     public var uiBackground: Color {
         switch self {
-        case .light: return Color(red: 1, green: 1, blue: 1)
-        case .sepia: return Color(red: 0.98, green: 0.94, blue: 0.86)
-        case .quiet: return Color(red: 0.26, green: 0.25, blue: 0.24)
-        case .dark: return Color(red: 0.06, green: 0.06, blue: 0.06)
+        case .light: return .white
+        case .dark: return Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255)
         }
     }
 
     public var uiForeground: Color {
-        isDark ? Color.white.opacity(0.86) : Color.black.opacity(0.85)
+        isDark ? Color(red: 220 / 255, green: 220 / 255, blue: 220 / 255) : Color.black.opacity(0.85)
     }
 
     public var colorScheme: ColorScheme {
         isDark ? .dark : .light
+    }
+
+    /// Maps legacy persisted values (`sepia`, `quiet`) onto the two themes.
+    public init(from decoder: Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        switch raw {
+        case Self.dark.rawValue, "quiet":
+            self = .dark
+        default:
+            self = .light
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.singleValueContainer()
+        try container.encode(rawValue)
     }
 }
 
@@ -121,12 +136,12 @@ public enum ReaderFont: String, Codable, CaseIterable, Identifiable, Sendable {
 
 /// Everything the reader lets you change about how a page looks.
 public struct ReaderSettings: Codable, Equatable, Sendable {
-    public var theme: ReaderTheme = .sepia
+    public var theme: ReaderTheme = .light
     public var font: ReaderFont = .serif
     public var fontSize: Double = 19
-    public var lineHeight: Double = 1.6
+    public var lineHeight: Double = 1.68
     /// Fraction of the window width used as the side margin, per side.
-    public var marginRatio: Double = 0.09
+    public var marginRatio: Double = 0.11
     public var justified: Bool = true
     public var hyphenated: Bool = true
     public var twoPageSpread: Bool = true
@@ -142,11 +157,11 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     /// text column stays readable at both extremes.
     public func horizontalMargin(forWidth width: Double) -> Double {
         let raw = width * marginRatio
-        return min(max(raw, 16), max(16, width * 0.35))
+        return min(max(raw, 48), max(48, width * 0.35))
     }
 
     public var verticalMargin: Double {
-        max(32, fontSize * 2.6)
+        max(56, fontSize * 4.0)
     }
 
     /// CSS custom properties handed to the injected stylesheet.
@@ -159,6 +174,7 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
             "--hyphens": hyphenated ? "auto" : "manual",
             "--color-text": theme.textColor,
             "--color-background": theme.backgroundColor,
+            "--color-surface": theme.surfaceColor,
             "--color-link": theme.linkColor,
             "--color-selection": theme.selectionColor,
             "--highlight-blend-mode": theme.highlightBlendMode,

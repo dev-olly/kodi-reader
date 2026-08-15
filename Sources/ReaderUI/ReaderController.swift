@@ -358,6 +358,11 @@ public final class ReaderController {
     }
 
     private func handlePageChanged(_ body: [String: Any]) {
+        // Column paging leaves the DOM selection intact; dismiss the palette.
+        if selection != nil {
+            clearSelection()
+        }
+
         page = body["page"] as? Int ?? 0
         pageCount = max(1, body["pageCount"] as? Int ?? 1)
 

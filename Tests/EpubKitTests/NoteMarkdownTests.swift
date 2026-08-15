@@ -86,6 +86,11 @@ final class NoteMarkdownTests: XCTestCase {
         )
     }
 
+    func testPreviewSegmentsLanguageTag() {
+        let markdown = "```swift\nlet x = 1\n```"
+        XCTAssertEqual(NoteMarkdown.previewSegments(of: markdown), [.code("let x = 1")])
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),

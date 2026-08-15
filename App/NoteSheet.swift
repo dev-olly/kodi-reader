@@ -147,8 +147,12 @@ struct NoteSheet: View {
     private var bodyEditor: some View {
         Group {
             if mode == .edit {
-                MarkdownTextEditor(text: $text, selectedRange: $selectedRange)
-                    .padding(.horizontal, 4)
+                MarkdownTextEditor(
+                    text: $text,
+                    selectedRange: $selectedRange,
+                    placeholder: "Write your note…"
+                )
+                .padding(.horizontal, 4)
             } else {
                 ScrollView {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -165,15 +169,6 @@ struct NoteSheet: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .overlay(alignment: .topLeading) {
-            if mode == .edit && text.isEmpty {
-                Text("Write your note…")
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 18)
-                    .allowsHitTesting(false)
-            }
-        }
     }
 
     private var notePreview: some View {

@@ -10,38 +10,52 @@ struct HighlightPalette: View {
     let onDismiss: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
-            ForEach(HighlightColor.allCases, id: \.self) { color in
-                Button { onPick(color) } label: {
-                    swatch(for: color)
+        ArrowCursorContainer {
+            HStack(spacing: 10) {
+                ForEach(HighlightColor.allCases, id: \.self) { color in
+                    Button { onPick(color) } label: {
+                        swatch(for: color)
+                    }
+                    .buttonStyle(.plain)
+                    .help(color.displayName)
+                }
+
+                Divider().frame(height: 20)
+
+                Button(action: onAddNote) {
+                    // Avoid Label/Text I-beam over the chip; keep a pointing arrow.
+                    HStack(spacing: 4) {
+                        Image(systemName: "text.badge.plus")
+                        Text("Note")
+                    }
+                    .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help(color.displayName)
+                .help("Highlight and add a note")
+
+                Divider().frame(height: 20)
+
+                Button { onDismiss() } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Dismiss")
             }
-
-            Divider().frame(height: 20)
-
-            Button(action: onAddNote) {
-                Label("Note", systemImage: "text.badge.plus")
-                    .labelStyle(.titleAndIcon)
-                    .font(.system(size: 12, weight: .medium))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: .rect(cornerRadius: 10))
+            .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .onContinuousHover { phase in
+                switch phase {
+                case .active:
+                    NSCursor.arrow.set()
+                case .ended:
+                    break
+                }
             }
-            .buttonStyle(.plain)
-            .help("Highlight and add a note")
-
-            Divider().frame(height: 20)
-
-            Button { onDismiss() } label: {
-                Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
-                    .foregroundStyle(.secondary)
-            }
-            .buttonStyle(.plain)
-            .help("Dismiss")
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
-        .background(.regularMaterial, in: .rect(cornerRadius: 10))
         .shadow(radius: 8, y: 3)
     }
 
@@ -60,6 +74,67 @@ struct HighlightPalette: View {
                 .frame(width: 20, height: 20)
                 .overlay { Circle().strokeBorder(.black.opacity(0.12)) }
         }
+    }
+}
+
+/// Hosts the palette in AppKit so cursor rects win over WKWebView’s I-beam.
+private struct ArrowCursorContainer<Content: View>: NSViewRepresentable {
+    @ViewBuilder var content: () -> Content
+
+    func makeNSView(context: Context) -> ArrowCursorHost {
+        let host = ArrowCursorHost()
+        let hosting = NSHostingView(rootView: content())
+        hosting.translatesAutoresizingMaskIntoConstraints = false
+        host.addSubview(hosting)
+        NSLayoutConstraint.activate([
+            hosting.leadingAnchor.constraint(equalTo: host.leadingAnchor),
+            hosting.trailingAnchor.constraint(equalTo: host.trailingAnchor),
+            hosting.topAnchor.constraint(equalTo: host.topAnchor),
+            hosting.bottomAnchor.constraint(equalTo: host.bottomAnchor),
+        ])
+        context.coordinator.hosting = hosting
+        return host
+    }
+
+    func updateNSView(_ nsView: ArrowCursorHost, context: Context) {
+        context.coordinator.hosting?.rootView = content()
+        nsView.window?.invalidateCursorRects(for: nsView)
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator()
+    }
+
+    final class Coordinator {
+        var hosting: NSHostingView<Content>?
+    }
+}
+
+private final class ArrowCursorHost: NSView {
+    override var acceptsFirstResponder: Bool { false }
+
+    override var intrinsicContentSize: NSSize {
+        guard let hosting = subviews.first else { return .zero }
+        return hosting.fittingSize
+    }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .arrow)
+    }
+
+    override func cursorUpdate(with event: NSEvent) {
+        NSCursor.arrow.set()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        window?.invalidateCursorRects(for: self)
+    }
+
+    override func layout() {
+        super.layout()
+        window?.invalidateCursorRects(for: self)
+        invalidateIntrinsicContentSize()
     }
 }
 

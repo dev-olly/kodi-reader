@@ -117,73 +117,6 @@ public enum NoteMarkdown {
         case code(String)
     }
 
-    /// Strips a small set of markdown markers for list previews.
-    public static func plainPreview(of markdown: String) -> String {
-        var text = markdown
-        let patterns = [
-            #"\*\*(.+?)\*\*"#,
-            #"__(.+?)__"#,
-            #"\*(.+?)\*"#,
-            #"_(.+?)_"#,
-            #"\[(.+?)\]\(.+?\)"#,
-            #"^#{1,6}\s+"#,
-            #"^[-*+]\s+"#,
-            #"^\d+\.\s+"#,
-            #"`([^`]+)`"#,
-        ]
-        for pattern in patterns {
-            text = text.replacingOccurrences(
-                of: pattern,
-                with: "$1",
-                options: [.regularExpression]
-            )
-        }
-        return text
-            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    /// Wraps `selection` with `prefix`/`suffix`, or inserts markers around the caret.
-    public static func wrap(
-        _ source: String,
-        selection: Range<String.Index>,
-        prefix: String,
-        suffix: String
-    ) -> (text: String, selection: Range<String.Index>) {
-        let selected = String(source[selection])
-        let replacement = prefix + selected + suffix
-        var result = source
-        result.replaceSubrange(selection, with: replacement)
-        let start = selection.lowerBound
-        let end = result.index(start, offsetBy: replacement.count)
-        if selected.isEmpty {
-            // Place caret between the markers.
-            let caret = result.index(start, offsetBy: prefix.count)
-            return (result, caret..<caret)
-        }
-        return (result, start..<end)
-    }
-
-    /// Wraps the selection in a fenced code block, or inserts an empty fence at the caret.
-    public static func fenceCodeBlock(
-        _ source: String,
-        selection: Range<String.Index>
-    ) -> (text: String, selection: Range<String.Index>) {
-        let selected = String(source[selection])
-        let prefix = "```\n"
-        let suffix = "\n```"
-        let replacement = prefix + selected + suffix
-        var result = source
-        result.replaceSubrange(selection, with: replacement)
-        let start = selection.lowerBound
-        if selected.isEmpty {
-            let caret = result.index(start, offsetBy: prefix.count)
-            return (result, caret..<caret)
-        }
-        let end = result.index(start, offsetBy: replacement.count)
-        return (result, start..<end)
-    }
-
     /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.
     public static func previewBlocks(of markdown: String) -> [PreviewBlock] {
         var blocks: [PreviewBlock] = []
@@ -349,6 +282,47 @@ public enum NoteMarkdown {
         return text
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Wraps `selection` with `prefix`/`suffix`, or inserts markers around the caret.
+    public static func wrap(
+        _ source: String,
+        selection: Range<String.Index>,
+        prefix: String,
+        suffix: String
+    ) -> (text: String, selection: Range<String.Index>) {
+        let selected = String(source[selection])
+        let replacement = prefix + selected + suffix
+        var result = source
+        result.replaceSubrange(selection, with: replacement)
+        let start = selection.lowerBound
+        let end = result.index(start, offsetBy: replacement.count)
+        if selected.isEmpty {
+            // Place caret between the markers.
+            let caret = result.index(start, offsetBy: prefix.count)
+            return (result, caret..<caret)
+        }
+        return (result, start..<end)
+    }
+
+    /// Wraps the selection in a fenced code block, or inserts an empty fence at the caret.
+    public static func fenceCodeBlock(
+        _ source: String,
+        selection: Range<String.Index>
+    ) -> (text: String, selection: Range<String.Index>) {
+        let selected = String(source[selection])
+        let prefix = "```\n"
+        let suffix = "\n```"
+        let replacement = prefix + selected + suffix
+        var result = source
+        result.replaceSubrange(selection, with: replacement)
+        let start = selection.lowerBound
+        if selected.isEmpty {
+            let caret = result.index(start, offsetBy: prefix.count)
+            return (result, caret..<caret)
+        }
+        let end = result.index(start, offsetBy: replacement.count)
+        return (result, start..<end)
     }
 
     /// Prefixes each line of the selection (or the current line) with `marker`.

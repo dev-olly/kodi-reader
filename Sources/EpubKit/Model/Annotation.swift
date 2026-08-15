@@ -184,6 +184,20 @@ public enum NoteMarkdown {
         return (result, start..<end)
     }
 
+    /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.
+    public static func previewBlocks(of markdown: String) -> [PreviewBlock] {
+        var blocks: [PreviewBlock] = []
+        for segment in previewSegments(of: markdown) {
+            switch segment {
+            case let .code(code):
+                blocks.append(.code(code))
+            case let .prose(prose):
+                blocks.append(contentsOf: proseBlocks(from: prose))
+            }
+        }
+        return blocks
+    }
+
     /// Line-scans prose into paragraphs and list blocks.
     public static func proseBlocks(from prose: String) -> [PreviewBlock] {
         let lines = prose.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)

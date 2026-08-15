@@ -37,7 +37,9 @@ html {
   height: 100%;
   margin: 0;
   padding: 0;
-  background-color: var(--color-background);
+  /* !important: Gutenberg (and others) set body { background: white } which
+     otherwise flashes through on every horizontal page scroll. */
+  background-color: var(--color-background) !important;
   -webkit-text-size-adjust: none;
   text-size-adjust: none;
 }
@@ -55,8 +57,10 @@ body {
   font-family: var(--font-family);
   font-size: var(--font-size);
   line-height: var(--line-height);
-  color: var(--color-text);
-  background-color: var(--color-background);
+  color: var(--color-text) !important;
+  background-color: var(--color-background) !important;
+  /* Fill the multicol canvas, including column gaps, with the theme. */
+  background-clip: border-box;
   text-align: var(--text-align);
   hyphens: var(--hyphens);
   -webkit-hyphens: var(--hyphens);

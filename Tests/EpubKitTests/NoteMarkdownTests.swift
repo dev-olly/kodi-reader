@@ -60,6 +60,19 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(result.selection, expectedCaret..<expectedCaret)
     }
 
+    func testPreviewSegmentsSplitsProseAndCode() {
+        let markdown = "I can\n```\nprint(\"hi\")\n```\ndone"
+        let segments = NoteMarkdown.previewSegments(of: markdown)
+        XCTAssertEqual(
+            segments,
+            [
+                .prose("I can\n"),
+                .code("print(\"hi\")"),
+                .prose("done"),
+            ]
+        )
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),

@@ -208,6 +208,7 @@ struct AnnotationsInspector: View {
                         }
                     }
                     .listStyle(.inset)
+                    .scrollContentBackground(.hidden)
                 }
             }
         }

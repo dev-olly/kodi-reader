@@ -626,6 +626,19 @@
     Object.keys(variables || {}).forEach(function (key) {
       root.style.setProperty(key, variables[key]);
     });
+    // Paint chrome immediately (with !important) so author sheets like
+    // Gutenberg's `body { background-color: white }` cannot flash on scroll.
+    var pageBg = (variables && variables["--color-background"]) || "";
+    if (pageBg) {
+      root.style.setProperty("background-color", pageBg, "important");
+      if (document.body) {
+        document.body.style.setProperty("background-color", pageBg, "important");
+        if (variables["--color-text"]) {
+          document.body.style.setProperty("color", variables["--color-text"], "important");
+        }
+      }
+      root.style.setProperty("color-scheme", pageIsDark() ? "dark" : "light");
+    }
     remapAuthorSurfaces();
   }
 

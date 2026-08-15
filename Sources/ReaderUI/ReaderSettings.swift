@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
 
+#if os(macOS)
+import AppKit
+#endif
+
 public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
     case light
     case dark
@@ -65,6 +69,18 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
         case .dark: return Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255)
         }
     }
+
+    #if os(macOS)
+    /// AppKit / WKWebView under-page color — must match the page to avoid white flashes.
+    public var nsBackgroundColor: NSColor {
+        switch self {
+        case .light:
+            return .white
+        case .dark:
+            return NSColor(calibratedRed: 28 / 255, green: 28 / 255, blue: 30 / 255, alpha: 1)
+        }
+    }
+    #endif
 
     public var uiForeground: Color {
         isDark ? Color(red: 220 / 255, green: 220 / 255, blue: 220 / 255) : Color.black.opacity(0.85)

@@ -28,6 +28,7 @@ struct TableOfContentsView: View {
                     }
                 }
                 .listStyle(.plain)
+                .scrollContentBackground(.hidden)
             }
         }
         .searchable(text: $query, placement: .automatic, prompt: "Search contents")

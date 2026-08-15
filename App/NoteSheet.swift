@@ -155,16 +155,12 @@ struct NoteSheet: View {
                         Text("Nothing to preview yet.")
                             .foregroundStyle(.tertiary)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                    } else if let attributed = try? AttributedString(markdown: text) {
-                        Text(attributed)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
                     } else {
-                        Text(text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
+                        notePreview
                     }
                 }
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
                 .padding(16)
             }
         }
@@ -178,6 +174,10 @@ struct NoteSheet: View {
                     .allowsHitTesting(false)
             }
         }
+    }
+
+    private var notePreview: some View {
+        NoteMarkdownPreview(text: text)
     }
 
     private var footer: some View {

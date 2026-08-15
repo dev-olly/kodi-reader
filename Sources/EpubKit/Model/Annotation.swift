@@ -109,6 +109,14 @@ public enum NoteMarkdown {
         case code(String)
     }
 
+    /// Structural blocks for the SwiftUI note preview renderer.
+    public enum PreviewBlock: Equatable, Sendable {
+        case paragraph(String)
+        case unorderedList([String])
+        case orderedList([String])
+        case code(String)
+    }
+
     /// Strips a small set of markdown markers for list previews.
     public static func plainPreview(of markdown: String) -> String {
         var text = markdown

@@ -775,12 +775,14 @@
 
   function start(options) {
     try {
+      // Theme variables first — before layout — so page turns never flash white paper.
+      if (options && options.variables) applyStyles(options.variables);
+
       if (options) {
         Object.keys(options).forEach(function (key) {
           if (key in settings) settings[key] = options[key];
         });
-        if (options.variables) applyStyles(options.variables);
-        else remapAuthorSurfaces();
+        if (!options.variables) remapAuthorSurfaces();
         if (typeof options.spineIndex === "number") state.spineIndex = options.spineIndex;
       } else {
         remapAuthorSurfaces();

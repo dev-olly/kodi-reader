@@ -167,6 +167,9 @@ public final class ReaderController {
         let order = book.publication.readingOrder
         guard order.indices.contains(index) else { return }
 
+        // Drop any live selection chip before the document changes.
+        clearSelection()
+
         isLoading = true
         spineIndex = index
         chapterTitle = book.chapterTitle(forSpineIndex: index)

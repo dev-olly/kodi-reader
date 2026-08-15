@@ -103,6 +103,12 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
 
 /// Markdown helpers shared by the editor, inspector, and export.
 public enum NoteMarkdown {
+    /// One chunk of a note when rendering Edit → Preview.
+    public enum PreviewSegment: Equatable, Sendable {
+        case prose(String)
+        case code(String)
+    }
+
     /// Strips a small set of markdown markers for list previews.
     public static func plainPreview(of markdown: String) -> String {
         var text = markdown
@@ -168,6 +174,75 @@ public enum NoteMarkdown {
         }
         let end = result.index(start, offsetBy: replacement.count)
         return (result, start..<end)
+    }
+
+    /// Splits markdown into prose and fenced code blocks (` ``` ` … ` ``` `).
+    public static func previewSegments(of markdown: String) -> [PreviewSegment] {
+        var segments: [PreviewSegment] = []
+        var remaining = Substring(markdown)
+        let fence = "```"
+
+        while !remaining.isEmpty {
+            guard let open = remaining.range(of: fence) else {
+                let prose = String(remaining)
+                if !prose.isEmpty { segments.append(.prose(prose)) }
+                break
+            }
+
+            let before = String(remaining[..<open.lowerBound])
+            if !before.isEmpty { segments.append(.prose(before)) }
+
+            var afterOpen = remaining[open.upperBound...]
+            // Optional language tag on the opening fence line.
+            if let lineEnd = afterOpen.firstIndex(of: "\n") {
+                afterOpen = afterOpen[afterOpen.index(after: lineEnd)...]
+            } else {
+                // Unclosed fence with no body — drop the opener and stop.
+                break
+            }
+
+            if let close = afterOpen.range(of: fence) {
+                var body = String(afterOpen[..<close.lowerBound])
+                if body.hasSuffix("\n") { body.removeLast() }
+                segments.append(.code(body))
+                remaining = afterOpen[close.upperBound...]
+                if remaining.first == "\n" {
+                    remaining.removeFirst()
+                }
+            } else {
+                // Unclosed fence: treat the rest as code.
+                segments.append(.code(String(afterOpen)))
+                break
+            }
+        }
+
+        return segments
+    }
+
+    /// Strips a small set of markdown markers for list previews.
+    public static func plainPreview(of markdown: String) -> String {
+        var text = markdown
+        let patterns = [
+            #"\*\*(.+?)\*\*"#,
+            #"__(.+?)__"#,
+            #"\*(.+?)\*"#,
+            #"_(.+?)_"#,
+            #"\[(.+?)\]\(.+?\)"#,
+            #"^#{1,6}\s+"#,
+            #"^[-*+]\s+"#,
+            #"^\d+\.\s+"#,
+            #"`([^`]+)`"#,
+        ]
+        for pattern in patterns {
+            text = text.replacingOccurrences(
+                of: pattern,
+                with: "$1",
+                options: [.regularExpression]
+            )
+        }
+        return text
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     /// Prefixes each line of the selection (or the current line) with `marker`.

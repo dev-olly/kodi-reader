@@ -110,6 +110,7 @@ public final class ReaderController {
         webView.navigationDelegate = navigation
 
         self.webView = webView
+        applyWebViewChromeColors()
 
         if let target = pendingStart {
             pendingStart = nil
@@ -270,8 +271,20 @@ public final class ReaderController {
     // MARK: - Settings
 
     private func applySettings() {
+        applyWebViewChromeColors()
         guard let options = jsonString(settings.runtimeOptions(forWidth: viewportWidth)) else { return }
         evaluate("__reader.configure(\(options), true)")
+    }
+
+    /// Paint WKWebView’s under-page / layer with the theme so scroll never flashes white.
+    private func applyWebViewChromeColors() {
+        #if os(macOS)
+        guard let webView else { return }
+        let color = settings.theme.nsBackgroundColor
+        webView.underPageBackgroundColor = color
+        webView.wantsLayer = true
+        webView.layer?.backgroundColor = color.cgColor
+        #endif
     }
 
     // MARK: - Message handling

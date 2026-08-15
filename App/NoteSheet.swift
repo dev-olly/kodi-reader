@@ -113,18 +113,21 @@ struct NoteSheet: View {
 
     private var toolbar: some View {
         HStack(spacing: 4) {
-            formatButton("bold", help: "Bold") { wrap("**", "**") }
-            formatButton("italic", help: "Italic") { wrap("*", "*") }
-            formatButton("list.bullet", help: "Bulleted list") {
-                prefixLines(with: "- ")
+            HStack(spacing: 4) {
+                formatButton("bold", help: "Bold") { wrap("**", "**") }
+                formatButton("italic", help: "Italic") { wrap("*", "*") }
+                formatButton("list.bullet", help: "Bulleted list") {
+                    prefixLines(with: "- ")
+                }
+                formatButton("list.number", help: "Numbered list") {
+                    prefixLines(with: "1. ")
+                }
+                formatButton("link", help: "Link") { wrap("[", "](url)") }
+                formatButton("chevron.left.forwardslash.chevron.right", help: "Code block") {
+                    insertCodeBlock()
+                }
             }
-            formatButton("list.number", help: "Numbered list") {
-                prefixLines(with: "1. ")
-            }
-            formatButton("link", help: "Link") { wrap("[", "](url)") }
-            formatButton("chevron.left.forwardslash.chevron.right", help: "Code block") {
-                insertCodeBlock()
-            }
+            .disabled(mode == .preview)
 
             Spacer()
 
@@ -139,7 +142,6 @@ struct NoteSheet: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .disabled(mode == .preview)
     }
 
     private var bodyEditor: some View {

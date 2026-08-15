@@ -73,6 +73,19 @@ final class NoteMarkdownTests: XCTestCase {
         )
     }
 
+    func testPreviewSegmentsEmptyFenceBody() {
+        let markdown = "before\n```\n\n```\nafter"
+        let segments = NoteMarkdown.previewSegments(of: markdown)
+        XCTAssertEqual(
+            segments,
+            [
+                .prose("before\n"),
+                .code(""),
+                .prose("after"),
+            ]
+        )
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),

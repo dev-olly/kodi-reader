@@ -184,6 +184,90 @@ public enum NoteMarkdown {
         return (result, start..<end)
     }
 
+    /// Line-scans prose into paragraphs and list blocks.
+    public static func proseBlocks(from prose: String) -> [PreviewBlock] {
+        let lines = prose.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        var blocks: [PreviewBlock] = []
+        var paragraphLines: [String] = []
+        var unorderedItems: [String] = []
+        var orderedItems: [String] = []
+
+        func flushParagraph() {
+            let text = paragraphLines.joined(separator: "\n")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                blocks.append(.paragraph(text))
+            }
+            paragraphLines.removeAll(keepingCapacity: true)
+        }
+
+        func flushUnordered() {
+            if !unorderedItems.isEmpty {
+                blocks.append(.unorderedList(unorderedItems))
+                unorderedItems.removeAll(keepingCapacity: true)
+            }
+        }
+
+        func flushOrdered() {
+            if !orderedItems.isEmpty {
+                blocks.append(.orderedList(orderedItems))
+                orderedItems.removeAll(keepingCapacity: true)
+            }
+        }
+
+        func flushLists() {
+            flushUnordered()
+            flushOrdered()
+        }
+
+        for line in lines {
+            if line.trimmingCharacters(in: .whitespaces).isEmpty {
+                flushParagraph()
+                flushLists()
+                continue
+            }
+
+            if let item = unorderedListItem(line) {
+                flushParagraph()
+                flushOrdered()
+                unorderedItems.append(item)
+                continue
+            }
+
+            if let item = orderedListItem(line) {
+                flushParagraph()
+                flushUnordered()
+                orderedItems.append(item)
+                continue
+            }
+
+            flushLists()
+            paragraphLines.append(line)
+        }
+
+        flushParagraph()
+        flushLists()
+        return blocks
+    }
+
+    private static func unorderedListItem(_ line: String) -> String? {
+        let pattern = #"^\s*([-*+])\s+(.*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let result = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let bodyRange = Range(result.range(at: 2), in: line)
+        else { return nil }
+        return String(line[bodyRange])
+    }
+
+    private static func orderedListItem(_ line: String) -> String? {
+        let pattern = #"^\s*(\d+)\.\s+(.*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let result = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let bodyRange = Range(result.range(at: 2), in: line)
+        else { return nil }
+        return String(line[bodyRange])
+    }
+
     /// Splits markdown into prose and fenced code blocks (` ``` ` … ` ``` `).
     public static func previewSegments(of markdown: String) -> [PreviewSegment] {
         var segments: [PreviewSegment] = []

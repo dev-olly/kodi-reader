@@ -91,6 +91,37 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(NoteMarkdown.previewSegments(of: markdown), [.code("let x = 1")])
     }
 
+    func testPreviewBlocksScreenshotSample() {
+        let markdown = """
+        i am **Olly**.
+
+        ```
+        print("kodi")
+        ```
+
+        - I know what kind of man you are
+        - I knew you could do it
+
+        1. baby
+        2. i love you
+        """
+        XCTAssertEqual(
+            NoteMarkdown.previewBlocks(of: markdown),
+            [
+                .paragraph("i am **Olly**."),
+                .code("print(\"kodi\")"),
+                .unorderedList([
+                    "I know what kind of man you are",
+                    "I knew you could do it",
+                ]),
+                .orderedList([
+                    "baby",
+                    "i love you",
+                ]),
+            ]
+        )
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),

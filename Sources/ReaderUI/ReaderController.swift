@@ -15,6 +15,17 @@ public struct ReaderSelection: Equatable, Sendable {
     public var rect: CGRect
 }
 
+/// A speakable span extracted from the current spine document.
+public struct ReaderUtterance: Equatable, Sendable {
+    public var text: String
+    public var start: TextPosition
+    public var end: TextPosition
+
+    public var locator: Locator {
+        Locator(spineIndex: 0, start: start, end: end, text: text)
+    }
+}
+
 /// Drives the web view: loads spine documents, moves between pages and
 /// chapters, tracks position, and relays selections and highlights.
 @Observable

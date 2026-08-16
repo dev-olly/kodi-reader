@@ -471,10 +471,12 @@
    * returning an empty path that would collapse to the top of the chapter.
    */
   function firstVisibleAnchor() {
-    var pageStart = state.currentPage * state.stride;
-    var pageEnd = pageStart + state.stride;
-    var scrollLeft = document.documentElement.scrollLeft;
+    var stride = currentStride();
+    var pageStart = state.currentPage * stride;
+    var pageEnd = pageStart + stride;
+    var scrollLeft = getScrollLeft();
     var layer = document.getElementById(LAYER_ID);
+    var readingLayer = document.getElementById(READING_LAYER_ID);
 
     function isOnThisPage(rect) {
       if (rect.width === 0 && rect.height === 0) return false;

@@ -81,6 +81,8 @@ public final class ReaderController {
     @ObservationIgnored private var spineWeights: [Double] = []
     @ObservationIgnored private var spineOffsets: [Double] = []
     @ObservationIgnored private var viewportWidth: Double = 900
+    @ObservationIgnored private var viewportHeight: Double = 0
+    @ObservationIgnored private var viewportRelayoutWork: DispatchWorkItem?
 
     public init(settings: ReaderSettings = ReaderSettings()) {
         self.settings = settings

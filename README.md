@@ -1,13 +1,13 @@
 # Kodi Reader
 
 A lightweight native EPUB reader for macOS. Paginated reading, typography and
-theme controls, and highlights with notes — without the store, the sync, or the
-library management.
+theme controls, highlights with notes, and fluent on-device read-aloud — without
+the store, the sync, or the library management.
 
 ## Requirements
 
-- macOS 14 or later
-- Xcode 15.4 or later (the project builds on any Xcode from 15.4 through 26.x)
+- macOS 15 or later, Apple Silicon (read-aloud uses Kokoro / MLX)
+- Xcode 26 or later (KokoroSwift requires Swift 6.2)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the project file
 
 ```sh

@@ -61,7 +61,7 @@
   /*
    * The column gap is pinned to twice the horizontal margin so that a page
    * advance is always exactly one viewport width, for any column count.
-   * See reader.css for the derivation.
+   * reader.css enforces the matching body padding. See reader.css.
    */
   function applyLayout() {
     var root = document.documentElement;

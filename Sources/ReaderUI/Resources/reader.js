@@ -490,6 +490,7 @@
           return NodeFilter.FILTER_REJECT;
         }
         if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        if (readingLayer && readingLayer.contains(node)) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       },
     });

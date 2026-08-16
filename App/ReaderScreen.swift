@@ -75,10 +75,28 @@ struct ReaderScreen: View {
                     reader.previousPage()
                 }
 
-                ReaderWebView(controller: reader, book: book)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .readerKeyboardShortcuts(reader, enabled: editingAnnotation == nil)
-                    .overlay(alignment: .topLeading) { selectionPopover }
+                VStack(spacing: 0) {
+                    ReaderWebView(controller: reader, book: book)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .readerKeyboardShortcuts(
+                            reader,
+                            enabled: !isModalNoteEditor,
+                            spaceAction: {
+                                if model.readAloud.isActive {
+                                    model.readAloud.togglePause()
+                                } else {
+                                    reader.nextPage()
+                                }
+                            }
+                        )
+                        .overlay(alignment: .topLeading) { selectionPopover }
+
+                    if model.readAloud.isActive {
+                        ReadAloudBar()
+                    } else {
+                        ProgressFooter(reader: reader)
+                    }
+                }
 
                 navRail(systemImage: "chevron.right") {
                     reader.nextPage()

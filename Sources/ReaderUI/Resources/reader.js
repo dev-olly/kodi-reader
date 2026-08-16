@@ -377,11 +377,15 @@
 
   function pageForRect(rect) {
     if (!rect || (rect.width === 0 && rect.height === 0)) return state.currentPage;
-    var absolute = rect.left + document.documentElement.scrollLeft;
-    return clamp(Math.floor(absolute / state.stride), 0, state.pageCount - 1);
+    var stride = currentStride();
+    var absolute = rect.left + getScrollLeft();
+    return clamp(Math.floor(absolute / stride), 0, state.pageCount - 1);
   }
 
   function notifyPageChanged() {
+    if (pendingPageTarget == null) {
+      syncPageFromScroll();
+    }
     post({
       type: "pageChanged",
       spineIndex: state.spineIndex,

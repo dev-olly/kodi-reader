@@ -177,12 +177,19 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     public var hyphenated: Bool = true
     public var twoPageSpread: Bool = true
     public var animatePageTurns: Bool = true
+    /// Sheet keeps the current modal editor; sidebar docks it in the inspector.
+    public var noteEditorPlacement: NoteEditorPlacement = .sheet
+    /// Kokoro voice id, e.g. `af_heart`.
+    public var readAloudVoiceID: String = "af_heart"
+    /// Playback rate applied after synthesis, independent of the model.
+    public var readAloudRate: Double = 1.0
 
     public init() {}
 
     public static let fontSizeRange: ClosedRange<Double> = 12...32
     public static let lineHeightRange: ClosedRange<Double> = 1.2...2.4
     public static let marginRange: ClosedRange<Double> = 0.03...0.20
+    public static let readAloudRateRange: ClosedRange<Double> = 0.8...1.75
 
     /// Horizontal margin in points for a given window width, clamped so the
     /// text column stays readable at both extremes.

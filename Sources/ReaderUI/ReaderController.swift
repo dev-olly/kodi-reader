@@ -135,6 +135,8 @@ public final class ReaderController {
     }
 
     public func tearDown() {
+        viewportRelayoutWork?.cancel()
+        viewportRelayoutWork = nil
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "reader")
         webView?.navigationDelegate = nil
         webView = nil

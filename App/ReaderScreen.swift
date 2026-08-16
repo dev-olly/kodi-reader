@@ -284,6 +284,18 @@ struct ReaderScreen: View {
 
         ToolbarItemGroup(placement: .primaryAction) {
             Button {
+                model.toggleReadAloud()
+            } label: {
+                Label(
+                    "Read Aloud",
+                    systemImage: model.readAloud.isPlaying
+                        ? "speaker.wave.2.fill"
+                        : "speaker.wave.2"
+                )
+            }
+            .quickHelp(model.readAloud.isActive ? "Stop reading" : "Read aloud")
+
+            Button {
                 model.toggleBookmark()
             } label: {
                 Label(

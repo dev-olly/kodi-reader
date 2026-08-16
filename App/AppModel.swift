@@ -234,6 +234,37 @@ final class AppModel {
         reader.start(at: record.position, annotations: record.annotations)
     }
 
+    func toggleReadAloud() {
+        guard let reader, let book else { return }
+        if readAloud.isActive {
+            readAloud.stop()
+            return
+        }
+        readAloud.start(
+            reader: reader,
+            bookTitle: book.title,
+            author: book.author,
+            voiceID: settings.readAloudVoiceID,
+            rate: settings.readAloudRate,
+            selection: reader.selection,
+            position: record?.position?.start
+        )
+    }
+
+    /// Always starts from the current selection, even if read-aloud is already running.
+    func startReadAloudFromSelection() {
+        guard let reader, let book, reader.selection != nil else { return }
+        readAloud.start(
+            reader: reader,
+            bookTitle: book.title,
+            author: book.author,
+            voiceID: settings.readAloudVoiceID,
+            rate: settings.readAloudRate,
+            selection: reader.selection,
+            position: record?.position?.start
+        )
+    }
+
     // MARK: - Annotations
 
     /// Creates a highlight from the current selection and clears it.

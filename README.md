@@ -110,9 +110,13 @@ the app’s sandbox library so Recents can reopen them without asking again.
 
 ## Not included
 
-No library shelf, DRM/LCP, sync, OPDS catalogues, audiobooks, or fixed-layout
-EPUB. Books are opened with `Cmd-O` or by dropping them on the window, and the
-welcome screen lists what you were reading recently.
+No library shelf, DRM/LCP, sync, OPDS catalogues, bundled audiobooks, or
+fixed-layout EPUB. Books are opened with `Cmd-O` or by dropping them on the
+window, and the welcome screen lists what you were reading recently.
+
+Read-aloud uses [Kokoro](https://github.com/hexgrad/kokoro) locally via
+[KokoroSwift](https://github.com/mlalma/kokoro-ios). The first listen downloads
+the voice model (a few hundred megabytes) into Application Support.
 
 ## Renaming the app
 

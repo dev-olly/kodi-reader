@@ -13,46 +13,42 @@ struct ReaderScreen: View {
     @State private var editingAnnotation: Annotation?
     /// True when the note editor was opened from the selection palette's Add Note.
     @State private var noteEditorAutofocus = false
+    /// True when the inspector was opened only to host the sidebar editor.
+    @State private var inspectorOpenedForEditor = false
 
     var body: some View {
         @Bindable var model = model
 
         page
             .inspector(isPresented: $model.isShowingAnnotations) {
-                AnnotationsInspector(
-                    annotations: model.record?.annotations ?? [],
-                    bookmarks: model.record?.bookmarks ?? [],
-                    chapterTitles: chapterTitles,
-                    onSelect: { reader.go(to: $0) },
-                    onEdit: { openNoteEditor($0, autofocus: !$0.hasNote) },
-                    onDelete: { model.deleteAnnotation($0.id) },
-                    onExport: {
-                        NotesExporter.presentSavePanel(
-                            bookTitle: book.title,
-                            markdown: model.exportNotesMarkdown()
-                        )
-                    }
-                )
-                .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
+                inspectorContent
             }
             .toolbar { toolbarContent }
             .task { model.startReading() }
             .onAppear { reader.onHighlightActivated = handleHighlightActivated }
-            .sheet(item: $editingAnnotation) { annotation in
+            .sheet(item: sheetAnnotation) { annotation in
                 // Re-read from the model so color/status updates while the sheet is open.
                 NoteSheet(
                     annotation: model.annotation(with: annotation.id) ?? annotation,
                     autofocus: noteEditorAutofocus,
                     onSave: { model.updateNote($0, for: annotation.id) },
                     onChangeColor: { model.changeColor($0, for: annotation.id) },
-                    onDelete: {
-                        model.deleteAnnotation(annotation.id)
-                        editingAnnotation = nil
-                    }
+                    onDelete: { model.deleteAnnotation(annotation.id) },
+                    onTogglePlacement: { toggleNoteEditorPlacement() }
                 )
             }
-            .onChange(of: editingAnnotation) { _, annotation in
-                model.isNoteEditorOpen = annotation != nil
+            .onChange(of: editingAnnotation) { _, _ in
+                syncModalEditorFlag()
+            }
+            .onChange(of: model.settings.noteEditorPlacement) { _, placement in
+                handlePlacementChange(placement)
+            }
+            .onChange(of: model.isShowingAnnotations) { _, showing in
+                if !showing, model.settings.noteEditorPlacement == .sidebar {
+                    editingAnnotation = nil
+                    inspectorOpenedForEditor = false
+                    syncModalEditorFlag()
+                }
             }
             .onDisappear {
                 model.isNoteEditorOpen = false

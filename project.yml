@@ -47,6 +47,14 @@ targets:
         product: EpubKit
       - package: EpubReaderCore
         product: ReaderUI
+      - package: KokoroSwift
+        product: KokoroSwift
+      - package: mlx-swift
+        product: MLX
+      - package: MLXUtilsLibrary
+        product: MLXUtilsLibrary
+      - sdk: AVFoundation.framework
+      - sdk: MediaPlayer.framework
     settings:
       base:
         PRODUCT_NAME: Kodi Reader

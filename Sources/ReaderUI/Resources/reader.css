@@ -297,3 +297,23 @@ table {
   background-color: #e5a50a;
   mix-blend-mode: normal;
 }
+
+#reader-reading-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.reader-reading-rect {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 2px;
+  background-color: rgba(88, 172, 250, 0.28);
+  mix-blend-mode: var(--highlight-blend-mode, multiply);
+}

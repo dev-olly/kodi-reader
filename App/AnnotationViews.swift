@@ -139,11 +139,17 @@ struct HighlightPalette: View {
 
 /// Hosts the palette in AppKit so cursor rects win over WKWebView’s I-beam.
 private struct ArrowCursorContainer<Content: View>: NSViewRepresentable {
-    @ViewBuilder var content: () -> Content
+    var content: Content
+
+    init(@ViewBuilder content: () -> Content) {
+        self.content = content()
+    }
 
     func makeNSView(context: Context) -> ArrowCursorHost {
         let host = ArrowCursorHost()
-        let hosting = NSHostingView(rootView: content())
+        host.clipsToBounds = false
+        let hosting = NSHostingView(rootView: content)
+        hosting.clipsToBounds = false
         hosting.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(hosting)
         NSLayoutConstraint.activate([

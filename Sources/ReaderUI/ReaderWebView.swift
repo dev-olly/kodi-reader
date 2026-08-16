@@ -20,7 +20,7 @@ public struct ReaderWebView: NSViewRepresentable {
     }
 
     public func updateNSView(_ webView: WKWebView, context: Context) {
-        controller.updateViewport(width: webView.bounds.width)
+        controller.updateViewport(width: webView.bounds.width, height: webView.bounds.height)
     }
 
     public static func dismantleNSView(_ webView: WKWebView, coordinator: ()) {

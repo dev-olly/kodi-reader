@@ -163,7 +163,8 @@ private struct ArrowCursorContainer<Content: View>: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: ArrowCursorHost, context: Context) {
-        context.coordinator.hosting?.rootView = content()
+        context.coordinator.hosting?.rootView = content
+        nsView.invalidateIntrinsicContentSize()
         nsView.window?.invalidateCursorRects(for: nsView)
     }
 

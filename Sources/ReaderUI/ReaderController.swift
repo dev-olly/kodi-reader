@@ -48,7 +48,9 @@ public final class ReaderController {
         didSet {
             guard settings != oldValue else { return }
             onSettingsChanged?(settings)
-            applySettings()
+            if settings.affectsPageLayout(relativeTo: oldValue) {
+                applySettings()
+            }
         }
     }
 

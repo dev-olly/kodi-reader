@@ -844,6 +844,319 @@
     post({ type: "highlightsResolved", results: results });
   }
 
+  // ---------------------------------------------------------- read aloud
+
+  var readingRange = null;
+  var MAX_UTTERANCE_CHARS = 1600;
+  var MIN_UTTERANCE_CHARS = 60;
+  var SKIP_SPEAK_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, SVG: 1, RT: 1, RP: 1 };
+
+  function readingLayer() {
+    var layer = document.getElementById(READING_LAYER_ID);
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = READING_LAYER_ID;
+      document.body.appendChild(layer);
+    }
+    return layer;
+  }
+
+  function isSpeakableTextNode(node) {
+    if (!node || !node.textContent) return false;
+    var highlight = document.getElementById(LAYER_ID);
+    var reading = document.getElementById(READING_LAYER_ID);
+    if (highlight && highlight.contains(node)) return false;
+    if (reading && reading.contains(node)) return false;
+    var el = node.parentElement;
+    while (el && el !== document.body) {
+      if (SKIP_SPEAK_TAGS[el.tagName]) return false;
+      if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") {
+        return false;
+      }
+      el = el.parentElement;
+    }
+    return true;
+  }
+
+  function collectSpeakableNodes() {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        return isSpeakableTextNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    var nodes = [];
+    var node;
+    while ((node = walker.nextNode())) nodes.push(node);
+    return nodes;
+  }
+
+  function blockParent(node) {
+    var el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    while (el && el !== document.body) {
+      var display = "";
+      try {
+        display = window.getComputedStyle(el).display;
+      } catch (error) {
+        display = "";
+      }
+      if (
+        display === "block" ||
+        display === "list-item" ||
+        display === "table" ||
+        display === "flex" ||
+        display === "grid" ||
+        /^(P|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|PRE|DIV|SECTION|ARTICLE|FIGCAPTION|DT|DD|TR)$/.test(
+          el.tagName
+        )
+      ) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return el || document.body;
+  }
+
+  function isSentenceTerminator(ch, next) {
+    if (ch !== "." && ch !== "!" && ch !== "?") return false;
+    if (!next) return true;
+    return /\s/.test(next);
+  }
+
+  function flushUtterance(pieces, start, end, utterances) {
+    if (end <= start) return;
+    var raw = "";
+    var i;
+    for (i = start; i < end; i++) raw += pieces[i].ch;
+    var text = raw.replace(/\s+/g, " ").trim();
+    if (!text || text.length < 1) return;
+    if (!/[A-Za-z0-9\u00C0-\u024F]/.test(text)) return;
+
+    var first = pieces[start];
+    var last = pieces[end - 1];
+    var from = start;
+    var to = end - 1;
+    while (from < end && /\s/.test(pieces[from].ch)) from++;
+    while (to > from && /\s/.test(pieces[to].ch)) to--;
+    if (from > to) return;
+    first = pieces[from];
+    last = pieces[to];
+
+    utterances.push({
+      text: text,
+      start: { elementPath: pathOfNode(first.node), offset: first.offset },
+      end: { elementPath: pathOfNode(last.node), offset: last.offset + 1 },
+    });
+  }
+
+  function splitLongUtterances(utterances) {
+    var result = [];
+    for (var i = 0; i < utterances.length; i++) {
+      var item = utterances[i];
+      if (item.text.length <= MAX_UTTERANCE_CHARS) {
+        result.push(item);
+        continue;
+      }
+      var words = item.text.split(" ");
+      var chunk = "";
+      for (var w = 0; w < words.length; w++) {
+        var next = chunk ? chunk + " " + words[w] : words[w];
+        if (next.length > MAX_UTTERANCE_CHARS && chunk) {
+          result.push({
+            text: chunk,
+            start: item.start,
+            end: item.end,
+          });
+          chunk = words[w];
+        } else {
+          chunk = next;
+        }
+      }
+      if (chunk) {
+        result.push({
+          text: chunk,
+          start: item.start,
+          end: item.end,
+        });
+      }
+    }
+    return result;
+  }
+
+  function mergeShortUtterances(utterances) {
+    if (utterances.length < 2) return utterances;
+    var result = [];
+    var i = 0;
+    while (i < utterances.length) {
+      var current = utterances[i];
+      while (
+        current.text.length < MIN_UTTERANCE_CHARS &&
+        i + 1 < utterances.length &&
+        current.text.length + 1 + utterances[i + 1].text.length <= MAX_UTTERANCE_CHARS
+      ) {
+        var next = utterances[i + 1];
+        current = {
+          text: current.text + " " + next.text,
+          start: current.start,
+          end: next.end,
+        };
+        i++;
+      }
+      result.push(current);
+      i++;
+    }
+    return result;
+  }
+
+  function extractUtterances(fromPosition) {
+    var nodes = collectSpeakableNodes();
+    if (!nodes.length) return [];
+
+    var startNode = null;
+    var startOffset = 0;
+    var origin = fromPosition;
+    if (!origin || !origin.elementPath || !origin.elementPath.length) {
+      origin = currentPosition();
+    }
+    if (origin && origin.elementPath && origin.elementPath.length) {
+      startNode = nodeAtPath(origin.elementPath);
+      startOffset = origin.offset || 0;
+    }
+
+    var pieces = [];
+    var started = !startNode;
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!started) {
+        if (node !== startNode) continue;
+        started = true;
+      }
+      var text = node.textContent || "";
+      var from = node === startNode ? Math.min(Math.max(startOffset, 0), text.length) : 0;
+      var o;
+      for (o = from; o < text.length; o++) {
+        pieces.push({ ch: text.charAt(o), node: node, offset: o });
+      }
+    }
+    if (!pieces.length) return [];
+
+    var utterances = [];
+    var start = 0;
+    var lastBlock = blockParent(pieces[0].node);
+    for (i = 0; i < pieces.length; i++) {
+      var piece = pieces[i];
+      var block = blockParent(piece.node);
+      if (block !== lastBlock && i > start) {
+        flushUtterance(pieces, start, i, utterances);
+        start = i;
+        lastBlock = block;
+      }
+      var nextCh = i + 1 < pieces.length ? pieces[i + 1].ch : "";
+      if (isSentenceTerminator(piece.ch, nextCh)) {
+        flushUtterance(pieces, start, i + 1, utterances);
+        start = i + 1;
+      }
+    }
+    flushUtterance(pieces, start, pieces.length, utterances);
+    return mergeShortUtterances(splitLongUtterances(utterances));
+  }
+
+  function subrangeByCharOffsets(range, charStart, charEnd) {
+    if (!range || charStart == null || charEnd == null) return range;
+    var startBound = Math.max(0, charStart);
+    var endBound = Math.max(startBound, charEnd);
+    var walker = document.createTreeWalker(
+      range.commonAncestorContainer,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode: function (node) {
+          if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
+          return NodeFilter.FILTER_ACCEPT;
+        },
+      }
+    );
+
+    var counted = 0;
+    var startNode = null;
+    var startOff = 0;
+    var endNode = null;
+    var endOff = 0;
+    var node;
+    while ((node = walker.nextNode())) {
+      var text = node.textContent || "";
+      var nodeStart = 0;
+      var nodeEnd = text.length;
+      if (node === range.startContainer) nodeStart = range.startOffset;
+      if (node === range.endContainer) nodeEnd = range.endOffset;
+      if (nodeStart >= nodeEnd) continue;
+
+      var length = nodeEnd - nodeStart;
+      if (!startNode && counted + length > startBound) {
+        startNode = node;
+        startOff = nodeStart + (startBound - counted);
+      }
+      if (counted + length >= endBound) {
+        endNode = node;
+        endOff = nodeStart + (endBound - counted);
+        break;
+      }
+      counted += length;
+    }
+
+    if (!startNode) return range;
+    try {
+      var sliced = document.createRange();
+      sliced.setStart(startNode, startOff);
+      sliced.setEnd(endNode || startNode, endNode ? endOff : startOff + 1);
+      return sliced.collapsed ? range : sliced;
+    } catch (error) {
+      return range;
+    }
+  }
+
+  function setReadingRange(locator, charStart, charEnd) {
+    if (!locator) {
+      readingRange = null;
+      renderReadingRange();
+      return;
+    }
+    readingRange = {
+      start: locator.start,
+      end: locator.end || locator.start,
+      charStart: charStart,
+      charEnd: charEnd,
+    };
+    renderReadingRange();
+  }
+
+  function renderReadingRange() {
+    var layer = readingLayer();
+    layer.textContent = "";
+    if (!readingRange) return;
+
+    var range = rangeFromLocator(readingRange);
+    if (!range) return;
+    range = subrangeByCharOffsets(range, readingRange.charStart, readingRange.charEnd);
+    if (!range) return;
+
+    var scrollLeft = getScrollLeft();
+    var scrollTop = scrollingRoot().scrollTop;
+    var rects = range.getClientRects();
+    var fragment = document.createDocumentFragment();
+    for (var r = 0; r < rects.length; r++) {
+      var rect = rects[r];
+      if (rect.width < 1 || rect.height < 1) continue;
+      var div = document.createElement("div");
+      div.className = "reader-reading-rect";
+      div.style.left = rect.left + scrollLeft + "px";
+      div.style.top = rect.top + scrollTop + "px";
+      div.style.width = rect.width + "px";
+      div.style.height = rect.height + "px";
+      fragment.appendChild(div);
+    }
+    layer.appendChild(fragment);
+  }
+
   // ----------------------------------------------------------------- theme
 
   var SURFACE_ATTR = "data-reader-surface";

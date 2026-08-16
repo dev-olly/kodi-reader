@@ -506,7 +506,9 @@
 
     var elementWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
       acceptNode: function (element) {
-        if (element.id === LAYER_ID) return NodeFilter.FILTER_REJECT;
+        if (element.id === LAYER_ID || element.id === READING_LAYER_ID) {
+          return NodeFilter.FILTER_REJECT;
+        }
         return NodeFilter.FILTER_ACCEPT;
       },
     });

@@ -40,85 +40,52 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.string = text
         textView.drawsBackground = false
         textView.isEditable = isEditable
+        textView.placeholderString = placeholder ?? ""
+        applySelection(selectedRange, to: textView)
 
         scroll.documentView = textView
 
-        let placeholderLabel = NSTextField(labelWithString: placeholder ?? "")
-        placeholderLabel.translatesAutoresizingMaskIntoConstraints = false
-        placeholderLabel.textColor = .tertiaryLabelColor
-        placeholderLabel.font = textView.font
-        placeholderLabel.isEditable = false
-        placeholderLabel.isSelectable = false
-        placeholderLabel.isBezeled = false
-        placeholderLabel.drawsBackground = false
-        placeholderLabel.lineBreakMode = .byTruncatingTail
-        placeholderLabel.isHidden = !(text.isEmpty && !(placeholder?.isEmpty ?? true))
-
-        host.addSubview(scroll)
-        host.addSubview(placeholderLabel)
-        NSLayoutConstraint.activate([
-            scroll.leadingAnchor.constraint(equalTo: host.leadingAnchor),
-            scroll.trailingAnchor.constraint(equalTo: host.trailingAnchor),
-            scroll.topAnchor.constraint(equalTo: host.topAnchor),
-            scroll.bottomAnchor.constraint(equalTo: host.bottomAnchor),
-            placeholderLabel.leadingAnchor.constraint(
-                equalTo: host.leadingAnchor,
-                constant: Self.containerInset.width
-            ),
-            placeholderLabel.trailingAnchor.constraint(
-                lessThanOrEqualTo: host.trailingAnchor,
-                constant: -Self.containerInset.width
-            ),
-            placeholderLabel.topAnchor.constraint(
-                equalTo: host.topAnchor,
-                constant: Self.containerInset.height
-            ),
-        ])
-
         context.coordinator.textView = textView
-        context.coordinator.placeholderLabel = placeholderLabel
         context.coordinator.parent = self
-        return host
+        return scroll
     }
 
-    func updateNSView(_ host: NSView, context: Context) {
+    func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
         textView.isEditable = isEditable
 
         if textView.string != text {
-            let selected = textView.selectedRange()
             textView.string = text
-            let max = (text as NSString).length
-            let location = min(selected.location, max)
-            let length = min(selected.length, max - location)
-            textView.setSelectedRange(NSRange(location: location, length: length))
         }
 
         if textView.selectedRange() != selectedRange {
-            let max = (text as NSString).length
-            let location = min(selectedRange.location, max)
-            let length = min(selectedRange.length, max - location)
-            textView.setSelectedRange(NSRange(location: location, length: length))
+            applySelection(selectedRange, to: textView)
         }
 
         context.coordinator.refreshPlaceholder()
     }
 
+    private func applySelection(_ range: NSRange, to textView: NSTextView) {
+        let max = (textView.string as NSString).length
+        let location = min(range.location, max)
+        let length = min(range.length, max - location)
+        let clamped = NSRange(location: location, length: length)
+        textView.setSelectedRange(clamped)
+        textView.scrollRangeToVisible(clamped)
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MarkdownTextEditor
-        weak var textView: NSTextView?
-        weak var placeholderLabel: NSTextField?
+        fileprivate weak var textView: NoteTextView?
 
         init(_ parent: MarkdownTextEditor) {
             self.parent = parent
         }
 
         func refreshPlaceholder() {
-            guard let placeholderLabel else { return }
-            let placeholder = parent.placeholder ?? ""
-            placeholderLabel.stringValue = placeholder
-            placeholderLabel.isHidden = !(parent.text.isEmpty && !placeholder.isEmpty)
+            guard let textView else { return }
+            textView.placeholderString = parent.placeholder ?? ""
         }
 
         func textDidChange(_ notification: Notification) {

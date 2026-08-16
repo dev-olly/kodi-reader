@@ -150,6 +150,21 @@ public enum ReaderFont: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Where the note editor appears relative to the reading surface.
+public enum NoteEditorPlacement: String, Codable, CaseIterable, Identifiable, Sendable {
+    case sheet
+    case sidebar
+
+    public var id: String { rawValue }
+
+    public var displayName: String {
+        switch self {
+        case .sheet: return "Window"
+        case .sidebar: return "Sidebar"
+        }
+    }
+}
+
 /// Everything the reader lets you change about how a page looks.
 public struct ReaderSettings: Codable, Equatable, Sendable {
     public var theme: ReaderTheme = .light

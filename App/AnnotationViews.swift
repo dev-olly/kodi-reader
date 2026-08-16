@@ -102,6 +102,23 @@ struct HighlightPalette: View {
         .shadow(radius: 8, y: 3)
     }
 
+    private func copyTapped() {
+        onCopy()
+        withAnimation(.easeInOut(duration: 0.15)) {
+            copied = true
+        }
+        copyGeneration += 1
+        let generation = copyGeneration
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            if generation == copyGeneration {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    copied = false
+                }
+            }
+        }
+    }
+
     @ViewBuilder
     private func swatch(for color: HighlightColor) -> some View {
         if color == .underline {

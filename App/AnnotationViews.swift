@@ -35,8 +35,44 @@ struct HighlightPalette: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                 }
+                    .buttonStyle(.plain)
+                    .help("Highlight and add a note")
+
+                    Button(action: onPlay) {
+                        HStack(spacing: 4) {
+                            Image(systemName: "play.fill")
+                            Text("Play")
+                        }
+                        .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.plain)
+                    .help("Read from here")
+
+                    Button(action: copyTapped) {
+                    HStack(spacing: 4) {
+                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                        Text(copied ? "Copied" : "Copy")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(copied ? Color.secondary : Color.primary)
+                }
                 .buttonStyle(.plain)
-                .help("Highlight and add a note")
+                .help(copied ? "Copied to clipboard" : "Copy selected text")
+                .overlay(alignment: .bottom) {
+                    if copied {
+                        Text("Copied to clipboard")
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+                            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                            .fixedSize()
+                            .offset(y: 22)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                            .allowsHitTesting(false)
+                    }
+                }
 
                 Divider().frame(height: 20)
 

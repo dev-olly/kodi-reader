@@ -231,4 +231,59 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
             "variables": cssVariables(forWidth: width),
         ]
     }
+
+    /// Voice and rate live on settings but should not relayout the page.
+    func affectsPageLayout(relativeTo other: ReaderSettings) -> Bool {
+        theme != other.theme
+            || font != other.font
+            || fontSize != other.fontSize
+            || lineHeight != other.lineHeight
+            || marginRatio != other.marginRatio
+            || justified != other.justified
+            || hyphenated != other.hyphenated
+            || twoPageSpread != other.twoPageSpread
+            || animatePageTurns != other.animatePageTurns
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case theme, font, fontSize, lineHeight, marginRatio
+        case justified, hyphenated, twoPageSpread, animatePageTurns
+        case noteEditorPlacement, readAloudVoiceID, readAloudRate
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        theme = try container.decodeIfPresent(ReaderTheme.self, forKey: .theme) ?? .light
+        font = try container.decodeIfPresent(ReaderFont.self, forKey: .font) ?? .serif
+        fontSize = try container.decodeIfPresent(Double.self, forKey: .fontSize) ?? 19
+        lineHeight = try container.decodeIfPresent(Double.self, forKey: .lineHeight) ?? 1.68
+        marginRatio = try container.decodeIfPresent(Double.self, forKey: .marginRatio) ?? 0.11
+        justified = try container.decodeIfPresent(Bool.self, forKey: .justified) ?? true
+        hyphenated = try container.decodeIfPresent(Bool.self, forKey: .hyphenated) ?? true
+        twoPageSpread = try container.decodeIfPresent(Bool.self, forKey: .twoPageSpread) ?? true
+        animatePageTurns = try container.decodeIfPresent(Bool.self, forKey: .animatePageTurns) ?? true
+        noteEditorPlacement = try container.decodeIfPresent(
+            NoteEditorPlacement.self,
+            forKey: .noteEditorPlacement
+        ) ?? .sheet
+        readAloudVoiceID = try container.decodeIfPresent(String.self, forKey: .readAloudVoiceID) ?? "af_heart"
+        let rate = try container.decodeIfPresent(Double.self, forKey: .readAloudRate) ?? 1.0
+        readAloudRate = min(Self.readAloudRateRange.upperBound, max(Self.readAloudRateRange.lowerBound, rate))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(theme, forKey: .theme)
+        try container.encode(font, forKey: .font)
+        try container.encode(fontSize, forKey: .fontSize)
+        try container.encode(lineHeight, forKey: .lineHeight)
+        try container.encode(marginRatio, forKey: .marginRatio)
+        try container.encode(justified, forKey: .justified)
+        try container.encode(hyphenated, forKey: .hyphenated)
+        try container.encode(twoPageSpread, forKey: .twoPageSpread)
+        try container.encode(animatePageTurns, forKey: .animatePageTurns)
+        try container.encode(noteEditorPlacement, forKey: .noteEditorPlacement)
+        try container.encode(readAloudVoiceID, forKey: .readAloudVoiceID)
+        try container.encode(readAloudRate, forKey: .readAloudRate)
+    }
 }

@@ -213,7 +213,54 @@ struct ReaderScreen: View {
 
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
         noteEditorAutofocus = autofocus
+        if isSidebarPlacement, !model.isShowingAnnotations {
+            inspectorOpenedForEditor = true
+            model.isShowingAnnotations = true
+        }
         editingAnnotation = annotation
+        syncModalEditorFlag()
+    }
+
+    private func finishEditing() {
+        editingAnnotation = nil
+        if inspectorOpenedForEditor {
+            model.isShowingAnnotations = false
+            inspectorOpenedForEditor = false
+        }
+        syncModalEditorFlag()
+    }
+
+    private func backToNotesList() {
+        editingAnnotation = nil
+        inspectorOpenedForEditor = false
+        model.isShowingAnnotations = true
+        syncModalEditorFlag()
+    }
+
+    private func toggleNoteEditorPlacement() {
+        model.settings.noteEditorPlacement =
+            isSidebarPlacement ? .sheet : .sidebar
+    }
+
+    private func handlePlacementChange(_ placement: NoteEditorPlacement) {
+        if editingAnnotation == nil {
+            syncModalEditorFlag()
+            return
+        }
+        if placement == .sidebar {
+            if !model.isShowingAnnotations {
+                inspectorOpenedForEditor = true
+                model.isShowingAnnotations = true
+            }
+        } else if inspectorOpenedForEditor {
+            model.isShowingAnnotations = false
+            inspectorOpenedForEditor = false
+        }
+        syncModalEditorFlag()
+    }
+
+    private func syncModalEditorFlag() {
+        model.isNoteEditorOpen = isModalNoteEditor
     }
 
     // MARK: - Toolbar

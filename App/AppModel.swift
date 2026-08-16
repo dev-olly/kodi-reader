@@ -6,6 +6,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 /// Application state: the open book, its saved record, and the reader driving it.
+@MainActor
 @Observable
 final class AppModel {
     private(set) var book: EPUBBook?

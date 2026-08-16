@@ -1272,13 +1272,13 @@
     if (options && options.variables) applyStyles(options.variables);
     else remapAuthorSurfaces();
     relayout(anchor);
-    notifyPageChanged();
   }
 
   // ----------------------------------------------------------------- input
 
   function onClick(event) {
-    var link = event.target && event.target.closest ? event.target.closest("a") : null;
+    var target = event.target;
+    var link = target && target.closest ? target.closest("a") : null;
     if (link && link.getAttribute("href")) {
       event.preventDefault();
       post({ type: "link", href: link.getAttribute("href") });

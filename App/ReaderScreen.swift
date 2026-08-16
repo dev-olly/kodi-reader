@@ -1,3 +1,4 @@
+import AppKit
 import EpubKit
 import ReaderUI
 import SwiftUI

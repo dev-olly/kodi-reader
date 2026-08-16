@@ -7,7 +7,12 @@ import UniformTypeIdentifiers
 struct HighlightPalette: View {
     let onPick: (HighlightColor) -> Void
     let onAddNote: () -> Void
+    let onPlay: () -> Void
+    let onCopy: () -> Void
     let onDismiss: () -> Void
+
+    @State private var copied = false
+    @State private var copyGeneration = 0
 
     var body: some View {
         ArrowCursorContainer {

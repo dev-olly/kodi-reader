@@ -799,8 +799,8 @@
       return;
     }
 
-    var scrollLeft = document.documentElement.scrollLeft;
-    var scrollTop = document.documentElement.scrollTop;
+    var scrollLeft = getScrollLeft();
+    var scrollTop = scrollingRoot().scrollTop;
     var fragment = document.createDocumentFragment();
     var results = [];
 

@@ -1408,9 +1408,9 @@
     },
     relayout: function () {
       relayout(currentPosition());
-      notifyPageChanged();
     },
     state: function () {
+      remeasureBounds();
       return {
         spineIndex: state.spineIndex,
         page: state.currentPage,

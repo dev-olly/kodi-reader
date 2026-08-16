@@ -17,8 +17,15 @@ final class AppModel {
     var errorMessage: String?
     var isShowingContents = false
     var isShowingAnnotations = false
-    /// True while the note editor sheet is presented — disables page-turn shortcuts.
+    /// True while the modal note editor sheet is presented — disables page-turn shortcuts.
+    /// Sidebar editing does not set this, so paging still works.
     var isNoteEditorOpen = false
+    let readAloud = ReadAloudController()
+
+    var notesInSidebar: Bool {
+        get { settings.noteEditorPlacement == .sidebar }
+        set { settings.noteEditorPlacement = newValue ? .sidebar : .sheet }
+    }
 
     /// Settings live outside any single book so they persist across opens.
     var settings: ReaderSettings {

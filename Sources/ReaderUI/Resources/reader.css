@@ -48,18 +48,27 @@ html {
 }
 
 body {
-  box-sizing: border-box;
-  height: 100vh;
-  margin: 0;
-  padding: var(--page-margin-y) var(--page-margin-x);
+  /* !important: Calibre/Kindle class rules outrank a bare `body` selector
+     and would otherwise zero padding, pin 1em type, and break paging. */
+  box-sizing: border-box !important;
+  height: 100vh !important;
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: var(--page-margin-y) var(--page-margin-x) !important;
+  float: none !important;
+  position: static !important;
+  overflow: visible !important;
 
-  column-width: var(--column-width);
-  column-gap: var(--column-gap);
-  column-fill: auto;
+  column-width: var(--column-width) !important;
+  column-gap: var(--column-gap) !important;
+  column-fill: auto !important;
+  column-count: auto !important;
 
-  font-family: var(--font-family);
-  font-size: var(--font-size);
-  line-height: var(--line-height);
+  font-family: var(--font-family) !important;
+  font-size: var(--font-size) !important;
+  line-height: var(--line-height) !important;
   color: var(--color-text) !important;
   background-color: var(--color-background) !important;
   /* Fill the multicol canvas, including column gaps, with the theme. */

@@ -408,6 +408,216 @@ final class RenderingTests: XCTestCase {
             "Larger text should need more pages"
         )
     }
+
+    /// Shrinking below the two-column threshold must recompute pageCount so
+    /// Next advances within the chapter instead of stalling or skipping ahead.
+    func testResizingToOneColumnRepaginatesAndTurnsPages() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 1400, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+
+        let twoColumnCount = reader.pageCount
+        try XCTSkipUnless(twoColumnCount > 1, "Chapter fits on one spread")
+
+        reader.nextPage()
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page > 0 },
+            "Could not advance off page 0 before resizing"
+        )
+        let spineBefore = reader.spineIndex
+
+        let oneColumnSize = CGSize(width: 800, height: 900)
+        window?.setContentSize(oneColumnSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: oneColumnSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: oneColumnSize.width, height: oneColumnSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) { reader.pageCount > twoColumnCount },
+            "Page count stayed at \(reader.pageCount) after shrinking to one column (was \(twoColumnCount))"
+        )
+        XCTAssertEqual(reader.spineIndex, spineBefore, "Resize jumped to another chapter")
+
+        let pageAfterResize = reader.page
+        reader.nextPage()
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page > pageAfterResize && reader.spineIndex == spineBefore },
+            "nextPage did not advance within the chapter after resize (page \(reader.page), spine \(reader.spineIndex))"
+        )
+    }
+
+    /// After a resize the footer page index, JS state, and DOM scroll offset
+    /// must describe the same page. A stale `currentPage` with `scrollLeft`
+    /// still at 0 is what made Next/Previous appear broken (counter moved,
+    /// visible text did not).
+    func testResizeKeepsPageIndexAlignedWithScroll() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 1400, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Need at least three pages to stand on page 2")
+
+        var settings = reader.settings
+        settings.animatePageTurns = false
+        reader.settings = settings
+        XCTAssertTrue(
+            wait(timeout: 4) { reader.pageCount > 2 },
+            "Typography relayout after disabling animation lost pagination"
+        )
+
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page == 1 },
+            "Could not stand on page 2 (index 1) before resizing"
+        )
+
+        let before = pagingGeometry(from: reader)
+        let beforeWidth = before["innerWidth"] ?? 1
+        XCTAssertEqual(
+            before["scrollLeft"] ?? -1, beforeWidth, accuracy: 2,
+            "Page 2 was not actually visible before resizing: \(before)"
+        )
+
+        let oneColumnSize = CGSize(width: 800, height: 900)
+        window?.setContentSize(oneColumnSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: oneColumnSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: oneColumnSize.width, height: oneColumnSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) {
+                let geo = pagingGeometry(from: reader)
+                return pageIndexAgreesWithScroll(geo, swiftPage: reader.page)
+                    && reader.spineIndex == chapter
+                    && (geo["pageCount"] ?? 0) > 1
+            },
+            "After resize, reported page \(reader.page) of \(reader.pageCount) disagrees with scroll: \(pagingGeometry(from: reader))"
+        )
+
+        let aligned = pagingGeometry(from: reader)
+        let scrollBeforeTurn = aligned["scrollLeft"] ?? 0
+        let pageBeforeTurn = reader.page
+        let spineBefore = reader.spineIndex
+
+        reader.nextPage()
+        XCTAssertTrue(
+            wait(timeout: 5) {
+                let geo = pagingGeometry(from: reader)
+                return reader.spineIndex == spineBefore
+                    && reader.page > pageBeforeTurn
+                    && (geo["scrollLeft"] ?? scrollBeforeTurn) > scrollBeforeTurn + 10
+                    && pageIndexAgreesWithScroll(geo, swiftPage: reader.page)
+            },
+            "nextPage after resize did not move the visible page (page \(reader.page), spine \(reader.spineIndex), geo \(pagingGeometry(from: reader)))"
+        )
+    }
+
+    /// The visible scroll position must actually move on a page turn after a
+    /// resize — not just the reported page index. Before the fix, `scrollToPage`
+    /// used a cached stride captured at the old size, so targets overshot and
+    /// clamped to the same spot while the counter kept climbing ("the counter
+    /// changes but the page doesn't"). Turns here are instant so the assertion
+    /// does not depend on the compositor animating an off-screen window.
+    func testScrollPositionActuallyMovesAfterResize() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 1400, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 1, "Chapter fits on one spread")
+
+        let oneColumnSize = CGSize(width: 800, height: 900)
+        window?.setContentSize(oneColumnSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: oneColumnSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: oneColumnSize.width, height: oneColumnSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) {
+                let geo = pagingGeometry(from: reader)
+                return pageIndexAgreesWithScroll(geo, swiftPage: reader.page)
+                    && (geo["innerWidth"] ?? 0) > 0
+            },
+            "Resize did not settle on an aligned page/scroll pair: \(pagingGeometry(from: reader))"
+        )
+
+        let start = pagingGeometry(from: reader)
+        let innerWidth = start["innerWidth"] ?? 1
+        let maxScroll = start["maxScroll"] ?? 0
+        try XCTSkipUnless(maxScroll > innerWidth, "Chapter shorter than two pages at this size")
+
+        // The stride must track the new viewport, not the pre-resize width.
+        XCTAssertEqual(innerWidth, oneColumnSize.width, accuracy: 1,
+                       "innerWidth did not follow the resize")
+
+        // Instant-turn through the first few pages; each must land exactly on a
+        // viewport-width boundary and match the reported page.
+        let pagesToWalk = min(3, Int((maxScroll / innerWidth).rounded(.down)))
+        try XCTSkipUnless(pagesToWalk >= 1, "Not enough pages to walk")
+
+        for target in 1...pagesToWalk {
+            reader.evaluateForTesting("__reader.goToPage(\(target), false)") { _ in }
+            XCTAssertTrue(
+                wait(timeout: 2) {
+                    let now = pagingGeometry(from: reader)
+                    return abs((now["scrollLeft"] ?? -1) - Double(target) * innerWidth) <= 2
+                        && reader.page == target
+                },
+                "Page \(target) did not land at the expected offset: \(pagingGeometry(from: reader))"
+            )
+        }
+    }
+
+    private func pagingGeometry(from reader: ReaderController) -> [String: Double] {
+        var result: [String: Double]?
+        reader.evaluateForTesting(
+            """
+            (function () {
+              var el = document.documentElement;
+              var state = window.__reader.state();
+              return {
+                scrollLeft: el.scrollLeft,
+                innerWidth: window.innerWidth,
+                maxScroll: el.scrollWidth - el.clientWidth,
+                pageCount: state.pageCount,
+                page: state.page
+              };
+            })()
+            """
+        ) { result = ($0 as? [String: Any])?.compactMapValues { ($0 as? NSNumber)?.doubleValue } }
+        _ = wait(timeout: 2) { result != nil }
+        return result ?? [:]
+    }
+
+    private func pageIndexAgreesWithScroll(_ geo: [String: Double], swiftPage: Int) -> Bool {
+        let innerWidth = geo["innerWidth"] ?? 0
+        let scrollLeft = geo["scrollLeft"] ?? -1
+        let jsPage = geo["page"] ?? -1
+        guard innerWidth > 0 else { return false }
+        return abs(scrollLeft - Double(swiftPage) * innerWidth) <= 2
+            && abs(jsPage - Double(swiftPage)) < 0.5
+    }
 }
 
 enum SampleBooks {

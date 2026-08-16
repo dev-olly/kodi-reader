@@ -329,13 +329,27 @@
    * Returns false when the move would run off the end of the document, which
    * the app treats as a signal to load the neighbouring spine item.
    */
+  /*
+   * Refresh pageCount against the live layout. Mid-animation we keep the
+   * intended page; otherwise the DOM scroll offset wins so a resize that
+   * reset scrollLeft cannot leave next/previous walking a ghost index.
+   */
+  function remeasureBounds() {
+    var stride = currentStride();
+    state.stride = stride;
+    state.pageCount = Math.max(1, Math.round(maxScrollLeft() / stride) + 1);
+    syncPageFromScroll();
+  }
+
   function nextPage() {
+    remeasureBounds();
     if (state.currentPage >= state.pageCount - 1) return false;
     goToPage(state.currentPage + 1, true);
     return true;
   }
 
   function previousPage() {
+    remeasureBounds();
     if (state.currentPage <= 0) return false;
     goToPage(state.currentPage - 1, true);
     return true;

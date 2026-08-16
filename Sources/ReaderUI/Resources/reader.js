@@ -80,42 +80,244 @@
     state.stride = viewport;
   }
 
-  function measure() {
-    var total = document.documentElement.scrollWidth;
-    var stride = state.stride || window.innerWidth;
-    // Subtract a little so a document that fits exactly does not round up.
-    state.pageCount = Math.max(1, Math.ceil((total - 2) / stride));
-    state.currentPage = clamp(
-      Math.round(document.documentElement.scrollLeft / stride),
-      0,
-      state.pageCount - 1
-    );
+  function parsePx(value) {
+    var n = parseFloat(value);
+    return isFinite(n) ? n : 0;
+  }
+
+  /*
+   * Live column stride, measured from the body's box rather than assumed
+   * from innerWidth. When the page-box invariant holds (padding = marginX,
+   * gap = 2 * marginX) this equals the viewport width; if a book still
+   * bends the box, paging follows the real column pitch instead of drifting.
+   */
+  function currentStride() {
+    try {
+      var root = document.documentElement;
+      var body = document.body;
+      if (!body) return window.innerWidth || state.stride || 1;
+      var style = window.getComputedStyle(body);
+      var gapRaw = style.columnGap;
+      var gap = !gapRaw || gapRaw === "normal" ? 0 : parsePx(gapRaw);
+      var stride =
+        root.clientWidth -
+        parsePx(style.marginLeft) -
+        parsePx(style.marginRight) -
+        parsePx(style.paddingLeft) -
+        parsePx(style.paddingRight) +
+        gap;
+      if (isFinite(stride) && stride > 0) return stride;
+    } catch (error) {
+      /* Fall through to the viewport fallback. */
+    }
+    return window.innerWidth || state.stride || 1;
+  }
+
+  function scrollingRoot() {
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function getScrollLeft() {
+    return scrollingRoot().scrollLeft;
+  }
+
+  function setScrollLeft(target, behavior) {
+    var root = scrollingRoot();
+    var html = document.documentElement;
+    var body = document.body;
+    if (behavior && behavior !== "auto") {
+      try {
+        root.scrollTo({ left: target, top: 0, behavior: behavior });
+      } catch (error) {
+        root.scrollLeft = target;
+      }
+      return;
+    }
+    try {
+      root.scrollTo({ left: target, top: 0, behavior: "auto" });
+    } catch (error) {
+      /* Fall through to the assignment below. */
+    }
+    root.scrollLeft = target;
+    html.scrollLeft = target;
+    if (body) body.scrollLeft = target;
+    void html.offsetWidth;
+    if (Math.abs(getScrollLeft() - target) > 2) {
+      root.scrollLeft = target;
+      html.scrollLeft = target;
+      if (body) body.scrollLeft = target;
+    }
+  }
+
+  function maxScrollLeft() {
+    var el = scrollingRoot();
+    return Math.max(0, el.scrollWidth - el.clientWidth);
   }
 
   function clamp(value, low, high) {
     return Math.min(high, Math.max(low, value));
   }
 
-  function relayout(preservedPosition) {
-    applyLayout();
-    measure();
-    if (preservedPosition) {
-      goToPosition(preservedPosition, false);
+  /*
+   * Page index implied by the live scroll offset. The DOM is the source of
+   * truth; state.currentPage is only allowed to lead during a smooth turn.
+   */
+  function pageFromScroll() {
+    var stride = currentStride();
+    return clamp(
+      Math.round(getScrollLeft() / stride),
+      0,
+      Math.max(0, state.pageCount - 1)
+    );
+  }
+
+  // Intended page while a smooth scroll is in flight; null otherwise.
+  var pendingPageTarget = null;
+
+  function syncPageFromScroll() {
+    var actual = pageFromScroll();
+    if (pendingPageTarget == null) {
+      state.currentPage = actual;
+      return actual;
     }
-    renderHighlights();
+    var expected = pendingPageTarget * currentStride();
+    if (Math.abs(getScrollLeft() - expected) <= 2) {
+      pendingPageTarget = null;
+      state.currentPage = actual;
+      return actual;
+    }
+    state.currentPage = clamp(pendingPageTarget, 0, state.pageCount - 1);
+    return state.currentPage;
+  }
+
+  function measure() {
+    var stride = currentStride();
+    state.stride = stride;
+    // Round rather than ceil: sub-pixel scrollWidth slop from column gaps must
+    // not invent a trailing page that has no content to scroll to.
+    state.pageCount = Math.max(1, Math.round(maxScrollLeft() / stride) + 1);
+    syncPageFromScroll();
+  }
+
+  function layoutSnapshot() {
+    var el = document.documentElement;
+    return {
+      width: window.innerWidth,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      maxScroll: maxScrollLeft(),
+    };
+  }
+
+  function snapshotsEqual(a, b) {
+    return (
+      a &&
+      b &&
+      Math.abs(a.width - b.width) < 1 &&
+      Math.abs(a.clientWidth - b.clientWidth) < 1 &&
+      Math.abs(a.scrollWidth - b.scrollWidth) < 1 &&
+      Math.abs(a.maxScroll - b.maxScroll) < 1
+    );
+  }
+
+  var relayoutGeneration = 0;
+  // First valid text anchor captured while overlapping resize/configure
+  // relayouts are in flight. Later captures often see scrollLeft already
+  // reset to 0 and would restore the chapter start by mistake.
+  var pendingRestore = null;
+
+  function rememberRestore(position) {
+    if (pendingRestore) return;
+    if (!position || !position.elementPath || position.elementPath.length === 0) return;
+    pendingRestore = position;
+  }
+
+  function relayout(preservedPosition) {
+    rememberRestore(preservedPosition);
+    applyLayout();
+    // Flush pending custom properties so column metrics match the new viewport.
+    void document.documentElement.offsetWidth;
+
+    var generation = ++relayoutGeneration;
+    pendingPageTarget = null;
+    var last = null;
+    var stableCount = 0;
+    var attempts = 0;
+    var maxAttempts = 8;
+
+    function finish() {
+      if (generation !== relayoutGeneration) return;
+      var restore = pendingRestore;
+      pendingRestore = null;
+      measure();
+      pendingPageTarget = null;
+      if (restore) {
+        goToPosition(restore, false);
+      } else {
+        notifyPageChanged();
+      }
+      renderHighlights();
+      renderReadingRange();
+    }
+
+    function step() {
+      if (generation !== relayoutGeneration) return;
+      applyLayout();
+      void document.documentElement.offsetWidth;
+      var now = layoutSnapshot();
+      attempts += 1;
+      if (snapshotsEqual(last, now)) {
+        stableCount += 1;
+      } else {
+        stableCount = 0;
+        last = now;
+      }
+      if (stableCount >= 1 || attempts >= maxAttempts) {
+        finish();
+        return;
+      }
+      scheduleStep();
+    }
+
+    // rAF is preferred, but it may never fire in a hidden WKWebView (tests,
+    // background windows), so every step also has a timeout fallback.
+    function scheduleStep() {
+      var fired = false;
+      function run() {
+        if (fired) return;
+        fired = true;
+        step();
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(run);
+      }
+      setTimeout(run, 16);
+    }
+
+    scheduleStep();
   }
 
   // ------------------------------------------------------------ navigation
 
   function scrollToPage(page, animated) {
-    var target = clamp(page, 0, state.pageCount - 1) * state.stride;
-    var behavior = animated && settings.animatePageTurns ? "smooth" : "auto";
-    try {
-      document.documentElement.scrollTo({ left: target, top: 0, behavior: behavior });
-    } catch (error) {
-      document.documentElement.scrollLeft = target;
+    var stride = currentStride();
+    // Clamp to the real scrollable range so an over-counted pageCount can never
+    // send the caret past the last column, which would read as "the counter
+    // moved but the page didn't".
+    var requested = clamp(page, 0, state.pageCount - 1);
+    var target = clamp(requested * stride, 0, maxScrollLeft());
+    var useSmooth = animated && settings.animatePageTurns;
+
+    if (useSmooth) {
+      pendingPageTarget = clamp(Math.round(target / stride), 0, state.pageCount - 1);
+      state.currentPage = pendingPageTarget;
+      setScrollLeft(target, "smooth");
+      return;
     }
-    state.currentPage = clamp(page, 0, state.pageCount - 1);
+
+    pendingPageTarget = null;
+    setScrollLeft(target, "auto");
+    state.currentPage = pageFromScroll();
   }
 
   function goToPage(page, animated) {

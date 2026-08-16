@@ -78,8 +78,16 @@ public struct ReaderKeyboardShortcuts: ViewModifier {
 }
 
 public extension View {
-    func readerKeyboardShortcuts(_ controller: ReaderController, enabled: Bool = true) -> some View {
-        modifier(ReaderKeyboardShortcuts(controller: controller, enabled: enabled))
+    func readerKeyboardShortcuts(
+        _ controller: ReaderController,
+        enabled: Bool = true,
+        spaceAction: (() -> Void)? = nil
+    ) -> some View {
+        modifier(ReaderKeyboardShortcuts(
+            controller: controller,
+            enabled: enabled,
+            spaceAction: spaceAction
+        ))
     }
 }
 #endif

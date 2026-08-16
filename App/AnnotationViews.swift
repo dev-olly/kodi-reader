@@ -88,6 +88,8 @@ struct HighlightPalette: View {
             .padding(.vertical, 10)
             .background(.regularMaterial, in: .rect(cornerRadius: 10))
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+            .padding(.bottom, copied ? 26 : 0)
+            .animation(.easeInOut(duration: 0.15), value: copied)
             .onContinuousHover { phase in
                 switch phase {
                 case .active:

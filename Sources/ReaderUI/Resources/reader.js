@@ -1228,11 +1228,16 @@
 
   function isReaderChrome(el) {
     if (!el || el.nodeType !== 1) return true;
-    if (el.id === LAYER_ID) return true;
-    if (el.classList && (el.classList.contains("reader-highlight-rect") || el.classList.contains("reader-highlight-layer"))) {
+    if (el.id === LAYER_ID || el.id === READING_LAYER_ID) return true;
+    if (
+      el.classList &&
+      (el.classList.contains("reader-highlight-rect") ||
+        el.classList.contains("reader-highlight-layer") ||
+        el.classList.contains("reader-reading-rect"))
+    ) {
       return true;
     }
-    return !!(el.closest && el.closest("#" + LAYER_ID));
+    return !!(el.closest && (el.closest("#" + LAYER_ID) || el.closest("#" + READING_LAYER_ID)));
   }
 
   /*

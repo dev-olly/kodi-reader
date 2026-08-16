@@ -5,9 +5,12 @@
  * viewport tall, content overflows sideways into further columns, and turning
  * a page scrolls the document by exactly one viewport width.
  *
- * The stride only equals the viewport width if the column gap is twice the
- * horizontal margin, so reader.js always derives --column-gap that way. With
- * that invariant, one and two column layouts both advance by 100vw.
+ * The stride equals the viewport width only when body padding is the page
+ * margin and the column gap is twice that margin. reader.js always derives
+ * --column-gap that way, and the page-box properties below are !important
+ * so author class rules (Calibre `.calibre`, Kindle conversions) cannot
+ * zero the padding or pin the type size. With that invariant enforced, one
+ * and two column layouts both advance by 100vw.
  */
 
 :root {

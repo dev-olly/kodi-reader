@@ -56,11 +56,43 @@ struct EpubReaderApp: App {
                 .disabled(model.isNoteEditorOpen)
         }
 
+        CommandMenu("Read Aloud") {
+            Button(model.readAloud.isPlaying ? "Pause" : "Play") {
+                if model.readAloud.isActive {
+                    model.readAloud.togglePause()
+                } else {
+                    model.toggleReadAloud()
+                }
+            }
+            .keyboardShortcut("r", modifiers: [.command, .shift])
+            .disabled(model.book == nil)
+
+            Button("Stop") { model.readAloud.stop() }
+            .disabled(!model.readAloud.isActive)
+
+            Divider()
+
+            Button("Skip Forward 15 Seconds") { model.readAloud.skipForward() }
+            .keyboardShortcut(.rightArrow, modifiers: [.option])
+            .disabled(!model.readAloud.isActive)
+
+            Button("Skip Back 15 Seconds") { model.readAloud.skipBack() }
+            .keyboardShortcut(.leftArrow, modifiers: [.option])
+            .disabled(!model.readAloud.isActive)
+        }
+
         CommandMenu("View") {
             Button("Table of Contents") { model.isShowingContents.toggle() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             Button("Notes & Highlights") { model.isShowingAnnotations.toggle() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Toggle(
+                "Notes in Sidebar",
+                isOn: Binding(
+                    get: { model.notesInSidebar },
+                    set: { model.notesInSidebar = $0 }
+                )
+            )
             Divider()
             Picker("Theme", selection: Binding(
                 get: { model.settings.theme },

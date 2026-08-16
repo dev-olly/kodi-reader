@@ -36,10 +36,16 @@ public struct ReaderWebView: NSViewRepresentable {
 public struct ReaderKeyboardShortcuts: ViewModifier {
     private let controller: ReaderController
     private let enabled: Bool
+    private let spaceAction: (() -> Void)?
 
-    public init(controller: ReaderController, enabled: Bool = true) {
+    public init(
+        controller: ReaderController,
+        enabled: Bool = true,
+        spaceAction: (() -> Void)? = nil
+    ) {
         self.controller = controller
         self.enabled = enabled
+        self.spaceAction = spaceAction
     }
 
     public func body(content: Content) -> some View {

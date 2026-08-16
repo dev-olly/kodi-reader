@@ -145,6 +145,94 @@ final class RenderingTests: XCTestCase {
         )
     }
 
+    /// Edge-tap paging must use the page gutter, not the text column. A click
+    /// on a paragraph near the left edge used to fall inside the old 15% zone
+    /// and turn the page; it must now stay put. A click on the empty margin
+    /// still pages.
+    func testContentClickDoesNotTurnPage() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 700, height: 500)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 1, "Chapter fits on one page")
+
+        reader.nextPage()
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page > 0 },
+            "Could not advance off page 0 before testing clicks"
+        )
+
+        let pageAfterAdvance = reader.page
+
+        var contentClickTarget: String?
+        reader.evaluateForTesting(
+            """
+            (function () {
+              var nodes = document.body.querySelectorAll("p, h1, h2, h3, h4");
+              for (var i = 0; i < nodes.length; i++) {
+                var node = nodes[i];
+                var rect = node.getBoundingClientRect();
+                if (rect.width < 8 || rect.height < 8) continue;
+                if (rect.top < 0 || rect.top > window.innerHeight) continue;
+                var x = rect.left + 8;
+                var y = rect.top + Math.min(12, rect.height / 2);
+                var hit = document.elementFromPoint(x, y) || node;
+                hit.dispatchEvent(new MouseEvent("click", {
+                  bubbles: true,
+                  cancelable: true,
+                  view: window,
+                  clientX: x,
+                  clientY: y
+                }));
+                return hit.tagName;
+              }
+              return null;
+            })()
+            """
+        ) { contentClickTarget = $0 as? String }
+
+        XCTAssertTrue(
+            wait { contentClickTarget != nil },
+            "Content click script did not run"
+        )
+        let hitTag = try XCTUnwrap(contentClickTarget, "No visible paragraph to click")
+        XCTAssertFalse(
+            ["BODY", "HTML"].contains(hitTag),
+            "Expected to click a text element, not the page chrome"
+        )
+        _ = wait(timeout: 0.4) { reader.page != pageAfterAdvance }
+        XCTAssertEqual(
+            reader.page, pageAfterAdvance,
+            "Clicking the text column turned the page"
+        )
+
+        var marginClickDone = false
+        reader.evaluateForTesting(
+            """
+            document.body.dispatchEvent(new MouseEvent("click", {
+              bubbles: true,
+              cancelable: true,
+              view: window,
+              clientX: 8,
+              clientY: Math.floor(window.innerHeight / 2)
+            }));
+            """
+        ) { _ in marginClickDone = true }
+
+        XCTAssertTrue(wait { marginClickDone }, "Margin click script did not run")
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page < pageAfterAdvance },
+            "Clicking the empty left margin did not go back (page stayed at \(reader.page))"
+        )
+    }
+
     func testReportsProgressThroughTheBook() throws {
         let (reader, book) = try makeReader(SampleBooks.frankenstein)
 

@@ -15,17 +15,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
         Coordinator(self)
     }
 
-    func makeNSView(context: Context) -> NSView {
-        let host = EditorHostView()
-        host.translatesAutoresizingMaskIntoConstraints = false
-
+    func makeNSView(context: Context) -> NSScrollView {
         let scroll = NSScrollView()
-        scroll.translatesAutoresizingMaskIntoConstraints = false
         scroll.hasVerticalScroller = true
         scroll.borderType = .noBorder
         scroll.drawsBackground = false
 
-        let textView = NSTextView()
+        let textView = NoteTextView()
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.allowsUndo = true

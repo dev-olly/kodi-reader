@@ -142,7 +142,8 @@ body th,
 body blockquote,
 body a {
   font-size: 1em;
-  line-height: inherit;
+  /* Author `.calibreN { line-height: 1.2 }` would otherwise pin leading. */
+  line-height: inherit !important;
 }
 
 /* Relative heading scale, still tied to the reader's body font size. */

@@ -104,12 +104,6 @@ struct ReaderScreen: View {
             }
             .background(model.settings.theme.uiBackground)
 
-            VStack {
-                Spacer()
-                ProgressFooter(reader: reader)
-                    .padding(.horizontal, Self.navRailWidth + Self.navContentGap)
-            }
-
             if reader.isLoading {
                 ProgressView()
                     .controlSize(.small)

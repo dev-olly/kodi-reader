@@ -13,6 +13,15 @@ options:
 packages:
   EpubReaderCore:
     path: .
+  KokoroSwift:
+    url: https://github.com/mlalma/kokoro-ios
+    from: 1.0.8
+  mlx-swift:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.30.2
+  MLXUtilsLibrary:
+    url: https://github.com/mlalma/MLXUtilsLibrary.git
+    exactVersion: 0.0.6
 
 settings:
   base:

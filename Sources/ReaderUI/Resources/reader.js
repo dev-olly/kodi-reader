@@ -1329,11 +1329,11 @@
 
   var resizeTimer = null;
   function onResize() {
-    var anchor = currentPosition();
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
-      relayout(anchor);
-      notifyPageChanged();
+      // Capture the anchor after the window has settled, not on the first
+      // intermediate resize event, so we restore what is actually on screen.
+      relayout(currentPosition());
     }, 90);
   }
 

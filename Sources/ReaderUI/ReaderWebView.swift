@@ -61,7 +61,7 @@ public struct ReaderKeyboardShortcuts: ViewModifier {
                             .keyboardShortcut(.upArrow, modifiers: [])
                         Button("") { controller.nextPage() }
                             .keyboardShortcut(.downArrow, modifiers: [])
-                        Button("") { controller.nextPage() }
+                        Button("") { (spaceAction ?? { controller.nextPage() })() }
                             .keyboardShortcut(.space, modifiers: [])
                         Button("") { controller.previousPage() }
                             .keyboardShortcut(.space, modifiers: [.shift])

@@ -707,6 +707,8 @@
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
         if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        var readingLayer = document.getElementById(READING_LAYER_ID);
+        if (readingLayer && readingLayer.contains(node)) return NodeFilter.FILTER_REJECT;
         if (!node.textContent || !node.textContent.trim()) {
           return NodeFilter.FILTER_REJECT;
         }

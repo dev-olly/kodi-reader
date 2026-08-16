@@ -1388,6 +1388,15 @@
     },
     setHighlights: setHighlights,
     clearSelection: clearSelection,
+    extractUtterances: function (fromPosition) {
+      try {
+        return JSON.stringify(extractUtterances(fromPosition));
+      } catch (error) {
+        reportError("extractUtterances", error);
+        return "[]";
+      }
+    },
+    setReadingRange: setReadingRange,
     /*
      * Re-measures and reports where we are. The app calls this once a freshly
      * loaded document has been positioned, so that opening a book emits a

@@ -147,9 +147,57 @@ struct MarkdownTextEditor: NSViewRepresentable {
     }
 }
 
-/// Thin host so the placeholder can sit above the scroll view at the text inset.
-private final class EditorHostView: NSView {
-    override var isFlipped: Bool { true }
+/// Draws the placeholder in the extra line fragment so it shares the caret’s line.
+fileprivate final class NoteTextView: NSTextView {
+    var placeholderString: String = "" {
+        didSet {
+            if oldValue != placeholderString {
+                needsDisplay = true
+            }
+        }
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        if string.isEmpty, !placeholderString.isEmpty {
+            drawPlaceholder()
+        }
+        super.draw(dirtyRect)
+    }
+
+    private func drawPlaceholder() {
+        let font = self.font ?? .systemFont(ofSize: NSFont.systemFontSize + 1)
+        let attributes: [NSAttributedString.Key: Any] = [
+            .font: font,
+            .foregroundColor: NSColor.tertiaryLabelColor,
+        ]
+        (placeholderString as NSString).draw(
+            with: placeholderRect(for: font),
+            options: [.usesLineFragmentOrigin, .usesFontLeading, .truncatesLastVisibleLine],
+            attributes: attributes
+        )
+    }
+
+    /// Same box the insertion point uses when the document is empty.
+    private func placeholderRect(for font: NSFont) -> NSRect {
+        let padding = textContainer?.lineFragmentPadding ?? 0
+        let origin = textContainerOrigin
+        if let layoutManager, let textContainer {
+            layoutManager.ensureLayout(for: textContainer)
+            let fragment = layoutManager.extraLineFragmentRect
+            if fragment.height > 0 {
+                var rect = fragment.offsetBy(dx: origin.x, dy: origin.y)
+                rect.origin.x += padding
+                rect.size.width = max(0, bounds.width - rect.origin.x - textContainerInset.width)
+                return rect
+            }
+        }
+        return NSRect(
+            x: origin.x + padding,
+            y: origin.y,
+            width: max(0, bounds.width - origin.x - padding - textContainerInset.width),
+            height: layoutManager?.defaultLineHeight(for: font) ?? font.boundingRectForFont.height
+        )
+    }
 }
 
 private struct ListLine {

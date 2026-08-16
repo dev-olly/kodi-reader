@@ -295,6 +295,46 @@ public final class ReaderController {
         evaluate("__reader.clearSelection()")
     }
 
+    /// Sentences remaining in the current spine item, from `position` or the page.
+    public func extractUtterances(
+        from position: TextPosition?,
+        completion: @escaping ([ReaderUtterance]) -> Void
+    ) {
+        let argument = position.map { json($0) } ?? "null"
+        evaluate("__reader.extractUtterances(\(argument))") { result in
+            completion(Self.decodeUtterances(result))
+        }
+    }
+
+    /// Paints a live read-aloud overlay. Pass `nil` to clear it.
+    public func setReadingRange(_ locator: Locator?, charStart: Int? = nil, charEnd: Int? = nil) {
+        guard let locator else {
+            evaluate("__reader.setReadingRange(null)")
+            return
+        }
+        var payload: [String: Any] = [
+            "start": [
+                "elementPath": locator.start.elementPath,
+                "offset": locator.start.offset,
+            ],
+            "end": [
+                "elementPath": (locator.end ?? locator.start).elementPath,
+                "offset": (locator.end ?? locator.start).offset,
+            ],
+        ]
+        if let charStart { payload["charStart"] = charStart }
+        if let charEnd { payload["charEnd"] = charEnd }
+        guard let encoded = jsonString(payload) else { return }
+        let startArg = charStart.map(String.init) ?? "null"
+        let endArg = charEnd.map(String.init) ?? "null"
+        evaluate("__reader.setReadingRange(\(encoded), \(startArg), \(endArg))")
+    }
+
+    /// Turns to the page that contains `position` without animating.
+    public func revealForReading(_ position: TextPosition) {
+        evaluate("__reader.goToPosition(\(json(position)), false)")
+    }
+
     private func pushHighlights() {
         let visible = annotations.filter { $0.locator.spineIndex == spineIndex }
         let payloads = visible.map(\.javaScriptPayload)

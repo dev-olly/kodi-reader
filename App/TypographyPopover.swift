@@ -54,6 +54,13 @@ struct TypographyPopover: View {
             Toggle("Hyphenation", isOn: $model.settings.hyphenated)
             Toggle("Two Pages When Wide", isOn: $model.settings.twoPageSpread)
             Toggle("Animate Page Turns", isOn: $model.settings.animatePageTurns)
+            Toggle(
+                "Notes in Sidebar",
+                isOn: Binding(
+                    get: { model.notesInSidebar },
+                    set: { model.notesInSidebar = $0 }
+                )
+            )
         }
         .padding(20)
         .frame(width: 320)

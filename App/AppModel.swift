@@ -187,6 +187,7 @@ final class AppModel {
     }
 
     func closeBook() {
+        readAloud.stop()
         store.flush()
         reader?.tearDown()
         reader = nil

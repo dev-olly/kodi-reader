@@ -136,13 +136,73 @@ struct ReaderScreen: View {
                         openNoteEditor(created, autofocus: true)
                     }
                 },
+                onPlay: { model.startReadAloudFromSelection() },
+                onCopy: {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(selection.text, forType: .string)
+                },
                 onDismiss: { reader.clearSelection() }
             )
             .offset(
-                x: max(12, selection.rect.midX - 160),
+                x: max(12, selection.rect.midX - 200),
                 y: max(12, selection.rect.maxY + 10)
             )
             .transition(.scale(scale: 0.94).combined(with: .opacity))
+        }
+    }
+
+    private var isSidebarPlacement: Bool {
+        model.settings.noteEditorPlacement == .sidebar
+    }
+
+    /// Modal sheet is up — page-turn shortcuts should stay off.
+    private var isModalNoteEditor: Bool {
+        editingAnnotation != nil && !isSidebarPlacement
+    }
+
+    private var sheetAnnotation: Binding<Annotation?> {
+        Binding(
+            get: { isSidebarPlacement ? nil : editingAnnotation },
+            set: { newValue in
+                // Hiding the sheet because we docked it must not clear the editor.
+                if isSidebarPlacement, newValue == nil { return }
+                editingAnnotation = newValue
+            }
+        )
+    }
+
+    @ViewBuilder
+    private var inspectorContent: some View {
+        if isSidebarPlacement, let annotation = editingAnnotation {
+            NoteEditor(
+                annotation: model.annotation(with: annotation.id) ?? annotation,
+                autofocus: noteEditorAutofocus,
+                presentation: .sidebar,
+                onSave: { model.updateNote($0, for: annotation.id) },
+                onChangeColor: { model.changeColor($0, for: annotation.id) },
+                onDelete: { model.deleteAnnotation(annotation.id) },
+                onClose: { finishEditing() },
+                onBack: { backToNotesList() },
+                onTogglePlacement: { toggleNoteEditorPlacement() }
+            )
+            .id(annotation.id)
+            .inspectorColumnWidth(min: 280, ideal: 380, max: 480)
+        } else {
+            AnnotationsInspector(
+                annotations: model.record?.annotations ?? [],
+                bookmarks: model.record?.bookmarks ?? [],
+                chapterTitles: chapterTitles,
+                onSelect: { reader.go(to: $0) },
+                onEdit: { openNoteEditor($0, autofocus: !$0.hasNote) },
+                onDelete: { model.deleteAnnotation($0.id) },
+                onExport: {
+                    NotesExporter.presentSavePanel(
+                        bookTitle: book.title,
+                        markdown: model.exportNotesMarkdown()
+                    )
+                }
+            )
+            .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
         }
     }
 

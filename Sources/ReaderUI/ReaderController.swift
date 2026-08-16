@@ -145,10 +145,27 @@ public final class ReaderController {
         schemeHandler = nil
     }
 
-    /// Records the current width so margins and column widths track the window.
-    public func updateViewport(width: Double) {
-        guard width > 0, abs(width - viewportWidth) > 1 else { return }
+    /// Records the current size so margins and column widths track the window,
+    /// then re-pages once layout has settled.
+    public func updateViewport(width: Double, height: Double = 0) {
+        guard width > 0 else { return }
+        let widthChanged = abs(width - viewportWidth) > 1
+        let heightChanged = height > 0 && abs(height - viewportHeight) > 1
+        guard widthChanged || heightChanged else { return }
         viewportWidth = width
+        if height > 0 { viewportHeight = height }
+
+        guard hasStarted, webView != nil else { return }
+        scheduleViewportRelayout()
+    }
+
+    private func scheduleViewportRelayout() {
+        viewportRelayoutWork?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.applySettings()
+        }
+        viewportRelayoutWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.09, execute: work)
     }
 
     // MARK: - Opening content

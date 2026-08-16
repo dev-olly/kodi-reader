@@ -1289,10 +1289,17 @@
     var selection = window.getSelection();
     if (selection && !selection.isCollapsed) return;
 
-    var ratio = event.clientX / window.innerWidth;
-    if (ratio < 0.15) {
+    // Highlight rects sit over the text; never steal those clicks for paging.
+    if (target && target.closest && target.closest("#" + LAYER_ID)) return;
+
+    // Only the empty page chrome (padding on body/html) is a tap zone.
+    // Clicks on paragraphs, images, and other content must not turn the page.
+    if (target !== document.body && target !== document.documentElement) return;
+
+    var margin = settings.marginX;
+    if (event.clientX < margin) {
       if (!previousPage()) post({ type: "reachedStart" });
-    } else if (ratio > 0.85) {
+    } else if (event.clientX > window.innerWidth - margin) {
       if (!nextPage()) post({ type: "reachedEnd" });
     }
   }

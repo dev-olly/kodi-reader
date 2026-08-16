@@ -16,6 +16,9 @@ brew install xcodegen
 
 ## Building
 
+The app target needs Xcode 26 (KokoroSwift). `swift test` for EpubKit and
+ReaderUI still runs on older toolchains.
+
 ```sh
 xcodegen generate
 open KodiReader.xcodeproj

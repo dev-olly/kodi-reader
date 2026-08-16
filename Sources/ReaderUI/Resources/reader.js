@@ -12,6 +12,7 @@
   "use strict";
 
   var LAYER_ID = "reader-highlight-layer";
+  var READING_LAYER_ID = "reader-reading-layer";
 
   var settings = {
     marginX: 72,

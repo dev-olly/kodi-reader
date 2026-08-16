@@ -607,6 +607,47 @@ public final class ReaderController {
         return TextPosition(elementPath: path, offset: raw["offset"] as? Int ?? 0)
     }
 
+    private static func decodeUtterances(_ result: Any?) -> [ReaderUtterance] {
+        let rows: [[String: Any]]
+        if let string = result as? String,
+           let data = string.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
+            rows = parsed
+        } else if let parsed = result as? [[String: Any]] {
+            rows = parsed
+        } else {
+            return []
+        }
+
+        return rows.compactMap { raw in
+            guard
+                let text = raw["text"] as? String,
+                let startRaw = raw["start"] as? [String: Any],
+                let endRaw = raw["end"] as? [String: Any],
+                let startPath = intPath(startRaw["elementPath"]),
+                let endPath = intPath(endRaw["elementPath"])
+            else { return nil }
+            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return nil }
+            return ReaderUtterance(
+                text: trimmed,
+                start: TextPosition(elementPath: startPath, offset: intValue(startRaw["offset"])),
+                end: TextPosition(elementPath: endPath, offset: intValue(endRaw["offset"]))
+            )
+        }
+    }
+
+    private static func intPath(_ raw: Any?) -> [Int]? {
+        guard let array = raw as? [Any] else { return raw as? [Int] }
+        return array.map(intValue)
+    }
+
+    private static func intValue(_ raw: Any?) -> Int {
+        if let number = raw as? NSNumber { return number.intValue }
+        if let value = raw as? Int { return value }
+        return 0
+    }
+
     private func decodeRect(_ raw: [String: Any]?) -> CGRect {
         guard let raw else { return .zero }
         return CGRect(

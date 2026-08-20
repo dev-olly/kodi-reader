@@ -48,6 +48,12 @@ struct ManageModelsView: View {
                     }
                 }
             }
+            .sheet(item: $editing) { config in
+                ModelEditorView(config: config, isNew: false)
+            }
+            .sheet(isPresented: $isAdding) {
+                ModelEditorView(config: blankConfig(), isNew: true)
+            }
         }
         .frame(minWidth: 480, minHeight: 420)
     }
@@ -113,3 +119,109 @@ struct ManageModelsView: View {
     }
 }
 
+private struct ModelEditorView: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+
+    @State var config: AIModelConfig
+    let isNew: Bool
+    @State private var keyDraft = ""
+    @State private var keyLoaded = false
+    @State private var saveError: String?
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                TextField("Name", text: $config.name)
+                Picker("Type", selection: $config.kind) {
+                    ForEach(AIModelKind.allCases) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                .onChange(of: config.kind) { _, kind in
+                    if kind == .local {
+                        config.requiresKey = false
+                    } else if isNew {
+                        config.requiresKey = true
+                    }
+                }
+                TextField("Base URL", text: $config.baseURL)
+                TextField("Model ID", text: $config.modelID)
+                Toggle("Requires API key", isOn: $config.requiresKey)
+                if config.requiresKey {
+                    SecureField("API key", text: $keyDraft)
+                    Text("Leave blank to keep the existing key.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle(isNew ? "Add Model" : "Edit Model")
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Save") { save() }
+                        .disabled(!canSave)
+                }
+            }
+            .alert(
+                "Could not save key",
+                isPresented: Binding(
+                    get: { saveError != nil },
+                    set: { if !$0 { saveError = nil } }
+                )
+            ) {
+                Button("OK", role: .cancel) { saveError = nil }
+            } message: {
+                Text(saveError ?? "")
+            }
+            .onAppear(perform: loadKey)
+        }
+        .frame(minWidth: 420, minHeight: 360)
+    }
+
+    private var canSave: Bool {
+        !config.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !config.modelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    private func loadKey() {
+        guard !keyLoaded else { return }
+        keyLoaded = true
+        if let existing = KeychainStore.get(account: config.id.uuidString) {
+            keyDraft = existing
+        }
+    }
+
+    private func save() {
+        config.name = config.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.baseURL = config.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.modelID = config.modelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        model.aiConfig.upsert(config)
+        if isNew || model.aiConfig.selectedModelID == nil {
+            model.aiConfig.selectedModelID = config.id
+        }
+
+        let trimmedKey = keyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        if config.requiresKey {
+            if !trimmedKey.isEmpty {
+                do {
+                    try KeychainStore.set(trimmedKey, account: config.id.uuidString)
+                } catch {
+                    saveError = error.localizedDescription
+                    return
+                }
+            }
+        } else if !trimmedKey.isEmpty {
+            do {
+                try KeychainStore.set(trimmedKey, account: config.id.uuidString)
+            } catch {
+                saveError = error.localizedDescription
+                return
+            }
+        }
+        dismiss()
+    }
+}

@@ -50,4 +50,20 @@ final class LibraryImportTests: XCTestCase {
         XCTAssertNil(record.chatMessages)
         XCTAssertEqual(record.conversation, [])
     }
+
+    func testBookRecordRoundTripsChatMessages() throws {
+        var record = BookRecord(id: "book-1", title: "Test", author: "Author")
+        record.chatMessages = [
+            ChatMessage(role: .user, text: "What does this mean?", references: [
+                ChatReference(quotedText: "Call me Ishmael.", chapterTitle: "Chapter 1", spineIndex: 0),
+            ]),
+            ChatMessage(role: .assistant, text: "It is the narrator introducing himself."),
+        ]
+        let data = try JSONEncoder().encode(record)
+        let decoded = try JSONDecoder().decode(BookRecord.self, from: data)
+        XCTAssertEqual(decoded.conversation.count, 2)
+        XCTAssertEqual(decoded.conversation[0].text, "What does this mean?")
+        XCTAssertEqual(decoded.conversation[0].references.first?.quotedText, "Call me Ishmael.")
+        XCTAssertEqual(decoded.conversation[1].role, .assistant)
+    }
 }

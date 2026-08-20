@@ -513,6 +513,11 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         self.chatMessages = chatMessages
     }
 
+    /// Non-optional view of the stored conversation.
+    public var conversation: [ChatMessage] {
+        chatMessages ?? []
+    }
+
     public func annotations(inSpineIndex index: Int) -> [Annotation] {
         annotations.filter { $0.locator.spineIndex == index }
     }

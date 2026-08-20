@@ -336,6 +336,13 @@ struct ReaderScreen: View {
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .navigation) {
+            Button { model.isShowingAskAI.toggle() } label: {
+                Label("Ask AI", systemImage: "sparkles")
+            }
+            .quickHelp(model.isShowingAskAI ? "Hide Ask AI" : "Ask AI")
+        }
+
         ToolbarItem(placement: .principal) {
             VStack(spacing: 1) {
                 Text(book.title)

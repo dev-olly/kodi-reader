@@ -292,6 +292,24 @@ final class AppModel {
         )
     }
 
+    /// Opens the leading chat panel and attaches the current selection, if any.
+    func addSelectionToChat() {
+        guard book != nil else { return }
+        isShowingAskAI = true
+        guard let reader, let selection = reader.selection else {
+            chat.shouldFocusComposer = true
+            return
+        }
+        chat.addReference(
+            ChatReference(
+                quotedText: selection.text,
+                chapterTitle: reader.chapterTitle,
+                spineIndex: selection.locator.spineIndex
+            )
+        )
+        reader.clearSelection()
+    }
+
     private func persistChat(_ messages: [ChatMessage]) {
         guard var record, let bookID = book?.bookID else { return }
         record.chatMessages = messages.isEmpty ? nil : messages

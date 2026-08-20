@@ -17,6 +17,7 @@ final class AIConfigStore {
     @ObservationIgnored private let fileURL: URL
 
     init(directory: URL) {
+        Self.importLeakedConfigIfNeeded(into: directory)
         let url = directory.appendingPathComponent("ai-models.json")
         self.fileURL = url
         if let payload = Self.load(from: url), !payload.configs.isEmpty {
@@ -89,4 +90,18 @@ final class AIConfigStore {
         return try? JSONDecoder().decode(Payload.self, from: data)
     }
 
+    /// Unsigned builds used to write `ai-models.json` next to the user's real
+    /// home Application Support. Pull that file into the container once.
+    private static func importLeakedConfigIfNeeded(into directory: URL) {
+        let destination = directory.appendingPathComponent("ai-models.json")
+        guard !FileManager.default.fileExists(atPath: destination.path) else { return }
+        guard !AppDataDirectory.isSandboxed else { return }
+        let leaked = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/EpubReader/ai-models.json")
+        guard leaked.standardizedFileURL != destination.standardizedFileURL,
+              FileManager.default.fileExists(atPath: leaked.path)
+        else { return }
+        try? FileManager.default.copyItem(at: leaked, to: destination)
+        try? FileManager.default.removeItem(at: leaked)
+    }
 }

@@ -393,12 +393,17 @@ struct NoteSheet: View {
             annotation: annotation,
             autofocus: autofocus,
             presentation: .sheet,
+            drawingScene: drawingScene,
+            isDark: isDark,
+            startInDraw: startInDraw,
             onSave: onSave,
+            onSaveDrawing: onSaveDrawing,
             onChangeColor: onChangeColor,
             onDelete: onDelete,
             onClose: { dismiss() },
-            onTogglePlacement: onTogglePlacement
+            onTogglePlacement: onTogglePlacement,
+            onRequestSheetForDraw: onRequestSheetForDraw
         )
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 480, idealHeight: 560)
+        .frame(minWidth: 640, idealWidth: 720, minHeight: 520, idealHeight: 600)
     }
 }

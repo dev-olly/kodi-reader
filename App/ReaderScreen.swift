@@ -150,6 +150,7 @@ struct ReaderScreen: View {
                         openNoteEditor(created, autofocus: true)
                     }
                 },
+                onAskAI: { model.addSelectionToChat() },
                 onPlay: { model.startReadAloudFromSelection() },
                 onCopy: {
                     NSPasteboard.general.clearContents()

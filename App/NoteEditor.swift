@@ -100,6 +100,7 @@ struct NoteEditor: View {
                     }
                     .buttonStyle(.borderless)
                     .help(dockHelp)
+                    .disabled(mode == .draw)
                 }
             }
 

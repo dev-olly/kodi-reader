@@ -309,7 +309,7 @@ final class AppModel {
         if let cached = drawingCache[id] { return cached }
         guard let bookID = book?.bookID else { return nil }
         let data = store.drawingStore.loadScene(bookID: bookID, annotationID: id)
-        if let data { drawingCache[id] = data }
+        drawingCache[id] = data
         return data
     }
 

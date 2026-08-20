@@ -25,4 +25,12 @@ public struct ChatReference: Codable, Identifiable, Hashable, Sendable {
         self.chapterTitle = chapterTitle
         self.spineIndex = spineIndex
     }
+
+    /// Short label for chips in the composer and message list.
+    public var preview: String {
+        let trimmed = quotedText.trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        if trimmed.count <= 72 { return trimmed }
+        return String(trimmed.prefix(72)) + "…"
+    }
 }

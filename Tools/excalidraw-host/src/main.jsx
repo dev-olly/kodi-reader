@@ -32,3 +32,21 @@ function serialize(api) {
   };
   return { elementCount: elements.length, scene: JSON.stringify(scene) };
 }
+
+function applyScene(parsed) {
+  const api = apiRef.current;
+  if (!api) return;
+  applyingRef.current = true;
+  api.updateScene({
+    elements: parsed.elements ?? [],
+    appState: { ...(parsed.appState ?? {}), theme: themeRef.current },
+    captureUpdate: CaptureUpdateAction.NEVER,
+  });
+  const files = parsed.files ? Object.values(parsed.files) : [];
+  if (files.length) {
+    api.addFiles(files);
+  }
+  queueMicrotask(() => {
+    applyingRef.current = false;
+  });
+}

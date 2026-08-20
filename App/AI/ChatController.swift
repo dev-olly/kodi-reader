@@ -117,6 +117,40 @@ final class ChatController {
         persist()
     }
 
+    func newConversation() {
+        stop()
+        messages = []
+        input = ""
+        pendingReferences = []
+        errorMessage = nil
+        persist()
+        shouldFocusComposer = true
+    }
+
+    /// Restore a book's conversation without writing back.
+    func load(_ stored: [ChatMessage]) {
+        streamTask?.cancel()
+        streamTask = nil
+        isStreaming = false
+        messages = stored
+        input = ""
+        pendingReferences = []
+        errorMessage = nil
+        shouldFocusComposer = false
+    }
+
+    /// Clear in-memory state without persisting — used when closing a book.
+    func detach() {
+        streamTask?.cancel()
+        streamTask = nil
+        isStreaming = false
+        messages = []
+        input = ""
+        pendingReferences = []
+        errorMessage = nil
+        shouldFocusComposer = false
+    }
+
     private func persist() {
         onPersist?(messages)
     }

@@ -292,6 +292,8 @@ final class AppModel {
         )
     }
 
+    // MARK: - Ask AI
+
     /// Opens the leading chat panel and attaches the current selection, if any.
     func addSelectionToChat() {
         guard book != nil else { return }

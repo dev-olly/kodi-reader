@@ -482,6 +482,8 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var progress: Double
     public var annotations: [Annotation]
     public var bookmarks: [Bookmark]
+    /// Ask AI conversation for this book. Optional so older library files decode.
+    public var chatMessages: [ChatMessage]?
 
     public init(
         id: String,
@@ -494,7 +496,8 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         position: Locator? = nil,
         progress: Double = 0,
         annotations: [Annotation] = [],
-        bookmarks: [Bookmark] = []
+        bookmarks: [Bookmark] = [],
+        chatMessages: [ChatMessage]? = nil
     ) {
         self.id = id
         self.title = title
@@ -507,6 +510,7 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         self.progress = progress
         self.annotations = annotations
         self.bookmarks = bookmarks
+        self.chatMessages = chatMessages
     }
 
     public func annotations(inSpineIndex index: Int) -> [Annotation] {

@@ -17,10 +17,14 @@ final class AppModel {
     var errorMessage: String?
     var isShowingContents = false
     var isShowingAnnotations = false
+    var isShowingAskAI = false
+    var isShowingManageModels = false
     /// True while the modal note editor sheet is presented — disables page-turn shortcuts.
     /// Sidebar editing does not set this, so paging still works.
     var isNoteEditorOpen = false
     let readAloud = ReadAloudController()
+    let aiConfig: AIConfigStore
+    let chat: ChatController
 
     var notesInSidebar: Bool {
         get { settings.noteEditorPlacement == .sidebar }
@@ -43,12 +47,26 @@ final class AppModel {
     @ObservationIgnored private var drawingCache: [UUID: Data] = [:]
 
     init() {
-        let store = (try? LibraryStore()) ?? LibraryStore(
-            fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("library.json")
-        )
+        let root = AppDataDirectory.prepare()
+        let store = LibraryStore(fileURL: root.appendingPathComponent("library.json"))
         self.store = store
         settings = store.loadSettings(ReaderSettings.self) ?? ReaderSettings()
         recents = store.recentBooks()
+
+        let aiConfig = AIConfigStore(directory: root)
+        self.aiConfig = aiConfig
+        let chat = ChatController(configStore: aiConfig)
+        self.chat = chat
+        chat.onPersist = { [weak self] messages in
+            self?.persistChat(messages)
+        }
+        chat.contextProvider = { [weak self] in
+            AIChatService.Context(
+                bookTitle: self?.book?.title ?? self?.record?.title ?? "",
+                author: self?.book?.author ?? self?.record?.author ?? "",
+                chapterTitle: self?.reader?.chapterTitle
+            )
+        }
     }
 
     // MARK: - Opening and closing
@@ -267,6 +285,10 @@ final class AppModel {
             selection: reader.selection,
             position: record?.position?.start
         )
+    }
+
+    private func persistChat(_ messages: [ChatMessage]) {
+        _ = messages
     }
 
     // MARK: - Annotations

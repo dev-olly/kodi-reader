@@ -62,6 +62,8 @@ final class EPUBPathTests: XCTestCase {
         XCTAssertEqual(EPUBPath.mimeType(forPath: "a/B.CSS"), "text/css")
         XCTAssertEqual(EPUBPath.mimeType(forPath: "cover.jpeg"), "image/jpeg")
         XCTAssertEqual(EPUBPath.mimeType(forPath: "font.woff2"), "font/woff2")
+        XCTAssertEqual(EPUBPath.mimeType(forPath: "app.mjs"), "text/javascript")
+        XCTAssertEqual(EPUBPath.mimeType(forPath: "draw.wasm"), "application/wasm")
         XCTAssertEqual(EPUBPath.mimeType(forPath: "mystery.bin"), "application/octet-stream")
     }
 }

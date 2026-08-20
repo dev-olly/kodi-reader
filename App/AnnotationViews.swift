@@ -7,6 +7,7 @@ import UniformTypeIdentifiers
 struct HighlightPalette: View {
     let onPick: (HighlightColor) -> Void
     let onAddNote: () -> Void
+    let onAskAI: () -> Void
     let onPlay: () -> Void
     let onCopy: () -> Void
     let onDismiss: () -> Void
@@ -37,6 +38,16 @@ struct HighlightPalette: View {
                 }
                     .buttonStyle(.plain)
                     .help("Highlight and add a note")
+
+                Button(action: onAskAI) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "sparkles")
+                        Text("Ask AI")
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                }
+                    .buttonStyle(.plain)
+                    .help("Ask AI about this selection")
 
                     Button(action: onPlay) {
                         HStack(spacing: 4) {

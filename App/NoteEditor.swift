@@ -361,16 +361,30 @@ struct NoteEditor: View {
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
+
+    private func scheduleDrawingSave(_ data: Data, elementCount: Int) {
+        drawingWork?.cancel()
+        let work = DispatchWorkItem {
+            onSaveDrawing?(data, elementCount)
+        }
+        drawingWork = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
 }
 
 /// Modal wrapper around `NoteEditor`.
 struct NoteSheet: View {
     let annotation: Annotation
     var autofocus: Bool = false
+    var drawingScene: Data? = nil
+    var isDark: Bool = false
+    var startInDraw: Bool = false
     let onSave: (String) -> Void
+    var onSaveDrawing: ((Data, Int) -> Void)? = nil
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     var onTogglePlacement: (() -> Void)? = nil
+    var onRequestSheetForDraw: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 

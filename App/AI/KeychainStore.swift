@@ -44,6 +44,21 @@ enum KeychainStore {
         return String(data: data, encoding: .utf8)
     }
 
+    static func delete(account: String) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    /// True when a non-empty secret is stored for this config.
+    static func hasKey(account: String) -> Bool {
+        guard let value = get(account: account) else { return false }
+        return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
     enum KeychainError: LocalizedError {
         case unhandled(OSStatus)
 

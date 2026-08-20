@@ -139,3 +139,23 @@ public final class ExcalidrawController {
         #endif
     }
 
+    private func evaluate(_ script: String, completion: ((Any?) -> Void)? = nil) {
+        guard let webView else {
+            completion?(nil)
+            return
+        }
+        webView.evaluateJavaScript(script) { result, _ in
+            completion?(result)
+        }
+    }
+
+    private func jsString(_ value: String) -> String {
+        let wrapped = try? JSONSerialization.data(withJSONObject: [value])
+        guard let wrapped, var encoded = String(data: wrapped, encoding: .utf8) else {
+            return "\"\""
+        }
+        encoded.removeFirst()
+        encoded.removeLast()
+        return encoded
+    }
+

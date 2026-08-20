@@ -43,3 +43,20 @@ final class DrawingStoreTests: XCTestCase {
         )
         XCTAssertFalse(FileManager.default.fileExists(atPath: folder.path))
     }
+
+    func testLibraryStoreRemoveDeletesDrawings() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("folio-lib-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let library = LibraryStore(fileURL: root.appendingPathComponent("library.json"))
+        let annotationID = UUID()
+        library.drawingStore.saveScene(Data(#"{"elements":[]}"#.utf8), bookID: "book-1", annotationID: annotationID)
+        library.drawingStore.flush()
+        XCTAssertNotNil(library.drawingStore.loadScene(bookID: "book-1", annotationID: annotationID))
+
+        library.remove(bookID: "book-1")
+        XCTAssertNil(library.drawingStore.loadScene(bookID: "book-1", annotationID: annotationID))
+    }
+}

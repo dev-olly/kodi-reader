@@ -113,6 +113,8 @@ struct ReaderScreen: View {
                     reader.nextPage()
                 }
             }
+            .frame(maxWidth: Self.maxReadingClusterWidth)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(model.settings.theme.uiBackground)
 
             if reader.isLoading {

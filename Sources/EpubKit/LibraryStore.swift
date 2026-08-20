@@ -22,6 +22,8 @@ public final class LibraryStore: @unchecked Sendable {
     private let lock = NSLock()
     /// Coalesces the frequent position updates that arrive while reading.
     private var pendingSave: DispatchWorkItem?
+    /// Excalidraw scenes live next to `library.json`, keyed by book.
+    public let drawingStore: DrawingStore
 
     /// Directory containing `library.json` and the `Books/` import folder.
     public var rootDirectory: URL {
@@ -55,6 +57,7 @@ public final class LibraryStore: @unchecked Sendable {
     public init(fileURL: URL) {
         self.fileURL = fileURL
         payload = LibraryStore.load(from: fileURL) ?? Payload()
+        drawingStore = DrawingStore(rootDirectory: fileURL.deletingLastPathComponent())
     }
 
     // MARK: - Imported book files
@@ -160,6 +163,7 @@ public final class LibraryStore: @unchecked Sendable {
         payload.books.removeValue(forKey: bookID)
         lock.unlock()
         removeImportedBook(bookID: bookID)
+        drawingStore.deleteAllScenes(bookID: bookID)
         scheduleSave()
     }
 
@@ -204,6 +208,7 @@ public final class LibraryStore: @unchecked Sendable {
     public func flush() {
         pendingSave?.cancel()
         pendingSave = nil
+        drawingStore.flush()
         writeToDisk()
     }
 

@@ -47,5 +47,7 @@ final class LibraryImportTests: XCTestCase {
         """.data(using: .utf8)!
         let record = try JSONDecoder().decode(BookRecord.self, from: json)
         XCTAssertNil(record.importedRelativePath)
+        XCTAssertNil(record.chatMessages)
+        XCTAssertEqual(record.conversation, [])
     }
 }

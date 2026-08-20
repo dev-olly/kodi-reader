@@ -108,6 +108,12 @@ struct EpubReaderApp: App {
             Button("Smaller Text") { model.settings.fontSize = max(12, model.settings.fontSize - 1) }
                 .keyboardShortcut("-", modifiers: .command)
         }
+
+        CommandMenu("Ask AI") {
+            Button("Ask AI") { model.addSelectionToChat() }
+                .keyboardShortcut("l", modifiers: .command)
+                .disabled(model.book == nil)
+        }
     }
 }
 

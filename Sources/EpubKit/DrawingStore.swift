@@ -83,3 +83,17 @@ public final class DrawingStore: @unchecked Sendable {
         try? FileManager.default.removeItem(at: bookDirectory(for: bookID))
     }
 
+    private func bookDirectory(for bookID: String) -> URL {
+        drawingsDirectory.appendingPathComponent(
+            LibraryStore.sanitizedFileName(for: bookID),
+            isDirectory: true
+        )
+    }
+
+    private func write(_ data: Data, bookID: String, annotationID: UUID) {
+        let directory = bookDirectory(for: bookID)
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = sceneURL(bookID: bookID, annotationID: annotationID)
+        try? data.write(to: url, options: .atomic)
+    }
+}

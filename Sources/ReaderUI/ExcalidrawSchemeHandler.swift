@@ -70,3 +70,15 @@ public final class ExcalidrawSchemeHandler: NSObject, WKURLSchemeHandler {
         }
         return .success(Response(data: data, mimeType: EPUBPath.mimeType(forPath: relative)))
     }
+
+    private func resourceRoot() -> URL? {
+        if let url = Bundle.module.url(
+            forResource: "Excalidraw",
+            withExtension: nil,
+            subdirectory: "Resources"
+        ) {
+            return url
+        }
+        return Bundle.module.resourceURL?
+            .appendingPathComponent("Resources/Excalidraw", isDirectory: true)
+    }

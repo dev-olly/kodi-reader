@@ -89,3 +89,30 @@ public final class ExcalidrawSchemeHandler: NSObject, WKURLSchemeHandler {
         cancelledLock.unlock()
         guard !wasCancelled else { return }
 
+        switch result {
+        case let .success(response):
+            guard let url = task.request.url else { return }
+            let headers = [
+                "Content-Type": response.mimeType,
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "no-cache",
+            ]
+            let urlResponse = HTTPURLResponse(
+                url: url,
+                statusCode: 200,
+                httpVersion: "HTTP/1.1",
+                headerFields: headers
+            ) ?? URLResponse(
+                url: url,
+                mimeType: response.mimeType,
+                expectedContentLength: response.data.count,
+                textEncodingName: "utf-8"
+            )
+            task.didReceive(urlResponse)
+            task.didReceive(response.data)
+            task.didFinish()
+        case let .failure(error):
+            task.didFailWithError(error)
+        }
+    }
+}

@@ -378,6 +378,10 @@ struct AnnotationsInspector: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .lineLimit(2)
+                        } else if annotation.hasDrawing {
+                            Text("Visual note")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
                         }
                         if let chapter = annotation.chapterTitle {
                             Text(chapter)

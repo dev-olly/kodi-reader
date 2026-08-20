@@ -262,6 +262,7 @@ struct ReaderScreen: View {
     private func backToNotesList() {
         editingAnnotation = nil
         inspectorOpenedForEditor = false
+        noteEditorStartInDraw = false
         model.isShowingAnnotations = true
         syncModalEditorFlag()
     }

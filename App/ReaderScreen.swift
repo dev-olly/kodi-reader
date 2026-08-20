@@ -32,10 +32,15 @@ struct ReaderScreen: View {
                 NoteSheet(
                     annotation: model.annotation(with: annotation.id) ?? annotation,
                     autofocus: noteEditorAutofocus,
+                    drawingScene: model.drawingScene(for: annotation.id),
+                    isDark: model.settings.theme.isDark,
+                    startInDraw: noteEditorStartInDraw,
                     onSave: { model.updateNote($0, for: annotation.id) },
+                    onSaveDrawing: { model.updateDrawing(scene: $0, elementCount: $1, for: annotation.id) },
                     onChangeColor: { model.changeColor($0, for: annotation.id) },
                     onDelete: { model.deleteAnnotation(annotation.id) },
-                    onTogglePlacement: { toggleNoteEditorPlacement() }
+                    onTogglePlacement: { toggleNoteEditorPlacement() },
+                    onRequestSheetForDraw: { noteEditorStartInDraw = true }
                 )
             }
             .onChange(of: editingAnnotation) { _, _ in

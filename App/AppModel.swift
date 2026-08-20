@@ -141,6 +141,7 @@ final class AppModel {
             recents = store.recentBooks()
             drawingCache.removeAll()
             errorMessage = nil
+            chat.load(record.conversation)
         } catch {
             if didScope { url.stopAccessingSecurityScopedResource() }
             errorMessage = error.localizedDescription
@@ -209,11 +210,15 @@ final class AppModel {
 
     func closeBook() {
         readAloud.stop()
+        chat.stop()
+        persistChat(chat.messages)
         store.flush()
         reader?.tearDown()
         reader = nil
         book = nil
         record = nil
+        chat.detach()
+        isShowingAskAI = false
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
         recents = store.recentBooks()
@@ -288,7 +293,10 @@ final class AppModel {
     }
 
     private func persistChat(_ messages: [ChatMessage]) {
-        _ = messages
+        guard var record, let bookID = book?.bookID else { return }
+        record.chatMessages = messages.isEmpty ? nil : messages
+        self.record = record
+        store.update(bookID) { $0.chatMessages = record.chatMessages }
     }
 
     // MARK: - Annotations

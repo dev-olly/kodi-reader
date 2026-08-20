@@ -88,3 +88,32 @@ public final class ExcalidrawController {
         }
     }
 
+    fileprivate func handle(message body: [String: Any]) {
+        guard let type = body["type"] as? String else { return }
+        switch type {
+        case "ready":
+            isReady = true
+            applyPendingIfReady()
+            onReady?()
+        case "sceneChanged":
+            pullScene { [weak self] count, data in
+                guard let data else { return }
+                self?.onSceneChanged?(count, data)
+            }
+        case "error":
+            let message = body["message"] as? String ?? "unknown error"
+            onError?(message)
+        default:
+            break
+        }
+    }
+
+    fileprivate func reportLoadFailure(_ message: String) {
+        onError?(message)
+    }
+
+    fileprivate func handleProcessTermination() {
+        isReady = false
+        webView?.load(URLRequest(url: ExcalidrawSchemeHandler.indexURL))
+    }
+

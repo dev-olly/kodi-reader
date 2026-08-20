@@ -226,6 +226,8 @@ struct NoteEditor: View {
                 .scrollContentBackground(.hidden)
                 .background(Color.clear)
                 .padding(16)
+            case .draw:
+                ExcalidrawWebView(controller: drawingController)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

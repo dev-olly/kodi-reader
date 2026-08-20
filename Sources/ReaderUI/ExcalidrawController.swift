@@ -187,3 +187,34 @@ private final class ExcalidrawMessageProxy: NSObject, WKScriptMessageHandler {
         controller?.handle(message: body)
     }
 }
+
+private final class ExcalidrawNavigationProxy: NSObject, WKNavigationDelegate {
+    weak var controller: ExcalidrawController?
+
+    init(controller: ExcalidrawController) {
+        self.controller = controller
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+    ) {
+        guard let url = navigationAction.request.url else {
+            return decisionHandler(.cancel)
+        }
+        decisionHandler(url.scheme == ExcalidrawSchemeHandler.scheme ? .allow : .cancel)
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didFailProvisionalNavigation navigation: WKNavigation!,
+        withError error: Error
+    ) {
+        controller?.reportLoadFailure(error.localizedDescription)
+    }
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        controller?.handleProcessTermination()
+    }
+}

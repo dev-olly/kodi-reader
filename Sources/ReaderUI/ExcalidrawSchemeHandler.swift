@@ -82,3 +82,10 @@ public final class ExcalidrawSchemeHandler: NSObject, WKURLSchemeHandler {
         return Bundle.module.resourceURL?
             .appendingPathComponent("Resources/Excalidraw", isDirectory: true)
     }
+
+    private func finish(_ task: WKURLSchemeTask, with result: Result<Response, Error>) {
+        cancelledLock.lock()
+        let wasCancelled = cancelledTasks.remove(ObjectIdentifier(task)) != nil
+        cancelledLock.unlock()
+        guard !wasCancelled else { return }
+

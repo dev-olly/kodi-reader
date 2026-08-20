@@ -74,6 +74,8 @@ public final class ReaderController {
     @ObservationIgnored private var pendingPosition: TextPosition?
     @ObservationIgnored private var pendingFragment: String?
     @ObservationIgnored private var pendingGoToEnd = false
+    /// Resize restore pin, kept across spine reloads while Draw is expanded.
+    @ObservationIgnored private var pinnedRestorePosition: TextPosition?
     /// A `start` that arrived before the web view existed.
     @ObservationIgnored private var pendingStart: Locator?
     @ObservationIgnored private var hasStarted = false
@@ -335,6 +337,22 @@ public final class ReaderController {
         evaluate("__reader.goToPosition(\(json(position)), false)")
     }
 
+    /// Pins resize restore to this position so inspector expansion cannot jump to chapter start.
+    public func pinRestore(to position: TextPosition?) {
+        if let position, !position.elementPath.isEmpty {
+            pinnedRestorePosition = position
+            evaluate("__reader.pinRestore(\(json(position)))")
+        } else {
+            pinnedRestorePosition = nil
+            evaluate("__reader.pinRestore(null)")
+        }
+    }
+
+    private func pushPinRestore() {
+        guard let position = pinnedRestorePosition else { return }
+        evaluate("__reader.pinRestore(\(json(position)))")
+    }
+
     private func pushHighlights() {
         let visible = annotations.filter { $0.locator.spineIndex == spineIndex }
         let payloads = visible.map(\.javaScriptPayload)
@@ -427,6 +445,7 @@ public final class ReaderController {
         pendingPosition = nil
 
         pushHighlights()
+        pushPinRestore()
         // Evaluations run in order, so this reports the position after any
         // restore above has been applied. Without it, opening a book at its
         // first page would never emit a position or update progress.

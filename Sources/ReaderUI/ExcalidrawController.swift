@@ -64,3 +64,15 @@ public final class ExcalidrawController {
         isReady = false
     }
 
+    public func load(scene: Data?) {
+        pendingScene = scene
+        applyPendingIfReady()
+    }
+
+    public func setTheme(_ theme: String) {
+        pendingTheme = theme == "dark" ? "dark" : "light"
+        applyChrome()
+        guard isReady else { return }
+        evaluate("__excalidraw.setTheme(\(jsString(pendingTheme)))")
+    }
+

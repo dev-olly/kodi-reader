@@ -29,3 +29,8 @@ public final class DrawingStore: @unchecked Sendable {
             .appendingPathComponent("\(annotationID.uuidString).excalidraw.json")
     }
 
+    public func loadScene(bookID: String, annotationID: UUID) -> Data? {
+        let url = sceneURL(bookID: bookID, annotationID: annotationID)
+        return try? Data(contentsOf: url)
+    }
+

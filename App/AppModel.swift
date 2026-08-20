@@ -39,6 +39,8 @@ final class AppModel {
     @ObservationIgnored private let store: LibraryStore
     /// URLs whose security scope we hold open, to be released on close.
     @ObservationIgnored private var scopedURL: URL?
+    /// Live drawing scenes, so switching sheet/sidebar does not wait on disk.
+    @ObservationIgnored private var drawingCache: [UUID: Data] = [:]
 
     init() {
         let store = (try? LibraryStore()) ?? LibraryStore(
@@ -119,6 +121,7 @@ final class AppModel {
             self.record = record
             reader = controller
             recents = store.recentBooks()
+            drawingCache.removeAll()
             errorMessage = nil
         } catch {
             if didScope { url.stopAccessingSecurityScopedResource() }
@@ -196,6 +199,7 @@ final class AppModel {
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
         recents = store.recentBooks()
+        drawingCache.removeAll()
     }
 
     func removeFromRecents(_ record: BookRecord) {
@@ -301,6 +305,34 @@ final class AppModel {
         }
     }
 
+    func drawingScene(for id: UUID) -> Data? {
+        if let cached = drawingCache[id] { return cached }
+        guard let bookID = book?.bookID else { return nil }
+        let data = store.drawingStore.loadScene(bookID: bookID, annotationID: id)
+        if let data { drawingCache[id] = data }
+        return data
+    }
+
+    func updateDrawing(scene: Data, elementCount: Int, for id: UUID) {
+        guard let bookID = book?.bookID else { return }
+        let hasDrawing = elementCount > 0
+        if hasDrawing {
+            drawingCache[id] = scene
+            store.drawingStore.saveScene(scene, bookID: bookID, annotationID: id)
+        } else {
+            drawingCache[id] = nil
+            store.drawingStore.deleteScene(bookID: bookID, annotationID: id)
+        }
+        mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
+            guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+            annotations[index].hasDrawing = hasDrawing
+            annotations[index].modifiedAt = Date()
+        }
+        if let annotations = record?.annotations {
+            reader?.setAnnotations(annotations)
+        }
+    }
+
     func changeColor(_ color: HighlightColor, for id: UUID) {
         guard let bookID = book?.bookID else { return }
         mutateAnnotations(bookID: bookID) { annotations in
@@ -312,6 +344,8 @@ final class AppModel {
 
     func deleteAnnotation(_ id: UUID) {
         guard let bookID = book?.bookID else { return }
+        drawingCache[id] = nil
+        store.drawingStore.deleteScene(bookID: bookID, annotationID: id)
         mutateAnnotations(bookID: bookID) { $0.removeAll { $0.id == id } }
     }
 

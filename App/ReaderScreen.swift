@@ -15,6 +15,7 @@ struct ReaderScreen: View {
     @State private var noteEditorAutofocus = false
     /// True when the inspector was opened only to host the sidebar editor.
     @State private var inspectorOpenedForEditor = false
+    @State private var noteEditorStartInDraw = false
 
     var body: some View {
         @Bindable var model = model

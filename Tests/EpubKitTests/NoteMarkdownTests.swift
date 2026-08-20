@@ -204,6 +204,59 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(annotation.anchorStatus, .unknown)
         XCTAssertEqual(annotation.note, "hello")
         XCTAssertEqual(annotation.plainNotePreview, "hello")
+        XCTAssertFalse(annotation.hasDrawing)
+        XCTAssertTrue(annotation.hasNote)
+        XCTAssertTrue(annotation.hasContent)
+    }
+
+    func testAnnotationDecodesWithoutHasDrawing() throws {
+        let json = """
+        {
+          "id": "11111111-1111-1111-1111-111111111111",
+          "locator": {
+            "spineIndex": 0,
+            "start": { "elementPath": [1], "offset": 0 }
+          },
+          "text": "quote",
+          "color": "yellow",
+          "createdAt": 0,
+          "modifiedAt": 0
+        }
+        """.data(using: .utf8)!
+
+        let annotation = try JSONDecoder().decode(Annotation.self, from: json)
+        XCTAssertFalse(annotation.hasDrawing)
+        XCTAssertFalse(annotation.hasNote)
+        XCTAssertFalse(annotation.hasContent)
+    }
+
+    func testDrawingOnlyAnnotationHasContentAndNoteDot() {
+        let annotation = Annotation(
+            locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [], offset: 0)),
+            text: "quote",
+            hasDrawing: true
+        )
+        XCTAssertFalse(annotation.hasNote)
+        XCTAssertTrue(annotation.hasContent)
+        XCTAssertEqual(annotation.javaScriptPayload["hasNote"] as? Bool, true)
+        XCTAssertNil(annotation.javaScriptPayload["note"])
+    }
+
+    func testExportIncludesDrawingOnlyNotes() {
+        let annotation = Annotation(
+            locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [], offset: 0)),
+            text: "sketched passage",
+            chapterTitle: "Chapter 1",
+            hasDrawing: true
+        )
+        let markdown = NoteMarkdown.exportDocument(
+            bookTitle: "Book",
+            author: "Author",
+            annotations: [annotation]
+        )
+        XCTAssertTrue(markdown.contains("> sketched passage"))
+        XCTAssertTrue(markdown.contains("_Visual note attached._"))
+        XCTAssertFalse(markdown.contains("_No notes yet._"))
     }
 
     func testLibraryStoreMigratesV1ToV2() throws {

@@ -76,3 +76,15 @@ public final class ExcalidrawController {
         evaluate("__excalidraw.setTheme(\(jsString(pendingTheme)))")
     }
 
+    /// Reads the live scene, then tears the web view down.
+    public func pullScene(completion: @escaping (Int, Data?) -> Void) {
+        guard webView != nil, isReady else {
+            completion(0, nil)
+            return
+        }
+        evaluate("__excalidraw.getScene()") { result in
+            let decoded = Self.decodeScene(result)
+            completion(decoded.0, decoded.1)
+        }
+    }
+

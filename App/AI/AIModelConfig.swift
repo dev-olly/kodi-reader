@@ -16,3 +16,29 @@ enum AIModelKind: String, Codable, CaseIterable, Identifiable, Sendable {
         }
     }
 }
+
+/// One OpenAI-compatible endpoint the user can pick in Ask AI.
+struct AIModelConfig: Codable, Identifiable, Hashable, Sendable {
+    var id: UUID
+    var name: String
+    var baseURL: String
+    var modelID: String
+    var kind: AIModelKind
+    var requiresKey: Bool
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        baseURL: String,
+        modelID: String,
+        kind: AIModelKind,
+        requiresKey: Bool
+    ) {
+        self.id = id
+        self.name = name
+        self.baseURL = baseURL
+        self.modelID = modelID
+        self.kind = kind
+        self.requiresKey = requiresKey
+    }
+}

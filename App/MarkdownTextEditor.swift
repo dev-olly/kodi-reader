@@ -66,6 +66,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.refreshPlaceholder()
     }
 
+    /// Fill the proposed box instead of reporting the text view's unbounded
+    /// intrinsic height, which retriggers inspector constraint updates.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: NSScrollView,
+        context: Context
+    ) -> CGSize? {
+        let width = proposal.width ?? nsView.bounds.width
+        let height = proposal.height ?? nsView.bounds.height
+        guard width > 0, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
+    }
+
     private func applySelection(_ range: NSRange, to textView: NSTextView) {
         let max = (textView.string as NSString).length
         let location = min(range.location, max)

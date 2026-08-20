@@ -21,8 +21,18 @@ struct ReaderScreen: View {
     var body: some View {
         @Bindable var model = model
 
-        page
-            .inspector(isPresented: $model.isShowingAnnotations) {
+        HStack(spacing: 0) {
+            if model.isShowingAskAI {
+                AskAIPanel()
+                    .frame(width: Self.askAIWidth)
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                Divider()
+            }
+
+            page
+        }
+        .animation(.easeInOut(duration: 0.18), value: model.isShowingAskAI)
+        .inspector(isPresented: $model.isShowingAnnotations) {
                 inspectorContent
             }
             .toolbar { toolbarContent }
@@ -76,6 +86,7 @@ struct ReaderScreen: View {
     private static let navContentGap: CGFloat = 12
     /// Caps the web view so two-page columns stay readable on ultra-wide displays.
     private static let maxReadingWidth: CGFloat = 2000
+    private static let askAIWidth: CGFloat = 340
     private static var maxReadingClusterWidth: CGFloat {
         maxReadingWidth + 2 * navRailWidth + 2 * navContentGap
     }

@@ -366,6 +366,12 @@ struct AnnotationsInspector: View {
                                     .foregroundStyle(.orange)
                                     .help("Quote not found in chapter")
                             }
+                            if annotation.hasDrawing {
+                                Image(systemName: "scribble")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .help("Visual note")
+                            }
                         }
                         if annotation.hasNote {
                             Text(annotation.plainNotePreview)

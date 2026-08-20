@@ -251,6 +251,7 @@ struct ReaderScreen: View {
 
     private func finishEditing() {
         editingAnnotation = nil
+        noteEditorStartInDraw = false
         if inspectorOpenedForEditor {
             model.isShowingAnnotations = false
             inspectorOpenedForEditor = false

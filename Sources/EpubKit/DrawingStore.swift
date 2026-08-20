@@ -61,3 +61,12 @@ public final class DrawingStore: @unchecked Sendable {
         }
     }
 
+    public func deleteScene(bookID: String, annotationID: UUID) {
+        lock.lock()
+        pendingSaves[annotationID]?.work.cancel()
+        pendingSaves[annotationID] = nil
+        lock.unlock()
+        let url = sceneURL(bookID: bookID, annotationID: annotationID)
+        try? FileManager.default.removeItem(at: url)
+    }
+

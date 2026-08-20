@@ -13,27 +13,37 @@ struct NoteEditor: View {
     let annotation: Annotation
     var autofocus: Bool = false
     var presentation: Presentation = .sheet
+    var drawingScene: Data? = nil
+    var isDark: Bool = false
+    var startInDraw: Bool = false
     let onSave: (String) -> Void
+    var onSaveDrawing: ((Data, Int) -> Void)? = nil
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     let onClose: () -> Void
     var onBack: (() -> Void)? = nil
     var onTogglePlacement: (() -> Void)? = nil
+    var onRequestSheetForDraw: (() -> Void)? = nil
 
     @State private var text: String = ""
     @State private var selectedColor: HighlightColor = .yellow
     @State private var selectedRange = NSRange(location: 0, length: 0)
     @State private var mode: EditorMode = .edit
     @State private var saveWork: DispatchWorkItem?
+    @State private var drawingWork: DispatchWorkItem?
+    @State private var didOpenDraw = false
+    @State private var drawingController = ExcalidrawController()
 
     private enum EditorMode: String, CaseIterable, Identifiable {
         case edit
         case preview
+        case draw
         var id: String { rawValue }
         var label: String {
             switch self {
             case .edit: return "Edit"
             case .preview: return "Preview"
+            case .draw: return "Draw"
             }
         }
     }

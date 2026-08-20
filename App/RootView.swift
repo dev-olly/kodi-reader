@@ -34,6 +34,10 @@ struct RootView: View {
             actions: { Button("OK", role: .cancel) { model.errorMessage = nil } },
             message: { Text(model.errorMessage ?? "") }
         )
+        .sheet(isPresented: $model.isShowingManageModels) {
+            ManageModelsView()
+                .environment(model)
+        }
     }
 
     private func loadDroppedBook(from providers: [NSItemProvider]) -> Bool {

@@ -50,4 +50,74 @@ final class ChatController {
     func removePendingReference(_ id: UUID) {
         pendingReferences.removeAll { $0.id == id }
     }
+
+    func send() {
+        let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty, !isStreaming else { return }
+        guard let config = configStore.selectedConfig else {
+            errorMessage = AIChatError.noModel.localizedDescription
+            return
+        }
+
+        let references = pendingReferences
+        input = ""
+        pendingReferences = []
+        errorMessage = nil
+
+        let history = messages
+        let userMessage = ChatMessage(role: .user, text: text, references: references)
+        messages.append(userMessage)
+        persist()
+
+        let assistant = ChatMessage(role: .assistant, text: "")
+        messages.append(assistant)
+        isStreaming = true
+        let key = KeychainStore.get(account: config.id.uuidString)
+        let context = contextProvider()
+
+        streamTask?.cancel()
+        streamTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let stream = self.service.stream(
+                    config: config,
+                    apiKey: key,
+                    context: context,
+                    history: history,
+                    userText: text,
+                    references: references
+                )
+                for try await token in stream {
+                    if Task.isCancelled { break }
+                    if let index = self.messages.lastIndex(where: { $0.id == assistant.id }) {
+                        self.messages[index].text += token
+                    }
+                }
+            } catch is CancellationError {
+                // Stop is intentional.
+            } catch AIChatError.cancelled {
+                // Stop is intentional.
+            } catch {
+                self.errorMessage = error.localizedDescription
+                if let index = self.messages.lastIndex(where: { $0.id == assistant.id }),
+                   self.messages[index].text.isEmpty {
+                    self.messages.remove(at: index)
+                }
+            }
+            self.isStreaming = false
+            self.streamTask = nil
+            self.persist()
+        }
+    }
+
+    func stop() {
+        streamTask?.cancel()
+        streamTask = nil
+        isStreaming = false
+        persist()
+    }
+
+    private func persist() {
+        onPersist?(messages)
+    }
 }

@@ -202,16 +202,18 @@ struct NoteEditor: View {
         .labelsHidden()
     }
 
+    @ViewBuilder
     private var bodyEditor: some View {
         Group {
-            if mode == .edit {
+            switch mode {
+            case .edit:
                 MarkdownTextEditor(
                     text: $text,
                     selectedRange: $selectedRange,
                     placeholder: "Write your note…"
                 )
                 .padding(.horizontal, 4)
-            } else {
+            case .preview:
                 ScrollView {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         Text("Nothing to preview yet.")

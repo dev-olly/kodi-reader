@@ -171,3 +171,19 @@ public final class ExcalidrawController {
         return (count, json.data(using: .utf8))
     }
 }
+
+private final class ExcalidrawMessageProxy: NSObject, WKScriptMessageHandler {
+    weak var controller: ExcalidrawController?
+
+    init(controller: ExcalidrawController) {
+        self.controller = controller
+    }
+
+    func userContentController(
+        _ userContentController: WKUserContentController,
+        didReceive message: WKScriptMessage
+    ) {
+        guard let body = message.body as? [String: Any] else { return }
+        controller?.handle(message: body)
+    }
+}

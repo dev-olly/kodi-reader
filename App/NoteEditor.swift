@@ -65,6 +65,9 @@ struct NoteEditor: View {
         .onChange(of: text) { _, newValue in
             scheduleAutosave(newValue)
         }
+        .onChange(of: mode) { _, newValue in
+            handleModeChange(newValue)
+        }
         .onDisappear(perform: flush)
     }
 

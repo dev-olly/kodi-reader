@@ -159,3 +159,15 @@ public final class ExcalidrawController {
         return encoded
     }
 
+    private static func decodeScene(_ result: Any?) -> (Int, Data?) {
+        guard let body = result as? [String: Any] else { return (0, nil) }
+        let count: Int
+        if let number = body["elementCount"] as? NSNumber {
+            count = number.intValue
+        } else {
+            count = body["elementCount"] as? Int ?? 0
+        }
+        guard let json = body["scene"] as? String else { return (count, nil) }
+        return (count, json.data(using: .utf8))
+    }
+}

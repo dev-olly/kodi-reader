@@ -73,6 +73,11 @@ struct ReaderScreen: View {
     private static let navRailWidth: CGFloat = 60
     /// Gap between each nav rail and the reading surface.
     private static let navContentGap: CGFloat = 12
+    /// Caps the web view so two-page columns stay readable on ultra-wide displays.
+    private static let maxReadingWidth: CGFloat = 2000
+    private static var maxReadingClusterWidth: CGFloat {
+        maxReadingWidth + 2 * navRailWidth + 2 * navContentGap
+    }
 
     private var page: some View {
         ZStack {

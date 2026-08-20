@@ -117,3 +117,25 @@ public final class ExcalidrawController {
         webView?.load(URLRequest(url: ExcalidrawSchemeHandler.indexURL))
     }
 
+    private func applyPendingIfReady() {
+        guard isReady else { return }
+        evaluate("__excalidraw.setTheme(\(jsString(pendingTheme)))")
+        if let scene = pendingScene, let json = String(data: scene, encoding: .utf8), !json.isEmpty {
+            evaluate("__excalidraw.load(\(jsString(json)))")
+        } else {
+            evaluate("__excalidraw.clear()")
+        }
+    }
+
+    private func applyChrome() {
+        #if os(macOS)
+        guard let webView else { return }
+        let color: NSColor = pendingTheme == "dark"
+            ? NSColor(calibratedRed: 28 / 255, green: 28 / 255, blue: 30 / 255, alpha: 1)
+            : .white
+        webView.underPageBackgroundColor = color
+        webView.wantsLayer = true
+        webView.layer?.backgroundColor = color.cgColor
+        #endif
+    }
+

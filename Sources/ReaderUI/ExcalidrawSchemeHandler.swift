@@ -46,3 +46,27 @@ public final class ExcalidrawSchemeHandler: NSObject, WKURLSchemeHandler {
         cancelledLock.unlock()
     }
 
+    private struct Response {
+        let data: Data
+        let mimeType: String
+    }
+
+    private func load(url: URL) -> Result<Response, Error> {
+        let rawPath = url.path.hasPrefix("/") ? String(url.path.dropFirst()) : url.path
+        let decoded = rawPath.removingPercentEncoding ?? rawPath
+        let path = EPUBPath.normalize(decoded)
+        let relative = path.isEmpty ? "index.html" : path
+
+        guard let root = resourceRoot() else {
+            return .failure(URLError(.fileDoesNotExist))
+        }
+
+        let fileURL = root.appendingPathComponent(relative)
+        let rootPath = root.standardizedFileURL.path
+        let filePath = fileURL.standardizedFileURL.path
+        let nested = filePath == rootPath || filePath.hasPrefix(rootPath + "/")
+        guard nested, let data = try? Data(contentsOf: fileURL) else {
+            return .failure(URLError(.fileDoesNotExist))
+        }
+        return .success(Response(data: data, mimeType: EPUBPath.mimeType(forPath: relative)))
+    }

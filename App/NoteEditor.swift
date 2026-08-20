@@ -1,5 +1,6 @@
 import Foundation
 import EpubKit
+import ReaderUI
 import SwiftUI
 
 /// Shared note editor used as a modal sheet or the trailing inspector.

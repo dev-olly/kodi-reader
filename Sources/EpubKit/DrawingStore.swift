@@ -34,3 +34,18 @@ public final class DrawingStore: @unchecked Sendable {
         return try? Data(contentsOf: url)
     }
 
+    /// Debounced atomic write. Call `flush()` before quitting or closing a note.
+    public func saveScene(_ data: Data, bookID: String, annotationID: UUID) {
+        lock.lock()
+        pendingSaves[annotationID]?.work.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            self?.write(data, bookID: bookID, annotationID: annotationID)
+            self?.lock.lock()
+            self?.pendingSaves[annotationID] = nil
+            self?.lock.unlock()
+        }
+        pendingSaves[annotationID] = PendingScene(data: data, bookID: bookID, work: work)
+        lock.unlock()
+        queue.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+

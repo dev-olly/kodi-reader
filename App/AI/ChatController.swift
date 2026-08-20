@@ -34,4 +34,20 @@ final class ChatController {
             && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && configStore.selectedConfig != nil
     }
+
+    func addReference(_ reference: ChatReference) {
+        let quote = reference.quotedText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !quote.isEmpty else { return }
+        if pendingReferences.contains(where: { $0.quotedText == reference.quotedText }) {
+            shouldFocusComposer = true
+            return
+        }
+        pendingReferences.append(reference)
+        shouldFocusComposer = true
+        errorMessage = nil
+    }
+
+    func removePendingReference(_ id: UUID) {
+        pendingReferences.removeAll { $0.id == id }
+    }
 }

@@ -70,3 +70,16 @@ public final class DrawingStore: @unchecked Sendable {
         try? FileManager.default.removeItem(at: url)
     }
 
+    public func deleteAllScenes(bookID: String) {
+        lock.lock()
+        let ids = pendingSaves.compactMap { id, scene in
+            scene.bookID == bookID ? id : nil
+        }
+        for id in ids {
+            pendingSaves[id]?.work.cancel()
+            pendingSaves[id] = nil
+        }
+        lock.unlock()
+        try? FileManager.default.removeItem(at: bookDirectory(for: bookID))
+    }
+

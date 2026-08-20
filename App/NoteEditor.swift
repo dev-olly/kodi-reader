@@ -15,7 +15,6 @@ struct NoteEditor: View {
     var presentation: Presentation = .sheet
     var drawingScene: Data? = nil
     var isDark: Bool = false
-    var startInDraw: Bool = false
     let onSave: (String) -> Void
     var onSaveDrawing: ((Data, Int) -> Void)? = nil
     let onChangeColor: (HighlightColor) -> Void
@@ -23,7 +22,7 @@ struct NoteEditor: View {
     let onClose: () -> Void
     var onBack: (() -> Void)? = nil
     var onTogglePlacement: (() -> Void)? = nil
-    var onRequestSheetForDraw: (() -> Void)? = nil
+    var onDrawActiveChanged: ((Bool) -> Void)? = nil
 
     @State private var text: String = ""
     @State private var selectedColor: HighlightColor = .yellow
@@ -46,6 +45,10 @@ struct NoteEditor: View {
             case .draw: return "Draw"
             }
         }
+    }
+
+    private var availableModes: [EditorMode] {
+        presentation == .sidebar ? EditorMode.allCases : [.edit, .preview]
     }
 
     var body: some View {
@@ -166,7 +169,7 @@ struct NoteEditor: View {
                     }
                     Spacer()
                     modePicker
-                        .frame(width: 220)
+                        .frame(width: 160)
                 }
             }
         }
@@ -194,7 +197,7 @@ struct NoteEditor: View {
 
     private var modePicker: some View {
         Picker("Mode", selection: $mode) {
-            ForEach(EditorMode.allCases) { item in
+            ForEach(availableModes) { item in
                 Text(item.label).tag(item)
             }
         }
@@ -310,9 +313,7 @@ struct NoteEditor: View {
         text = annotation.note ?? ""
         selectedColor = annotation.color
         selectedRange = NSRange(location: (text as NSString).length, length: 0)
-        if startInDraw {
-            mode = .draw
-        } else if autofocus {
+        if autofocus {
             mode = .edit
         }
         wireDrawing()
@@ -322,15 +323,11 @@ struct NoteEditor: View {
     }
 
     private func handleModeChange(_ newValue: EditorMode) {
-        if newValue == .draw {
-            if presentation == .sidebar {
-                onRequestSheetForDraw?()
-                return
-            }
-            didOpenDraw = true
-            drawingController.setTheme(isDark ? "dark" : "light")
-            drawingController.load(scene: drawingScene)
-        }
+        onDrawActiveChanged?(newValue == .draw)
+        guard newValue == .draw else { return }
+        didOpenDraw = true
+        drawingController.setTheme(isDark ? "dark" : "light")
+        drawingController.load(scene: drawingScene)
     }
 
     private func wireDrawing() {
@@ -343,6 +340,7 @@ struct NoteEditor: View {
         saveWork?.cancel()
         onSave(text)
         drawingWork?.cancel()
+        onDrawActiveChanged?(false)
         guard didOpenDraw, let onSaveDrawing else {
             drawingController.tearDown()
             return
@@ -376,15 +374,10 @@ struct NoteEditor: View {
 struct NoteSheet: View {
     let annotation: Annotation
     var autofocus: Bool = false
-    var drawingScene: Data? = nil
-    var isDark: Bool = false
-    var startInDraw: Bool = false
     let onSave: (String) -> Void
-    var onSaveDrawing: ((Data, Int) -> Void)? = nil
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     var onTogglePlacement: (() -> Void)? = nil
-    var onRequestSheetForDraw: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
 
@@ -393,17 +386,12 @@ struct NoteSheet: View {
             annotation: annotation,
             autofocus: autofocus,
             presentation: .sheet,
-            drawingScene: drawingScene,
-            isDark: isDark,
-            startInDraw: startInDraw,
             onSave: onSave,
-            onSaveDrawing: onSaveDrawing,
             onChangeColor: onChangeColor,
             onDelete: onDelete,
             onClose: { dismiss() },
-            onTogglePlacement: onTogglePlacement,
-            onRequestSheetForDraw: onRequestSheetForDraw
+            onTogglePlacement: onTogglePlacement
         )
-        .frame(minWidth: 640, idealWidth: 720, minHeight: 520, idealHeight: 600)
+        .frame(minWidth: 520, idealWidth: 560, minHeight: 480, idealHeight: 560)
     }
 }

@@ -54,3 +54,13 @@ public final class ExcalidrawController {
         return webView
     }
 
+    public func tearDown() {
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "excalidraw")
+        webView?.navigationDelegate = nil
+        webView = nil
+        messageProxy = nil
+        navigationProxy = nil
+        schemeHandler = nil
+        isReady = false
+    }
+

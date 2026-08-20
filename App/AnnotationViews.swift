@@ -399,17 +399,17 @@ struct AnnotationsInspector: View {
             Button {
                 onEdit(annotation)
             } label: {
-                Image(systemName: annotation.hasNote ? "note.text" : "square.and.pencil")
+                Image(systemName: annotation.hasContent ? "note.text" : "square.and.pencil")
                     .font(.system(size: 12, weight: .medium))
                     .foregroundStyle(.secondary)
                     .frame(width: 28, height: 28)
                     .contentShape(.rect)
             }
             .buttonStyle(.plain)
-            .quickHelp(annotation.hasNote ? "Edit note" : "Add note")
+            .quickHelp(annotation.hasContent ? "Edit note" : "Add note")
         }
         .contextMenu {
-            Button(annotation.hasNote ? "Edit Note…" : "Add Note…") { onEdit(annotation) }
+            Button(annotation.hasContent ? "Edit Note…" : "Add Note…") { onEdit(annotation) }
             Button("Copy Quote") {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(annotation.text, forType: .string)

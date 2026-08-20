@@ -26,6 +26,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     public var modifiedAt: Date
     /// Last known anchor health; defaults to `.unknown` when decoding old JSON.
     public var anchorStatus: AnchorStatus
+    /// True when a drawing sidecar exists for this highlight.
+    public var hasDrawing: Bool
 
     public init(
         id: UUID = UUID(),
@@ -36,7 +38,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         chapterTitle: String? = nil,
         createdAt: Date = Date(),
         modifiedAt: Date = Date(),
-        anchorStatus: AnchorStatus = .unknown
+        anchorStatus: AnchorStatus = .unknown,
+        hasDrawing: Bool = false
     ) {
         self.id = id
         self.locator = locator
@@ -47,11 +50,15 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.anchorStatus = anchorStatus
+        self.hasDrawing = hasDrawing
     }
 
     public var hasNote: Bool {
         !(note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
+
+    /// Markdown, a drawing, or both.
+    public var hasContent: Bool { hasNote || hasDrawing }
 
     public var isOrphaned: Bool { anchorStatus == .orphaned }
 
@@ -78,12 +85,13 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         if let end = locator.end {
             payload["end"] = ["elementPath": end.elementPath, "offset": end.offset]
         }
+        payload["hasNote"] = hasContent
         if hasNote { payload["note"] = note }
         return payload
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus
+        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing
     }
 
     public init(from decoder: Decoder) throws {
@@ -98,6 +106,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         modifiedAt = try container.decode(Date.self, forKey: .modifiedAt)
         // Older library files omit this field.
         anchorStatus = try container.decodeIfPresent(AnchorStatus.self, forKey: .anchorStatus) ?? .unknown
+        hasDrawing = try container.decodeIfPresent(Bool.self, forKey: .hasDrawing) ?? false
     }
 }
 
@@ -370,7 +379,7 @@ public enum NoteMarkdown {
             : author
         var parts: [String] = ["# Notes — \(bookTitle)", authorLine, ""]
         let noted = annotations
-            .filter(\.hasNote)
+            .filter(\.hasContent)
             .sorted {
                 ($0.locator.spineIndex, $0.createdAt) < ($1.locator.spineIndex, $1.createdAt)
             }
@@ -392,8 +401,14 @@ public enum NoteMarkdown {
             parts.append("")
             parts.append("*— \(chapterHeading), \(authorLine), \(bookTitle)*")
             parts.append("")
-            parts.append(annotation.note ?? "")
-            parts.append("")
+            if annotation.hasNote {
+                parts.append(annotation.note ?? "")
+                parts.append("")
+            }
+            if annotation.hasDrawing {
+                parts.append("_Visual note attached._")
+                parts.append("")
+            }
             parts.append("---")
             parts.append("")
         }

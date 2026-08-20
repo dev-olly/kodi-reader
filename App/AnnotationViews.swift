@@ -328,9 +328,9 @@ struct AnnotationsInspector: View {
                 switch filter {
                 case .all: break
                 case .withNotes:
-                    if !annotation.hasNote { return false }
+                    if !annotation.hasContent { return false }
                 case .highlightsOnly:
-                    if annotation.hasNote { return false }
+                    if annotation.hasContent { return false }
                 }
 
                 if !chapterFilter.isEmpty, annotation.chapterTitle != chapterFilter {

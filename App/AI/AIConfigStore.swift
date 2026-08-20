@@ -35,6 +35,38 @@ final class AIConfigStore {
         return configs.first { $0.id == selectedModelID } ?? configs.first
     }
 
+    func upsert(_ config: AIModelConfig) {
+        if let index = configs.firstIndex(where: { $0.id == config.id }) {
+            configs[index] = config
+        } else {
+            configs.append(config)
+        }
+        if selectedModelID == nil {
+            selectedModelID = config.id
+        }
+        save()
+    }
+
+    func remove(id: UUID) {
+        configs.removeAll { $0.id == id }
+        KeychainStore.delete(account: id.uuidString)
+        if selectedModelID == id {
+            selectedModelID = configs.first?.id
+        }
+        save()
+    }
+
+    /// Adds any built-in presets that the user does not already have (matched by id).
+    func restorePresets() {
+        for preset in AIModelConfig.presets where !configs.contains(where: { $0.id == preset.id }) {
+            configs.append(preset)
+        }
+        if selectedModelID == nil {
+            selectedModelID = configs.first?.id
+        }
+        save()
+    }
+
     func save() {
         let payload = Payload(configs: configs, selectedModelID: selectedModelID)
         let encoder = JSONEncoder()
@@ -56,4 +88,5 @@ final class AIConfigStore {
         guard let data = try? Data(contentsOf: url) else { return nil }
         return try? JSONDecoder().decode(Payload.self, from: data)
     }
+
 }

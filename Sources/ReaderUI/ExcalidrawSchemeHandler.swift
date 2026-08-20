@@ -14,3 +14,11 @@ public final class ExcalidrawSchemeHandler: NSObject, WKURLSchemeHandler {
         url(forPath: "index.html")
     }
 
+    public static func url(forPath path: String) -> URL {
+        var components = URLComponents()
+        components.scheme = scheme
+        components.host = host
+        components.path = "/" + path
+        return components.url ?? URL(string: "\(scheme)://\(host)/index.html")!
+    }
+

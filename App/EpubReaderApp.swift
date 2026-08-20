@@ -113,6 +113,12 @@ struct EpubReaderApp: App {
             Button("Ask AI") { model.addSelectionToChat() }
                 .keyboardShortcut("l", modifiers: .command)
                 .disabled(model.book == nil)
+            Button(model.isShowingAskAI ? "Hide Sidebar" : "Show Sidebar") {
+                model.isShowingAskAI.toggle()
+            }
+            .disabled(model.book == nil)
+            Divider()
+            Button("Manage Models…") { model.isShowingManageModels = true }
         }
     }
 }

@@ -16,10 +16,7 @@ enum KokoroModelStore {
     private static let minimumVoicesBytes: Int64 = 1_000_000
 
     static var directory: URL {
-        let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-        return support
-            .appendingPathComponent("EpubReader", isDirectory: true)
-            .appendingPathComponent("Kokoro", isDirectory: true)
+        AppDataDirectory.root.appendingPathComponent("Kokoro", isDirectory: true)
     }
 
     static var modelPath: URL {

@@ -19,3 +19,13 @@ public final class DrawingStore: @unchecked Sendable {
     public init(rootDirectory: URL) {
         self.rootDirectory = rootDirectory
     }
+
+    public var drawingsDirectory: URL {
+        rootDirectory.appendingPathComponent("Drawings", isDirectory: true)
+    }
+
+    public func sceneURL(bookID: String, annotationID: UUID) -> URL {
+        bookDirectory(for: bookID)
+            .appendingPathComponent("\(annotationID.uuidString).excalidraw.json")
+    }
+

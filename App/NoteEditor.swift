@@ -237,6 +237,7 @@ struct NoteEditor: View {
         HStack {
             Button("Delete Highlight", role: .destructive) {
                 saveWork?.cancel()
+                drawingWork?.cancel()
                 onDelete()
                 onClose()
             }

@@ -34,3 +34,26 @@ public struct ChatReference: Codable, Identifiable, Hashable, Sendable {
         return String(trimmed.prefix(72)) + "…"
     }
 }
+
+/// One turn in a book's Ask AI conversation.
+public struct ChatMessage: Codable, Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var role: ChatRole
+    public var text: String
+    public var references: [ChatReference]
+    public var createdAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        role: ChatRole,
+        text: String,
+        references: [ChatReference] = [],
+        createdAt: Date = Date()
+    ) {
+        self.id = id
+        self.role = role
+        self.text = text
+        self.references = references
+        self.createdAt = createdAt
+    }
+}

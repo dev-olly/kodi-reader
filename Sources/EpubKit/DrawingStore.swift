@@ -49,3 +49,15 @@ public final class DrawingStore: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
+    /// Writes any pending scenes immediately.
+    public func flush() {
+        lock.lock()
+        let pending = pendingSaves
+        pendingSaves.removeAll()
+        lock.unlock()
+        for (annotationID, scene) in pending {
+            scene.work.cancel()
+            write(scene.data, bookID: scene.bookID, annotationID: annotationID)
+        }
+    }
+

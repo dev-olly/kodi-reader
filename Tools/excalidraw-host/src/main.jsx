@@ -80,3 +80,38 @@ window.__excalidraw = {
     return serialize(api);
   },
 };
+
+function Host() {
+  const timerRef = useRef(null);
+
+  const handleAPI = useCallback((api) => {
+    apiRef.current = api;
+    post({ type: "ready" });
+  }, []);
+
+  return (
+    <div style={{ width: "100%", height: "100%" }}>
+      <Excalidraw
+        excalidrawAPI={handleAPI}
+        theme={themeRef.current}
+        UIOptions={{
+          welcomeScreen: false,
+          canvasActions: {
+            loadScene: false,
+            export: false,
+            saveToActiveFile: false,
+            toggleTheme: false,
+            clearCanvas: true,
+          },
+        }}
+        onChange={(elements) => {
+          if (applyingRef.current) return;
+          if (timerRef.current) window.clearTimeout(timerRef.current);
+          timerRef.current = window.setTimeout(() => {
+            post({ type: "sceneChanged", elementCount: elements.length });
+          }, 300);
+        }}
+      />
+    </div>
+  );
+}

@@ -180,7 +180,93 @@ struct AskAIPanel: View {
         .background(Color.orange.opacity(0.12))
     }
 
+    // MARK: - Composer
+
     private var composer: some View {
-        Color.clear.frame(height: 1)
+        VStack(alignment: .leading, spacing: 8) {
+            if !model.chat.pendingReferences.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(model.chat.pendingReferences) { reference in
+                        referenceChip(reference, removable: true)
+                    }
+                }
+            }
+
+            HStack(alignment: .bottom, spacing: 8) {
+                TextField("Ask about this book…", text: inputBinding, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...8)
+                    .focused($composerFocused)
+                    .onSubmit {
+                        model.chat.send()
+                    }
+
+                if model.chat.isStreaming {
+                    Button {
+                        model.chat.stop()
+                    } label: {
+                        Image(systemName: "stop.fill")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Stop")
+                } else {
+                    Button {
+                        model.chat.send()
+                    } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                            .font(.title2)
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(!model.chat.canSend)
+                    .help("Send")
+                }
+            }
+            .padding(8)
+            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
+        }
+        .padding(12)
+    }
+
+    private var inputBinding: Binding<String> {
+        Binding(
+            get: { model.chat.input },
+            set: { model.chat.input = $0 }
+        )
+    }
+
+    private func referenceChip(_ reference: ChatReference, removable: Bool) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            Image(systemName: "quote.opening")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+            VStack(alignment: .leading, spacing: 2) {
+                if let chapter = reference.chapterTitle, !chapter.isEmpty {
+                    Text(chapter)
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+                Text(reference.preview)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            if removable {
+                Button {
+                    model.chat.removePendingReference(reference.id)
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.caption2.weight(.bold))
+                        .foregroundStyle(.tertiary)
+                }
+                .buttonStyle(.plain)
+                .help("Remove reference")
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 6))
     }
 }

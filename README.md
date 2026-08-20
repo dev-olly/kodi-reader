@@ -107,6 +107,22 @@ highlight and open its note.
 **Storage** is a single JSON file in Application Support holding reading
 positions, annotations, bookmarks, and settings. Opened books are copied into
 the app’s sandbox library so Recents can reopen them without asking again.
+Excalidraw scenes live as sidecar files next to that JSON
+(`Drawings/<bookID>/<annotationID>.excalidraw.json`) so the library stays small.
+
+## Rebuilding the Excalidraw host
+
+The drawing editor is a bundled, offline Excalidraw build. npm is only needed
+when changing that host:
+
+```sh
+cd Tools/excalidraw-host
+npm ci
+npm run build
+```
+
+That writes static assets into `Sources/ReaderUI/Resources/Excalidraw/`. Commit
+those generated files so the app builds without Node.
 
 ## Not included
 

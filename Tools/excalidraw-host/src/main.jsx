@@ -115,3 +115,9 @@ function Host() {
     </div>
   );
 }
+
+window.addEventListener("error", (event) => {
+  post({ type: "error", message: String(event.message || event.error || "error") });
+});
+
+createRoot(document.getElementById("root")).render(<Host />);

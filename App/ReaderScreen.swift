@@ -15,7 +15,8 @@ struct ReaderScreen: View {
     @State private var noteEditorAutofocus = false
     /// True when the inspector was opened only to host the sidebar editor.
     @State private var inspectorOpenedForEditor = false
-    @State private var noteEditorStartInDraw = false
+    @State private var isDrawingExpanded = false
+    @State private var windowWidth: CGFloat = 0
 
     var body: some View {
         @Bindable var model = model
@@ -32,15 +33,10 @@ struct ReaderScreen: View {
                 NoteSheet(
                     annotation: model.annotation(with: annotation.id) ?? annotation,
                     autofocus: noteEditorAutofocus,
-                    drawingScene: model.drawingScene(for: annotation.id),
-                    isDark: model.settings.theme.isDark,
-                    startInDraw: noteEditorStartInDraw,
                     onSave: { model.updateNote($0, for: annotation.id) },
-                    onSaveDrawing: { model.updateDrawing(scene: $0, elementCount: $1, for: annotation.id) },
                     onChangeColor: { model.changeColor($0, for: annotation.id) },
                     onDelete: { model.deleteAnnotation(annotation.id) },
-                    onTogglePlacement: { toggleNoteEditorPlacement() },
-                    onRequestSheetForDraw: { noteEditorStartInDraw = true }
+                    onTogglePlacement: { toggleNoteEditorPlacement() }
                 )
             }
             .onChange(of: editingAnnotation) { _, _ in
@@ -53,11 +49,16 @@ struct ReaderScreen: View {
                 if !showing, model.settings.noteEditorPlacement == .sidebar {
                     editingAnnotation = nil
                     inspectorOpenedForEditor = false
+                    isDrawingExpanded = false
+                    reader.pinRestore(to: nil)
                     syncModalEditorFlag()
                 }
             }
             .onDisappear {
                 model.isNoteEditorOpen = false
+            }
+            .background {
+                WindowWidthReader { windowWidth = $0 }
             }
     }
 
@@ -196,7 +197,6 @@ struct ReaderScreen: View {
                             presentation: .sidebar,
                             drawingScene: model.drawingScene(for: annotation.id),
                             isDark: model.settings.theme.isDark,
-                            startInDraw: noteEditorStartInDraw,
                             onSave: { model.updateNote($0, for: annotation.id) },
                             onSaveDrawing: { model.updateDrawing(scene: $0, elementCount: $1, for: annotation.id) },
                             onChangeColor: { model.changeColor($0, for: annotation.id) },
@@ -204,9 +204,8 @@ struct ReaderScreen: View {
                             onClose: { finishEditing() },
                             onBack: { backToNotesList() },
                             onTogglePlacement: { toggleNoteEditorPlacement() },
-                            onRequestSheetForDraw: {
-                                noteEditorStartInDraw = true
-                                if isSidebarPlacement { toggleNoteEditorPlacement() }
+                            onDrawActiveChanged: { active in
+                                setDrawingExpanded(active, annotation: annotation)
                             }
                         )
                         .id(annotation.id)
@@ -231,7 +230,21 @@ struct ReaderScreen: View {
                     }
             }
         }
-        .inspectorColumnWidth(min: 280, ideal: 360)
+        .inspectorColumnWidth(
+            min: inspectorWidths.min,
+            ideal: inspectorWidths.ideal,
+            max: inspectorWidths.max
+        )
+        .animation(.easeInOut(duration: 0.22), value: isDrawingExpanded)
+    }
+
+    private var inspectorWidths: (min: CGFloat, ideal: CGFloat, max: CGFloat) {
+        guard isDrawingExpanded else { return (280, 360, 600) }
+        let width = windowWidth > 0 ? windowWidth : 1200
+        let maxWidth = max(360, width - 240)
+        let minWidth = min(maxWidth, max(width * 0.5, 480))
+        let ideal = min(maxWidth, max(width * 0.75, minWidth))
+        return (minWidth, ideal, maxWidth)
     }
 
     private func handleHighlightActivated(id: UUID, rect: CGRect) {
@@ -251,7 +264,8 @@ struct ReaderScreen: View {
 
     private func finishEditing() {
         editingAnnotation = nil
-        noteEditorStartInDraw = false
+        isDrawingExpanded = false
+        reader.pinRestore(to: nil)
         if inspectorOpenedForEditor {
             model.isShowingAnnotations = false
             inspectorOpenedForEditor = false
@@ -262,9 +276,22 @@ struct ReaderScreen: View {
     private func backToNotesList() {
         editingAnnotation = nil
         inspectorOpenedForEditor = false
-        noteEditorStartInDraw = false
+        isDrawingExpanded = false
+        reader.pinRestore(to: nil)
         model.isShowingAnnotations = true
         syncModalEditorFlag()
+    }
+
+    private func setDrawingExpanded(_ active: Bool, annotation: Annotation) {
+        withAnimation(.easeInOut(duration: 0.22)) {
+            isDrawingExpanded = active
+        }
+        if active, !annotation.isOrphaned {
+            reader.pinRestore(to: annotation.locator.start)
+            reader.go(to: annotation.locator)
+        } else {
+            reader.pinRestore(to: nil)
+        }
     }
 
     private func toggleNoteEditorPlacement() {
@@ -364,6 +391,60 @@ struct ReaderScreen: View {
                 Label("Notes", systemImage: "list.bullet.rectangle")
             }
             .quickHelp("Notes and highlights")
+        }
+    }
+}
+
+/// Reads the host window width so inspector expansion is not tied to the reading pane.
+private struct WindowWidthReader: NSViewRepresentable {
+    var onChange: (CGFloat) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = TrackingView()
+        view.onChange = onChange
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        (nsView as? TrackingView)?.onChange = onChange
+        (nsView as? TrackingView)?.publish()
+    }
+
+    private final class TrackingView: NSView {
+        var onChange: ((CGFloat) -> Void)?
+        private var lastWidth: CGFloat = 0
+        private var resizeToken: Any?
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if let resizeToken {
+                NotificationCenter.default.removeObserver(resizeToken)
+                self.resizeToken = nil
+            }
+            if let window {
+                resizeToken = NotificationCenter.default.addObserver(
+                    forName: NSWindow.didResizeNotification,
+                    object: window,
+                    queue: .main
+                ) { [weak self] _ in
+                    self?.publish()
+                }
+            }
+            publish()
+        }
+
+        deinit {
+            if let resizeToken {
+                NotificationCenter.default.removeObserver(resizeToken)
+            }
+        }
+
+        func publish() {
+            guard let width = window?.frame.width, abs(width - lastWidth) > 0.5 else { return }
+            lastWidth = width
+            DispatchQueue.main.async { [onChange] in
+                onChange?(width)
+            }
         }
     }
 }

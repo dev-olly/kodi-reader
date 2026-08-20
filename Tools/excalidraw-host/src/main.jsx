@@ -50,3 +50,33 @@ function applyScene(parsed) {
     applyingRef.current = false;
   });
 }
+
+window.__excalidraw = {
+  load(scene) {
+    const parsed = typeof scene === "string" ? JSON.parse(scene) : scene;
+    applyScene(parsed);
+  },
+  setTheme(theme) {
+    themeRef.current = theme === "dark" ? "dark" : "light";
+    const api = apiRef.current;
+    if (!api) return;
+    applyingRef.current = true;
+    api.updateScene({
+      appState: { theme: themeRef.current },
+      captureUpdate: CaptureUpdateAction.NEVER,
+    });
+    queueMicrotask(() => {
+      applyingRef.current = false;
+    });
+  },
+  clear() {
+    applyScene({ elements: [], appState: {}, files: {} });
+  },
+  getScene() {
+    const api = apiRef.current;
+    if (!api) {
+      return { elementCount: 0, scene: "{\"elements\":[],\"files\":{}}" };
+    }
+    return serialize(api);
+  },
+};

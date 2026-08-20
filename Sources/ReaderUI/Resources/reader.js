@@ -225,8 +225,22 @@
   // relayouts are in flight. Later captures often see scrollLeft already
   // reset to 0 and would restore the chapter start by mistake.
   var pendingRestore = null;
+  // When set (Draw expanded), resize restore always uses this locator.
+  var pinnedRestore = null;
+
+  function pinRestore(position) {
+    if (position && position.elementPath && position.elementPath.length > 0) {
+      pinnedRestore = position;
+    } else {
+      pinnedRestore = null;
+    }
+  }
 
   function rememberRestore(position) {
+    if (pinnedRestore) {
+      pendingRestore = pinnedRestore;
+      return;
+    }
     if (pendingRestore) return;
     if (!position || !position.elementPath || position.elementPath.length === 0) return;
     pendingRestore = position;
@@ -1333,7 +1347,8 @@
     resizeTimer = setTimeout(function () {
       // Capture the anchor after the window has settled, not on the first
       // intermediate resize event, so we restore what is actually on screen.
-      relayout(currentPosition());
+      // A pinned locator (Draw) wins over the on-screen probe.
+      relayout(pinnedRestore || currentPosition());
     }, 90);
   }
 
@@ -1382,6 +1397,7 @@
     previousPage: previousPage,
     goToFragment: goToFragment,
     goToPosition: goToPosition,
+    pinRestore: pinRestore,
     goToEnd: function () {
       measure();
       goToPage(state.pageCount - 1, false);

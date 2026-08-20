@@ -186,42 +186,57 @@ struct ReaderScreen: View {
 
     @ViewBuilder
     private var inspectorContent: some View {
-        if isSidebarPlacement, let annotation = editingAnnotation {
-            NoteEditor(
-                annotation: model.annotation(with: annotation.id) ?? annotation,
-                autofocus: noteEditorAutofocus,
-                presentation: .sidebar,
-                onSave: { model.updateNote($0, for: annotation.id) },
-                onChangeColor: { model.changeColor($0, for: annotation.id) },
-                onDelete: { model.deleteAnnotation(annotation.id) },
-                onClose: { finishEditing() },
-                onBack: { backToNotesList() },
-                onTogglePlacement: { toggleNoteEditorPlacement() }
-            )
-            .id(annotation.id)
-            .inspectorColumnWidth(min: 280, ideal: 380, max: 480)
-        } else {
-            AnnotationsInspector(
-                annotations: model.record?.annotations ?? [],
-                bookmarks: model.record?.bookmarks ?? [],
-                chapterTitles: chapterTitles,
-                onSelect: { reader.go(to: $0) },
-                onEdit: { openNoteEditor($0, autofocus: !$0.hasNote) },
-                onDelete: { model.deleteAnnotation($0.id) },
-                onExport: {
-                    NotesExporter.presentSavePanel(
-                        bookTitle: book.title,
-                        markdown: model.exportNotesMarkdown()
-                    )
-                }
-            )
-            .inspectorColumnWidth(min: 280, ideal: 340, max: 460)
+        Group {
+            if isSidebarPlacement, let annotation = editingAnnotation {
+                Color.clear
+                    .overlay {
+                        NoteEditor(
+                            annotation: model.annotation(with: annotation.id) ?? annotation,
+                            autofocus: noteEditorAutofocus,
+                            presentation: .sidebar,
+                            drawingScene: model.drawingScene(for: annotation.id),
+                            isDark: model.settings.theme.isDark,
+                            startInDraw: noteEditorStartInDraw,
+                            onSave: { model.updateNote($0, for: annotation.id) },
+                            onSaveDrawing: { model.updateDrawing(scene: $0, elementCount: $1, for: annotation.id) },
+                            onChangeColor: { model.changeColor($0, for: annotation.id) },
+                            onDelete: { model.deleteAnnotation(annotation.id) },
+                            onClose: { finishEditing() },
+                            onBack: { backToNotesList() },
+                            onTogglePlacement: { toggleNoteEditorPlacement() },
+                            onRequestSheetForDraw: {
+                                noteEditorStartInDraw = true
+                                if isSidebarPlacement { toggleNoteEditorPlacement() }
+                            }
+                        )
+                        .id(annotation.id)
+                    }
+            } else {
+                Color.clear
+                    .overlay {
+                        AnnotationsInspector(
+                            annotations: model.record?.annotations ?? [],
+                            bookmarks: model.record?.bookmarks ?? [],
+                            chapterTitles: chapterTitles,
+                            onSelect: { reader.go(to: $0) },
+                            onEdit: { openNoteEditor($0, autofocus: !$0.hasContent) },
+                            onDelete: { model.deleteAnnotation($0.id) },
+                            onExport: {
+                                NotesExporter.presentSavePanel(
+                                    bookTitle: book.title,
+                                    markdown: model.exportNotesMarkdown()
+                                )
+                            }
+                        )
+                    }
+            }
         }
+        .inspectorColumnWidth(min: 280, ideal: 360)
     }
 
     private func handleHighlightActivated(id: UUID, rect: CGRect) {
         guard let annotation = model.annotation(with: id) else { return }
-        openNoteEditor(annotation, autofocus: !annotation.hasNote)
+        openNoteEditor(annotation, autofocus: !annotation.hasContent)
     }
 
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {

@@ -153,16 +153,20 @@ struct NoteEditor: View {
         Group {
             if presentation == .sidebar {
                 VStack(alignment: .leading, spacing: 8) {
-                    formatButtons
+                    if mode != .draw {
+                        formatButtons
+                    }
                     modePicker
                         .frame(maxWidth: .infinity)
                 }
             } else {
                 HStack(spacing: 4) {
-                    formatButtons
+                    if mode != .draw {
+                        formatButtons
+                    }
                     Spacer()
                     modePicker
-                        .frame(width: 160)
+                        .frame(width: 220)
                 }
             }
         }

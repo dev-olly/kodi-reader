@@ -236,57 +236,59 @@ struct AnnotationsInspector: View {
     @State private var chapterFilter: String = ""
 
     var body: some View {
-        Group {
-            if annotations.isEmpty && bookmarks.isEmpty {
-                ContentUnavailableView(
-                    "No Notes Yet",
-                    systemImage: "highlighter",
-                    description: Text("Select text while reading to highlight it and add a note.")
-                )
-            } else {
-                VStack(spacing: 0) {
-                    controls
-                    List {
-                        if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
-                            Section("Bookmarks") {
-                                ForEach(bookmarks) { bookmark in
-                                    Button { onSelect(bookmark.locator) } label: {
-                                        Label(
-                                            bookmark.chapterTitle ?? "Bookmark",
-                                            systemImage: "bookmark.fill"
-                                        )
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(.rect)
+        NavigationStack {
+            Group {
+                if annotations.isEmpty && bookmarks.isEmpty {
+                    ContentUnavailableView(
+                        "No Notes Yet",
+                        systemImage: "highlighter",
+                        description: Text("Select text while reading to highlight it and add a note.")
+                    )
+                } else {
+                    VStack(spacing: 0) {
+                        controls
+                        List {
+                            if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
+                                Section("Bookmarks") {
+                                    ForEach(bookmarks) { bookmark in
+                                        Button { onSelect(bookmark.locator) } label: {
+                                            Label(
+                                                bookmark.chapterTitle ?? "Bookmark",
+                                                systemImage: "bookmark.fill"
+                                            )
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .contentShape(.rect)
+                                        }
+                                        .buttonStyle(.plain)
                                     }
-                                    .buttonStyle(.plain)
                                 }
                             }
-                        }
 
-                        Section("Notes") {
-                            if filteredAnnotations.isEmpty {
-                                Text("No matches")
-                                    .foregroundStyle(.secondary)
-                            } else {
-                                ForEach(filteredAnnotations) { annotation in
-                                    row(for: annotation)
+                            Section("Notes") {
+                                if filteredAnnotations.isEmpty {
+                                    Text("No matches")
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    ForEach(filteredAnnotations) { annotation in
+                                        row(for: annotation)
+                                    }
                                 }
                             }
                         }
+                        .listStyle(.inset)
+                        .scrollContentBackground(.hidden)
                     }
-                    .listStyle(.inset)
-                    .scrollContentBackground(.hidden)
                 }
             }
-        }
-        .navigationTitle("Notes")
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button(action: onExport) {
-                    Label("Export", systemImage: "square.and.arrow.up")
+            .navigationTitle("Notes")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    Button(action: onExport) {
+                        Label("Export", systemImage: "square.and.arrow.up")
+                    }
+                    .quickHelp("Export notes as Markdown")
+                    .disabled(annotations.filter(\.hasContent).isEmpty)
                 }
-                .quickHelp("Export notes as Markdown")
-                .disabled(annotations.filter(\.hasNote).isEmpty)
             }
         }
     }

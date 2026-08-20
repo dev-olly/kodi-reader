@@ -12,4 +12,5 @@ npm run build
 That writes static assets into `Sources/ReaderUI/Resources/Excalidraw/`, which
 the reader scheme handler serves from `Bundle.module`. Rebuild after changing
 the host source and commit the generated files so the app stays buildable
-without Node.
+without Node. Leave `node_modules` on disk; it is gitignored and is never
+part of the app.

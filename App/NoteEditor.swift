@@ -310,14 +310,49 @@ struct NoteEditor: View {
         text = annotation.note ?? ""
         selectedColor = annotation.color
         selectedRange = NSRange(location: (text as NSString).length, length: 0)
-        if autofocus {
+        if startInDraw {
+            mode = .draw
+        } else if autofocus {
             mode = .edit
+        }
+        wireDrawing()
+        if mode == .draw {
+            handleModeChange(.draw)
+        }
+    }
+
+    private func handleModeChange(_ newValue: EditorMode) {
+        if newValue == .draw {
+            if presentation == .sidebar {
+                onRequestSheetForDraw?()
+                return
+            }
+            didOpenDraw = true
+            drawingController.setTheme(isDark ? "dark" : "light")
+            drawingController.load(scene: drawingScene)
+        }
+    }
+
+    private func wireDrawing() {
+        drawingController.onSceneChanged = { count, data in
+            scheduleDrawingSave(data, elementCount: count)
         }
     }
 
     private func flush() {
         saveWork?.cancel()
         onSave(text)
+        drawingWork?.cancel()
+        guard didOpenDraw, let onSaveDrawing else {
+            drawingController.tearDown()
+            return
+        }
+        drawingController.pullScene { count, data in
+            if let data {
+                onSaveDrawing(data, count)
+            }
+            drawingController.tearDown()
+        }
     }
 
     private func scheduleAutosave(_ value: String) {

@@ -14,3 +14,21 @@ function post(body) {
     handler.postMessage(body);
   }
 }
+
+function serialize(api) {
+  const elements = api.getSceneElements();
+  const appState = api.getAppState();
+  const files = api.getFiles();
+  const scene = {
+    type: "excalidraw",
+    version: 2,
+    elements,
+    appState: {
+      viewBackgroundColor: appState.viewBackgroundColor,
+      gridSize: appState.gridSize,
+      theme: appState.theme,
+    },
+    files,
+  };
+  return { elementCount: elements.length, scene: JSON.stringify(scene) };
+}

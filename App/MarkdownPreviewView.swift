@@ -43,10 +43,65 @@ struct NoteMarkdownPreview: View {
                         .padding(12)
                         .background(Color.primary.opacity(0.08))
                         .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                case let .table(header, rows, alignments):
+                    tableView(header: header, rows: rows, alignments: alignments)
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func tableView(
+        header: [String],
+        rows: [[String]],
+        alignments: [NoteMarkdown.TableAlignment]
+    ) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
+                GridRow {
+                    ForEach(header.indices, id: \.self) { column in
+                        inlineText(header[column])
+                            .fontWeight(.semibold)
+                            .gridColumnAlignment(horizontalAlignment(alignments, column: column))
+                            .frame(maxWidth: .infinity, alignment: frameAlignment(alignments, column: column))
+                    }
+                }
+                Divider()
+                    .gridCellUnsizedAxes(.horizontal)
+                ForEach(rows.indices, id: \.self) { row in
+                    GridRow {
+                        ForEach(header.indices, id: \.self) { column in
+                            let cell = column < rows[row].count ? rows[row][column] : ""
+                            inlineText(cell)
+                                .frame(maxWidth: .infinity, alignment: frameAlignment(alignments, column: column))
+                        }
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func horizontalAlignment(
+        _ alignments: [NoteMarkdown.TableAlignment],
+        column: Int
+    ) -> HorizontalAlignment {
+        switch alignments.indices.contains(column) ? alignments[column] : .leading {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
+    private func frameAlignment(
+        _ alignments: [NoteMarkdown.TableAlignment],
+        column: Int
+    ) -> Alignment {
+        switch alignments.indices.contains(column) ? alignments[column] : .leading {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
     }
 
     @ViewBuilder

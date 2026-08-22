@@ -147,7 +147,7 @@ public enum NoteMarkdown {
         return blocks
     }
 
-    /// Line-scans prose into paragraphs and list blocks.
+    /// Line-scans prose into paragraphs, lists, and GFM tables.
     public static func proseBlocks(from prose: String) -> [PreviewBlock] {
         let lines = prose.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
         var blocks: [PreviewBlock] = []
@@ -183,10 +183,32 @@ public enum NoteMarkdown {
             flushOrdered()
         }
 
-        for line in lines {
+        var index = 0
+        while index < lines.count {
+            let line = lines[index]
             if line.trimmingCharacters(in: .whitespaces).isEmpty {
                 flushParagraph()
                 flushLists()
+                index += 1
+                continue
+            }
+
+            if index + 1 < lines.count,
+               let header = tableRowCells(line),
+               let alignments = tableAlignments(lines[index + 1], columnCount: header.count)
+            {
+                flushParagraph()
+                flushLists()
+                var rows: [[String]] = []
+                index += 2
+                while index < lines.count,
+                      let cells = tableRowCells(lines[index]),
+                      tableAlignments(lines[index], columnCount: header.count) == nil
+                {
+                    rows.append(paddedCells(cells, count: header.count))
+                    index += 1
+                }
+                blocks.append(.table(header: header, rows: rows, alignments: alignments))
                 continue
             }
 
@@ -194,6 +216,7 @@ public enum NoteMarkdown {
                 flushParagraph()
                 flushOrdered()
                 unorderedItems.append(item)
+                index += 1
                 continue
             }
 
@@ -201,11 +224,13 @@ public enum NoteMarkdown {
                 flushParagraph()
                 flushUnordered()
                 orderedItems.append(item)
+                index += 1
                 continue
             }
 
             flushLists()
             paragraphLines.append(line)
+            index += 1
         }
 
         flushParagraph()

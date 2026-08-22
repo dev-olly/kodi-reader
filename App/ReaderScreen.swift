@@ -356,6 +356,7 @@ struct ReaderScreen: View {
                         .lineLimit(1)
                 }
             }
+            .padding(.top, 10)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {

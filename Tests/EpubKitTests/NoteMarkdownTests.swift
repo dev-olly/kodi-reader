@@ -171,6 +171,19 @@ final class NoteMarkdownTests: XCTestCase {
         )
     }
 
+    func testInsertTablePlacesCaretInFirstBodyCell() {
+        let source = "ab"
+        let caret = source.index(source.startIndex, offsetBy: 1)
+        let result = NoteMarkdown.insertTable(source, selection: caret..<caret)
+        XCTAssertEqual(
+            result.text,
+            "a| Column | Column |\n| --- | --- |\n|  |  |b"
+        )
+        let expected = "| Column | Column |\n| --- | --- |\n| ".count + 1
+        let expectedCaret = result.text.index(result.text.startIndex, offsetBy: expected)
+        XCTAssertEqual(result.selection, expectedCaret..<expectedCaret)
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),

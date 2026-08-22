@@ -118,12 +118,19 @@ public enum NoteMarkdown {
         case code(String)
     }
 
+    public enum TableAlignment: Equatable, Sendable {
+        case leading
+        case center
+        case trailing
+    }
+
     /// Structural blocks for the SwiftUI note preview renderer.
     public enum PreviewBlock: Equatable, Sendable {
         case paragraph(String)
         case unorderedList([String])
         case orderedList([String])
         case code(String)
+        case table(header: [String], rows: [[String]], alignments: [TableAlignment])
     }
 
     /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.

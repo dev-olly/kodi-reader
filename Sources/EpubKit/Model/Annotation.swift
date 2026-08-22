@@ -213,6 +213,50 @@ public enum NoteMarkdown {
         return blocks
     }
 
+    private static func tableRowCells(_ line: String) -> [String]? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|") else { return nil }
+        var body = trimmed
+        if body.hasPrefix("|") { body.removeFirst() }
+        if body.hasSuffix("|") { body.removeLast() }
+        let cells = body.split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+        return cells.isEmpty ? nil : cells
+    }
+
+    private static func tableAlignments(_ line: String, columnCount: Int) -> [TableAlignment]? {
+        guard columnCount > 0, let cells = tableRowCells(line), !cells.isEmpty else { return nil }
+        var alignments: [TableAlignment] = []
+        alignments.reserveCapacity(cells.count)
+        for cell in cells {
+            let compact = cell.replacingOccurrences(of: " ", with: "")
+            guard compact.range(of: #"^:?-{1,}:?$"#, options: .regularExpression) != nil else {
+                return nil
+            }
+            let left = compact.hasPrefix(":")
+            let right = compact.hasSuffix(":")
+            if left && right {
+                alignments.append(.center)
+            } else if right {
+                alignments.append(.trailing)
+            } else {
+                alignments.append(.leading)
+            }
+        }
+        if alignments.count < columnCount {
+            alignments.append(contentsOf: repeatElement(.leading, count: columnCount - alignments.count))
+        } else if alignments.count > columnCount {
+            alignments = Array(alignments.prefix(columnCount))
+        }
+        return alignments
+    }
+
+    private static func paddedCells(_ cells: [String], count: Int) -> [String] {
+        if cells.count == count { return cells }
+        if cells.count > count { return Array(cells.prefix(count)) }
+        return cells + Array(repeating: "", count: count - cells.count)
+    }
+
     private static func unorderedListItem(_ line: String) -> String? {
         let pattern = #"^\s*([-*+])\s+(.*)$"#
         guard let regex = try? NSRegularExpression(pattern: pattern),

@@ -410,6 +410,19 @@ public enum NoteMarkdown {
         return (result, start..<end)
     }
 
+    /// Inserts a two-column table, placing the caret in the first body cell.
+    public static func insertTable(
+        _ source: String,
+        selection: Range<String.Index>
+    ) -> (text: String, selection: Range<String.Index>) {
+        let snippet = "| Column | Column |\n| --- | --- |\n|  |  |"
+        let caretOffset = "| Column | Column |\n| --- | --- |\n| ".count
+        var result = source
+        result.replaceSubrange(selection, with: snippet)
+        let caret = result.index(selection.lowerBound, offsetBy: caretOffset)
+        return (result, caret..<caret)
+    }
+
     /// Prefixes each line of the selection (or the current line) with `marker`.
     public static func prefixLines(
         _ source: String,

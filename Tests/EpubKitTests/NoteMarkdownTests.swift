@@ -122,6 +122,55 @@ final class NoteMarkdownTests: XCTestCase {
         )
     }
 
+    func testPreviewBlocksParsesGFMTable() {
+        let markdown = """
+        | Weak | Strong |
+        | --- | ---: |
+        | Blame circumstances | Study circumstances |
+        | Consume | Build |
+        """
+        XCTAssertEqual(
+            NoteMarkdown.previewBlocks(of: markdown),
+            [
+                .table(
+                    header: ["Weak", "Strong"],
+                    rows: [
+                        ["Blame circumstances", "Study circumstances"],
+                        ["Consume", "Build"],
+                    ],
+                    alignments: [.leading, .trailing]
+                ),
+            ]
+        )
+    }
+
+    func testPreviewBlocksParsesRaggedTableSeparator() {
+        let markdown = """
+        | Weak dependence | Rockefeller's self-reliance |
+        | ---------------------------- |
+        | "Someone should help me." | "What can I do?" |
+        """
+        XCTAssertEqual(
+            NoteMarkdown.previewBlocks(of: markdown),
+            [
+                .table(
+                    header: ["Weak dependence", "Rockefeller's self-reliance"],
+                    rows: [
+                        ["\"Someone should help me.\"", "\"What can I do?\""],
+                    ],
+                    alignments: [.leading, .leading]
+                ),
+            ]
+        )
+    }
+
+    func testPreviewBlocksKeepsLonePipeLineAsParagraph() {
+        XCTAssertEqual(
+            NoteMarkdown.previewBlocks(of: "| just a pipe |"),
+            [.paragraph("| just a pipe |")]
+        )
+    }
+
     func testExportDocumentShape() {
         let annotation = Annotation(
             locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [0], offset: 0)),

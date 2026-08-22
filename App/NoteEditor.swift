@@ -191,6 +191,9 @@ struct NoteEditor: View {
             formatButton("chevron.left.forwardslash.chevron.right", help: "Code block") {
                 insertCodeBlock()
             }
+            formatButton("tablecells", help: "Table") {
+                insertTable()
+            }
         }
         .disabled(mode == .preview)
     }

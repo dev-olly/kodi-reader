@@ -312,6 +312,19 @@ struct NoteEditor: View {
         selectedRange = NSRange(result.selection, in: result.text)
     }
 
+    private func insertTable() {
+        guard let range = Range(selectedRange, in: text) else {
+            let end = text.endIndex
+            let result = NoteMarkdown.insertTable(text, selection: end..<end)
+            text = result.text
+            selectedRange = NSRange(result.selection, in: result.text)
+            return
+        }
+        let result = NoteMarkdown.insertTable(text, selection: range)
+        text = result.text
+        selectedRange = NSRange(result.selection, in: result.text)
+    }
+
     private func load() {
         text = annotation.note ?? ""
         selectedColor = annotation.color

@@ -16,7 +16,7 @@ struct HighlightPalette: View {
     @State private var copyGeneration = 0
 
     var body: some View {
-        ArrowCursorContainer {
+        PointerCursorContainer {
             HStack(spacing: 10) {
                 ForEach(HighlightColor.allCases, id: \.self) { color in
                     Button { onPick(color) } label: {
@@ -29,15 +29,14 @@ struct HighlightPalette: View {
                 Divider().frame(height: 20)
 
                 Button(action: onAddNote) {
-                    // Avoid Label/Text I-beam over the chip; keep a pointing arrow.
                     HStack(spacing: 4) {
                         Image(systemName: "text.badge.plus")
                         Text("Note")
                     }
                     .font(.system(size: 12, weight: .medium))
                 }
-                    .buttonStyle(.plain)
-                    .help("Highlight and add a note")
+                .buttonStyle(.plain)
+                .help("Highlight and add a note")
 
                 Button(action: onAskAI) {
                     HStack(spacing: 4) {
@@ -46,20 +45,20 @@ struct HighlightPalette: View {
                     }
                     .font(.system(size: 12, weight: .medium))
                 }
-                    .buttonStyle(.plain)
-                    .help("Ask AI about this selection")
+                .buttonStyle(.plain)
+                .help("Ask AI about this selection")
 
-                    Button(action: onPlay) {
-                        HStack(spacing: 4) {
-                            Image(systemName: "play.fill")
-                            Text("Play")
-                        }
-                        .font(.system(size: 12, weight: .medium))
+                Button(action: onPlay) {
+                    HStack(spacing: 4) {
+                        Image(systemName: "play.fill")
+                        Text("Play")
                     }
-                    .buttonStyle(.plain)
-                    .help("Read from here")
+                    .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.plain)
+                .help("Read from here")
 
-                    Button(action: copyTapped) {
+                Button(action: copyTapped) {
                     HStack(spacing: 4) {
                         Image(systemName: copied ? "checkmark" : "doc.on.doc")
                         Text(copied ? "Copied" : "Copy")
@@ -101,14 +100,6 @@ struct HighlightPalette: View {
             .contentShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .padding(.bottom, copied ? 26 : 0)
             .animation(.easeInOut(duration: 0.15), value: copied)
-            .onContinuousHover { phase in
-                switch phase {
-                case .active:
-                    NSCursor.arrow.set()
-                case .ended:
-                    break
-                }
-            }
         }
         .shadow(radius: 8, y: 3)
     }
@@ -148,18 +139,18 @@ struct HighlightPalette: View {
     }
 }
 
-/// Hosts the palette in AppKit so cursor rects win over WKWebView’s I-beam.
-private struct ArrowCursorContainer<Content: View>: NSViewRepresentable {
+/// Hosts the palette in AppKit so a pointing-hand cursor wins over WKWebView’s I-beam.
+private struct PointerCursorContainer<Content: View>: NSViewRepresentable {
     var content: Content
 
     init(@ViewBuilder content: () -> Content) {
         self.content = content()
     }
 
-    func makeNSView(context: Context) -> ArrowCursorHost {
-        let host = ArrowCursorHost()
+    func makeNSView(context: Context) -> PointerCursorHost {
+        let host = PointerCursorHost()
         host.clipsToBounds = false
-        let hosting = NSHostingView(rootView: content)
+        let hosting = PointerCursorHostingView(rootView: content)
         hosting.clipsToBounds = false
         hosting.translatesAutoresizingMaskIntoConstraints = false
         host.addSubview(hosting)
@@ -173,7 +164,7 @@ private struct ArrowCursorContainer<Content: View>: NSViewRepresentable {
         return host
     }
 
-    func updateNSView(_ nsView: ArrowCursorHost, context: Context) {
+    func updateNSView(_ nsView: PointerCursorHost, context: Context) {
         context.coordinator.hosting?.rootView = content
         nsView.invalidateIntrinsicContentSize()
         nsView.window?.invalidateCursorRects(for: nsView)
@@ -184,11 +175,21 @@ private struct ArrowCursorContainer<Content: View>: NSViewRepresentable {
     }
 
     final class Coordinator {
-        var hosting: NSHostingView<Content>?
+        var hosting: PointerCursorHostingView<Content>?
     }
 }
 
-private final class ArrowCursorHost: NSView {
+/// Skips `super.resetCursorRects()` so descendant `Text` views cannot install an I-beam.
+private final class PointerCursorHostingView<Content: View>: NSHostingView<Content> {
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .pointingHand)
+    }
+}
+
+private final class PointerCursorHost: NSView {
+    private var trackingArea: NSTrackingArea?
+    private var isInside = false
+
     override var acceptsFirstResponder: Bool { false }
 
     override var intrinsicContentSize: NSSize {
@@ -196,16 +197,48 @@ private final class ArrowCursorHost: NSView {
         return hosting.fittingSize
     }
 
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let trackingArea {
+            removeTrackingArea(trackingArea)
+        }
+        let area = NSTrackingArea(
+            rect: bounds,
+            options: [.cursorUpdate, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect, .activeInKeyWindow],
+            owner: self,
+            userInfo: nil
+        )
+        addTrackingArea(area)
+        trackingArea = area
+    }
+
     override func resetCursorRects() {
-        addCursorRect(bounds, cursor: .arrow)
+        addCursorRect(bounds, cursor: .pointingHand)
     }
 
     override func cursorUpdate(with event: NSEvent) {
-        NSCursor.arrow.set()
+        NSCursor.pointingHand.set()
+    }
+
+    override func mouseEntered(with event: NSEvent) {
+        isInside = true
+        NSCursor.pointingHand.set()
+    }
+
+    // WKWebView underneath resets the I-beam on every move, so reassert the
+    // pointing hand each time while the pointer is over the bar.
+    override func mouseMoved(with event: NSEvent) {
+        guard isInside else { return }
+        NSCursor.pointingHand.set()
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        isInside = false
     }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if window == nil { isInside = false }
         window?.invalidateCursorRects(for: self)
     }
 

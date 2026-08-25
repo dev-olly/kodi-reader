@@ -348,6 +348,12 @@ public final class ReaderController {
         }
     }
 
+    /// Captures the current on-screen position as a one-shot resize anchor so an
+    /// imminent width change (opening/closing the sidebar note editor) restores here.
+    public func pinRestoreCurrentPositionOnce() {
+        evaluate("__reader.pinRestoreCurrentOnce()")
+    }
+
     private func pushPinRestore() {
         guard let position = pinnedRestorePosition else { return }
         evaluate("__reader.pinRestore(\(json(position)))")

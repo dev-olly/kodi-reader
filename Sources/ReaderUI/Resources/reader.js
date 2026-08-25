@@ -227,6 +227,9 @@
   var pendingRestore = null;
   // When set (Draw expanded), resize restore always uses this locator.
   var pinnedRestore = null;
+  // One-shot resize anchor: captured before an imminent width change (e.g.
+  // opening the sidebar note editor) and consumed by the next relayout.
+  var pinnedRestoreOnce = null;
 
   function pinRestore(position) {
     if (position && position.elementPath && position.elementPath.length > 0) {
@@ -236,9 +239,21 @@
     }
   }
 
+  function pinRestoreCurrentOnce() {
+    var p = currentPosition();
+    if (p && p.elementPath && p.elementPath.length > 0) {
+      pinnedRestoreOnce = p;
+    }
+  }
+
   function rememberRestore(position) {
     if (pinnedRestore) {
       pendingRestore = pinnedRestore;
+      return;
+    }
+    if (pinnedRestoreOnce) {
+      pendingRestore = pinnedRestoreOnce;
+      pinnedRestoreOnce = null;
       return;
     }
     if (pendingRestore) return;
@@ -1348,7 +1363,7 @@
       // Capture the anchor after the window has settled, not on the first
       // intermediate resize event, so we restore what is actually on screen.
       // A pinned locator (Draw) wins over the on-screen probe.
-      relayout(pinnedRestore || currentPosition());
+      relayout(pinnedRestore || pinnedRestoreOnce || currentPosition());
     }, 90);
   }
 
@@ -1398,6 +1413,7 @@
     goToFragment: goToFragment,
     goToPosition: goToPosition,
     pinRestore: pinRestore,
+    pinRestoreCurrentOnce: pinRestoreCurrentOnce,
     goToEnd: function () {
       measure();
       goToPage(state.pageCount - 1, false);

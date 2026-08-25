@@ -57,6 +57,7 @@ struct ReaderScreen: View {
             }
             .onChange(of: model.isShowingAnnotations) { _, showing in
                 if !showing, model.settings.noteEditorPlacement == .sidebar {
+                    reader.pinRestoreCurrentPositionOnce()
                     editingAnnotation = nil
                     inspectorOpenedForEditor = false
                     isDrawingExpanded = false
@@ -267,6 +268,7 @@ struct ReaderScreen: View {
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
         noteEditorAutofocus = autofocus
         if isSidebarPlacement, !model.isShowingAnnotations {
+            reader.pinRestoreCurrentPositionOnce()
             inspectorOpenedForEditor = true
             model.isShowingAnnotations = true
         }

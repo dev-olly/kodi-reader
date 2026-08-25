@@ -289,8 +289,8 @@ table {
 .reader-highlight-rect[data-has-note="true"]::after {
   content: "";
   position: absolute;
-  top: -3px;
-  right: -3px;
+  top: 1px;
+  right: 1px;
   width: 6px;
   height: 6px;
   border-radius: 50%;

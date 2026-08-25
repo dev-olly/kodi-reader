@@ -842,7 +842,7 @@
         div.className = "reader-highlight-rect";
         div.dataset.highlightId = highlight.id;
         div.dataset.style = highlight.style || "fill";
-        if (highlight.hasNote) div.dataset.hasNote = "true";
+        if (highlight.hasNote && r === 0) div.dataset.hasNote = "true";
         div.style.left = rect.left + scrollLeft + "px";
         div.style.top = rect.top + scrollTop + "px";
         div.style.width = rect.width + "px";

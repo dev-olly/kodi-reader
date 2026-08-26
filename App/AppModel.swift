@@ -55,6 +55,9 @@ final class AppModel {
 
         let aiConfig = AIConfigStore(directory: root)
         self.aiConfig = aiConfig
+        KeychainStore.migrateLegacyKeys(
+            additionalAccounts: aiConfig.configs.map(\.id.uuidString)
+        )
         let chat = ChatController(configStore: aiConfig)
         self.chat = chat
         chat.onPersist = { [weak self] messages in

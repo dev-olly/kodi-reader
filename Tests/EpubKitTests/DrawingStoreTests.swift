@@ -46,7 +46,7 @@ final class DrawingStoreTests: XCTestCase {
 
     func testLibraryStoreRemoveDeletesDrawings() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("folio-lib-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("kodi-lib-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 

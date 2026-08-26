@@ -1,8 +1,38 @@
 # Kodi Reader
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
 A lightweight native EPUB reader for macOS. Paginated reading, typography and
 theme controls, highlights with notes, and fluent on-device read-aloud — without
 the store, the sync, or the library management.
+
+Kodi Reader is **not affiliated with** the [Kodi media center](https://kodi.tv/)
+or the XBMC Foundation.
+
+![Paginated reading](docs/screenshots/reading.png)
+![Two-column spread](docs/screenshots/spread.png)
+![Highlight with a note](docs/screenshots/note.png)
+
+## Status
+
+Source is public under MIT. Issues are welcome for bugs. **Pull requests are
+not the goal right now** — this is a source-available personal project, not a
+contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
+[SECURITY.md](SECURITY.md) to report vulnerabilities privately.
+
+There is no binary download yet. Build from source (Xcode 26). Homebrew is
+planned once Developer ID signing exists.
+
+## Privacy
+
+- Books, highlights, notes, and drawings stay on this Mac (sandbox Application
+  Support). Nothing is extracted from the EPUB to a temp folder for reading.
+- There is no analytics or telemetry.
+- **Ask AI** is opt-in. You configure an OpenAI-compatible endpoint; quoted
+  passages and chat go only there. API keys live in the Keychain, not in JSON.
+- **Read-aloud** downloads the Kokoro voice model into Application Support on
+  first use (Apache-2.0 weights, a few hundred megabytes). Synthesis runs
+  locally.
 
 ## Requirements
 
@@ -17,7 +47,8 @@ brew install xcodegen
 ## Building
 
 The app target needs Xcode 26 (KokoroSwift). `swift test` for EpubKit and
-ReaderUI still runs on older toolchains.
+ReaderUI still runs on older toolchains. Signing is ad-hoc (`CODE_SIGN_IDENTITY:
+"-"`) so the app runs locally; it is not a notarized distribution build.
 
 ```sh
 xcodegen generate
@@ -33,6 +64,9 @@ xcodebuild -project KodiReader.xcodeproj -scheme KodiReader -configuration Debug
 
 The `.xcodeproj` is generated from `project.yml` and is not committed, so
 regenerate it after pulling changes that touch the project layout.
+
+The bundle identifier is `com.olly.KodiReader`. Product name lives in
+`project.yml` as `PRODUCT_NAME: Kodi Reader`.
 
 ## Testing
 
@@ -133,14 +167,3 @@ window, and the welcome screen lists what you were reading recently.
 Read-aloud uses [Kokoro](https://github.com/hexgrad/kokoro) locally via
 [KokoroSwift](https://github.com/mlalma/kokoro-ios). The first listen downloads
 the voice model (a few hundred megabytes) into Application Support.
-
-## Renaming the app
-
-The product name lives in `project.yml`:
-
-```yaml
-PRODUCT_NAME: Kodi Reader
-```
-
-Change it and re-run `xcodegen generate`. The bundle identifier (`com.olly.Folio`)
-is separate so existing sandboxed library data keeps working across renames.

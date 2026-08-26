@@ -93,10 +93,10 @@ final class NoteMarkdownTests: XCTestCase {
 
     func testPreviewBlocksScreenshotSample() {
         let markdown = """
-        i am **Olly**.
+        The **opening** line.
 
         ```
-        print("kodi")
+        print("hello")
         ```
 
         - I know what kind of man you are
@@ -108,8 +108,8 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(
             NoteMarkdown.previewBlocks(of: markdown),
             [
-                .paragraph("i am **Olly**."),
-                .code("print(\"kodi\")"),
+                .paragraph("The **opening** line."),
+                .code("print(\"hello\")"),
                 .unorderedList([
                     "I know what kind of man you are",
                     "I knew you could do it",

@@ -3,7 +3,7 @@ import ReaderUI
 import SwiftUI
 
 @main
-struct EpubReaderApp: App {
+struct KodiReaderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
     @Environment(\.scenePhase) private var scenePhase

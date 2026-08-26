@@ -19,7 +19,7 @@ struct SynthesizedSpeech: Sendable {
 /// Kokoro/MLX must run on one persistent OS thread. A GCD serial queue can hop
 /// workers between jobs, which hangs Metal ("no GPU stream in current thread").
 final class KokoroEngine: @unchecked Sendable {
-    private let executor = SerialThreadExecutor(name: "com.olly.folio.kokoro")
+    private let executor = SerialThreadExecutor(name: "com.olly.KodiReader.kokoro")
     private var tts: KokoroTTS?
     private var voices: [String: MLXArray] = [:]
 

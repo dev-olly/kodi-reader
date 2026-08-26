@@ -4,7 +4,7 @@ import XCTest
 final class LibraryImportTests: XCTestCase {
     func testImportBookCopiesIntoBooksDirectory() throws {
         let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("folio-lib-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("kodi-lib-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
 

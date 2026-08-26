@@ -30,7 +30,7 @@ settings:
     CURRENT_PROJECT_VERSION: "1"
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
-    # Personal build; signed to run locally rather than for distribution.
+    # Ad-hoc signing for local runs; not for distribution.
     CODE_SIGN_IDENTITY: "-"
     CODE_SIGN_STYLE: Automatic
 
@@ -58,7 +58,7 @@ targets:
     settings:
       base:
         PRODUCT_NAME: Kodi Reader
-        PRODUCT_BUNDLE_IDENTIFIER: com.olly.Folio
+        PRODUCT_BUNDLE_IDENTIFIER: com.olly.KodiReader
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/KodiReader.entitlements
         ENABLE_PREVIEWS: YES

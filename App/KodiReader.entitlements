@@ -15,5 +15,18 @@
 	<true/>
 	<key>com.apple.security.files.bookmarks.app-scope</key>
 	<true/>
+	<!-- v0.1.0 only: read the Folio-era container and the unsigned Debug leak
+	     so Recents, drawings, and Kokoro weights can be copied once. -->
+	<key>com.apple.security.temporary-exception.files.home-relative-path.read-only</key>
+	<array>
+		<string>/Library/Containers/com.olly.Folio/</string>
+		<string>/Library/Application Support/EpubReader/</string>
+	</array>
+	<!-- Lets this build read generic-password items stored under the old bundle. -->
+	<key>keychain-access-groups</key>
+	<array>
+		<string>$(AppIdentifierPrefix)com.olly.Folio</string>
+		<string>$(AppIdentifierPrefix)com.olly.KodiReader</string>
+	</array>
 </dict>
 </plist>

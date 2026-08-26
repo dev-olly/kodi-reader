@@ -97,7 +97,7 @@ struct AIChatService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Kodi Reader", forHTTPHeaderField: "X-Title")
-        request.setValue("https://github.com/olly/kodi-reader", forHTTPHeaderField: "HTTP-Referer")
+        request.setValue("https://github.com/dev-olly/kodi-reader", forHTTPHeaderField: "HTTP-Referer")
         if !key.isEmpty {
             request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         }

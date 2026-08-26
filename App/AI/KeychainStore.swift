@@ -4,7 +4,8 @@ import Security
 /// Generic-password Keychain access for model API keys.
 /// Keys are stored under `account` = the model config's UUID string, never in JSON.
 enum KeychainStore {
-    private static let service = "com.olly.Folio.ai-keys"
+    static let service = "com.olly.KodiReader.ai-keys"
+    static let legacyService = "com.olly.Folio.ai-keys"
 
     static func set(_ value: String, account: String) throws {
         let data = Data(value.utf8)
@@ -31,17 +32,7 @@ enum KeychainStore {
     }
 
     static func get(account: String) -> String? {
-        let query: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: account,
-            kSecReturnData as String: true,
-            kSecMatchLimit as String: kSecMatchLimitOne,
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess, let data = result as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        get(account: account, service: service)
     }
 
     static func delete(account: String) {
@@ -59,6 +50,25 @@ enum KeychainStore {
         return !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
+    /// Copies any Folio-era secrets into the current service. Idempotent:
+    /// existing new-service items are left alone.
+    static func migrateLegacyKeys(additionalAccounts: [String] = []) {
+        var accounts = Set(additionalAccounts)
+        for account in allAccounts(service: legacyService) {
+            accounts.insert(account)
+        }
+        for preset in AIModelConfig.presets {
+            accounts.insert(preset.id.uuidString)
+        }
+        for account in accounts {
+            guard get(account: account, service: service) == nil,
+                  let value = get(account: account, service: legacyService),
+                  !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else { continue }
+            try? set(value, account: account)
+        }
+    }
+
     enum KeychainError: LocalizedError {
         case unhandled(OSStatus)
 
@@ -71,5 +81,32 @@ enum KeychainStore {
                 return "Keychain error (\(status))"
             }
         }
+    }
+
+    private static func get(account: String, service: String) -> String? {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    private static func allAccounts(service: String) -> [String] {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let items = result as? [[String: Any]] else { return [] }
+        return items.compactMap { $0[kSecAttrAccount as String] as? String }
     }
 }

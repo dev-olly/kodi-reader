@@ -42,7 +42,7 @@ public final class LibraryStore: @unchecked Sendable {
         return payload.version
     }
 
-    public convenience init(applicationName: String = "EpubReader") throws {
+    public convenience init(applicationName: String = "KodiReader") throws {
         let support = try FileManager.default.url(
             for: .applicationSupportDirectory,
             in: .userDomainMask,

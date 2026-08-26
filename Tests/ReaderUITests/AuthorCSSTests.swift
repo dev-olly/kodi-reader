@@ -154,45 +154,6 @@ final class AuthorCSSTests: XCTestCase {
         )
     }
 
-    /// The book that surfaced the bug is a Calibre Kindle conversion. If it is
-    /// in the local library, pin the same invariants against the real file.
-    func testRockefellerConversionHonorsPageBoxAndPaging() throws {
-        let url = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(
-                "Library/Containers/com.olly.Folio/Data/Library/Application Support/EpubReader/Books/B08HM8G5VD.epub"
-            )
-        try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path), "Rockefeller EPUB not in the local library")
-
-        let size = CGSize(width: 800, height: 700)
-        let chapter = max(0, (try EPUBBook(fileURL: url)).publication.readingOrder.count / 4)
-        let (reader, _) = try makeReader(
-            fileURL: url,
-            size: size,
-            deleteOnTearDown: false,
-            locator: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0))
-        )
-        XCTAssertTrue(wait { !reader.isLoading })
-
-        let expectedPad = reader.settings.horizontalMargin(forWidth: size.width)
-        let box = bodyBox(from: reader)
-        XCTAssertEqual(box["paddingLeft"] ?? -1, expectedPad, accuracy: 1, "Rockefeller still has zero padding: \(box)")
-        XCTAssertEqual(box["marginLeft"] ?? -1, 0, accuracy: 0.5, "Rockefeller still has author body margin: \(box)")
-        XCTAssertEqual(box["fontSize"] ?? 0, reader.settings.fontSize, accuracy: 1)
-
-        try XCTSkipUnless(reader.pageCount > 1, "Chapter fit on one page")
-        _ = wait(timeout: 0.4) { false }
-        var jumped = false
-        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in jumped = true }
-        XCTAssertTrue(wait { jumped })
-        XCTAssertTrue(
-            wait(timeout: 5) {
-                pageIndexAgreesWithScroll(pagingGeometry(from: reader), swiftPage: reader.page)
-                    && reader.page == 1
-            },
-            "Rockefeller page 2 did not match scroll: \(pagingGeometry(from: reader))"
-        )
-    }
-
     // MARK: - Harness
 
     private func makeCalibreReader(

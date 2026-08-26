@@ -98,6 +98,7 @@ final class AIConfigStore {
         guard !AppDataDirectory.isSandboxed else { return }
         let leaked = FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support/EpubReader/ai-models.json")
+        // Folio-era unsigned Debug path; LegacyFolioMigration usually copies this first.
         guard leaked.standardizedFileURL != destination.standardizedFileURL,
               FileManager.default.fileExists(atPath: leaked.path)
         else { return }

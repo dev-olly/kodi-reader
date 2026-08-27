@@ -20,8 +20,7 @@ not the goal right now** — this is a source-available personal project, not a
 contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
-There is no binary download yet. Build from source (Xcode 26). Homebrew is
-planned once Developer ID signing exists.
+There is no binary download yet. Build from source (Xcode 26).
 
 ## Privacy
 

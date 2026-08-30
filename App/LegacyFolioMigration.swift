@@ -18,7 +18,6 @@ enum LegacyFolioMigration {
 
     static func run(into destination: URL) {
         copyFiles(into: destination)
-        KeychainStore.migrateLegacyKeys()
     }
 
     private static func copyFiles(into destination: URL) {

@@ -6,6 +6,7 @@ struct AskAIPanel: View {
     @Environment(AppModel.self) private var model
     @FocusState private var composerFocused: Bool
     @State private var bottomID = UUID()
+    @State private var showingHistory = false
 
     var body: some View {
         VStack(spacing: 0) {

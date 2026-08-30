@@ -48,14 +48,62 @@ final class LibraryImportTests: XCTestCase {
         let record = try JSONDecoder().decode(BookRecord.self, from: json)
         XCTAssertNil(record.importedRelativePath)
         XCTAssertNil(record.chatMessages)
+        XCTAssertNil(record.sourceURL)
+        XCTAssertFalse(record.isWebDocument)
         XCTAssertEqual(record.conversation, [])
+    }
+
+    func testBookRecordRoundTripsSourceURL() throws {
+        var record = BookRecord(
+            id: "web-1",
+            title: "An Article",
+            author: "Site",
+            sourceURL: URL(string: "https://example.com/post")
+        )
+        record.annotations = [
+            Annotation(
+                locator: Locator(
+                    spineIndex: 0,
+                    start: TextPosition(elementPath: [0], offset: 0)
+                ),
+                text: "quote"
+            ),
+        ]
+        let data = try JSONEncoder().encode(record)
+        let decoded = try JSONDecoder().decode(BookRecord.self, from: data)
+        XCTAssertEqual(decoded.sourceURL?.absoluteString, "https://example.com/post")
+        XCTAssertTrue(decoded.isWebDocument)
+        XCTAssertEqual(decoded.annotations.count, 1)
+    }
+
+    func testLibraryStoreMigratesToV3() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kodi-lib-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let libraryURL = root.appendingPathComponent("library.json")
+        let v2 = """
+        {"version": 2, "books": {}}
+        """.data(using: .utf8)!
+        try v2.write(to: libraryURL)
+
+        let store = LibraryStore(fileURL: libraryURL)
+        XCTAssertEqual(store.schemaVersion, LibraryStore.currentVersion)
+        XCTAssertEqual(LibraryStore.currentVersion, 3)
     }
 
     func testBookRecordRoundTripsChatMessages() throws {
         var record = BookRecord(id: "book-1", title: "Test", author: "Author")
         record.chatMessages = [
             ChatMessage(role: .user, text: "What does this mean?", references: [
-                ChatReference(quotedText: "Call me Ishmael.", chapterTitle: "Chapter 1", spineIndex: 0),
+                ChatReference(
+                    quotedText: "Call me Ishmael.",
+                    chapterTitle: "Chapter 1",
+                    spineIndex: 0,
+                    contextBefore: "Some years ago—never mind how long precisely—",
+                    contextAfter: "having little or no money in my purse,"
+                ),
             ]),
             ChatMessage(role: .assistant, text: "It is the narrator introducing himself."),
         ]

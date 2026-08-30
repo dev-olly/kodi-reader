@@ -3,15 +3,45 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 A lightweight native EPUB reader for macOS. Paginated reading, typography and
-theme controls, highlights with notes, and fluent on-device read-aloud — without
-the store, the sync, or the library management.
+theme controls, highlights with notes and drawings, configurable Ask AI, webpage
+reading, and fluent on-device read-aloud — without the store, the sync, or the
+library management.
 
 Kodi Reader is **not affiliated with** the [Kodi media center](https://kodi.tv/)
 or the XBMC Foundation.
 
-![Paginated reading](docs/screenshots/reading.png)
+## Features
+
+### Book reading
+Paginated EPUB rendering with typography, margin, and theme controls, plus position and progress that survive layout changes.
+
+![Book reading](docs/screenshots/reading.png)
 ![Two-column spread](docs/screenshots/spread.png)
+
+### Notes taking
+Text highlights in multiple colors, each with an attached note, stored alongside the book.
+
 ![Highlight with a note](docs/screenshots/note.png)
+
+### Visual notes
+Freeform sketches per highlight via a bundled, offline [Excalidraw](https://excalidraw.com/) editor.
+
+![Visual notes with Excalidraw](docs/screenshots/visual-notes.png)
+
+### Ask AI
+Opt-in, configurable OpenAI-compatible chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.
+
+![Ask AI](docs/screenshots/ask-ai.png)
+
+### Open web apps and websites
+Load an article or page, extract the readable content, and read it in the same paginated view as a book.
+
+![Open web app or website](docs/screenshots/web.png)
+
+### Audio reading
+On-device read-aloud using [Kokoro](https://github.com/hexgrad/kokoro), no cloud TTS.
+
+![Audio reading](docs/screenshots/audio.png)
 
 ## Status
 
@@ -28,7 +58,10 @@ There is no binary download yet. Build from source (Xcode 26).
   Support). Nothing is extracted from the EPUB to a temp folder for reading.
 - There is no analytics or telemetry.
 - **Ask AI** is opt-in. You configure an OpenAI-compatible endpoint; quoted
-  passages and chat go only there. API keys live in the Keychain, not in JSON.
+  passages and chat go only there. API keys live in `ai-keys.json` inside the
+  app's sandbox container (POSIX `0600`), not in the Keychain.
+- Opened webpages are fetched and converted locally. There are no extra
+  network calls beyond the page itself.
 - **Read-aloud** downloads the Kokoro voice model into Application Support on
   first use (Apache-2.0 weights, a few hundred megabytes). Synthesis runs
   locally.
@@ -161,7 +194,8 @@ those generated files so the app builds without Node.
 
 No library shelf, DRM/LCP, sync, OPDS catalogues, bundled audiobooks, or
 fixed-layout EPUB. Books are opened with `Cmd-O` or by dropping them on the
-window, and the welcome screen lists what you were reading recently.
+window; articles and websites can be opened from a URL. The welcome screen
+lists what you were reading recently.
 
 Read-aloud uses [Kokoro](https://github.com/hexgrad/kokoro) locally via
 [KokoroSwift](https://github.com/mlalma/kokoro-ios). The first listen downloads

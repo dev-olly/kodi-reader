@@ -49,6 +49,48 @@ public struct ChatReference: Codable, Identifiable, Hashable, Sendable {
     }
 }
 
+/// One saved Ask AI conversation for a book, like a Cursor chat thread.
+public struct ChatThread: Codable, Identifiable, Hashable, Sendable {
+    public var id: UUID
+    public var title: String
+    public var messages: [ChatMessage]
+    public var createdAt: Date
+    public var updatedAt: Date
+
+    public init(
+        id: UUID = UUID(),
+        title: String = "New chat",
+        messages: [ChatMessage] = [],
+        createdAt: Date = Date(),
+        updatedAt: Date = Date()
+    ) {
+        self.id = id
+        self.title = title
+        self.messages = messages
+        self.createdAt = createdAt
+        self.updatedAt = updatedAt
+    }
+
+    public static func title(from messages: [ChatMessage]) -> String {
+        let text = messages.first(where: { $0.role == .user })?.text
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression) ?? ""
+        if text.isEmpty { return "New chat" }
+        if text.count <= 48 { return text }
+        return String(text.prefix(48)) + "…"
+    }
+
+    public static func wrappingLegacyMessages(_ messages: [ChatMessage]) -> ChatThread {
+        let stamp = messages.last?.createdAt ?? Date()
+        return ChatThread(
+            title: title(from: messages),
+            messages: messages,
+            createdAt: messages.first?.createdAt ?? stamp,
+            updatedAt: stamp
+        )
+    }
+}
+
 /// One turn in a book's Ask AI conversation.
 public struct ChatMessage: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID

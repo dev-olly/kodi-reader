@@ -147,6 +147,11 @@ struct WelcomeView: View {
         .buttonStyle(.plain)
         .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 8))
         .contextMenu {
+            if record.sourceURL != nil {
+                Button("Open Original in Browser") {
+                    model.openOriginalInBrowser(record)
+                }
+            }
             Button("Remove from Recent", role: .destructive) {
                 model.removeFromRecents(record)
             }

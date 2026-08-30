@@ -363,9 +363,10 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertEqual(record.annotations.count, 1)
         XCTAssertEqual(record.annotations[0].anchorStatus, .unknown)
         XCTAssertEqual(record.annotations[0].note, "old note")
+        XCTAssertNil(record.sourceURL)
 
         store.flush()
         let reloaded = try JSONSerialization.jsonObject(with: Data(contentsOf: url)) as? [String: Any]
-        XCTAssertEqual(reloaded?["version"] as? Int, 2)
+        XCTAssertEqual(reloaded?["version"] as? Int, LibraryStore.currentVersion)
     }
 }

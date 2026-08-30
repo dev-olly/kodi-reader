@@ -125,8 +125,8 @@ public final class LibraryStore: @unchecked Sendable {
         guard var payload = try? JSONDecoder().decode(Payload.self, from: data) else {
             return nil
         }
-        // v1 → v2 is a no-op body migration: Annotation.anchorStatus is optional
-        // on decode. Bumping the version ensures the next write stamps v2.
+        // v1 → v3 is a no-op body migration: new Annotation/BookRecord fields
+        // are optional on decode. Bumping the version stamps the current schema.
         if payload.version < currentVersion {
             payload.version = currentVersion
         }

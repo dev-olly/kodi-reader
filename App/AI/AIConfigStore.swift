@@ -2,7 +2,7 @@ import Foundation
 import Observation
 
 /// Persists Ask AI model configs and the selected model id next to `library.json`.
-/// API keys are never written here — they live in the Keychain.
+/// API keys are never written here — they live in `ai-keys.json`.
 @MainActor
 @Observable
 final class AIConfigStore {

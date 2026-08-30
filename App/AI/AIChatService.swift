@@ -188,7 +188,7 @@ struct AIChatService {
             lines.append("They are currently in the chapter “\(chapter)”.")
         }
         lines.append(
-            "Answer questions using the quoted passages they attach as references. Be concise and helpful. If a quote is insufficient, say so rather than inventing context from outside the attached text."
+            "Answer questions using the quoted passages they attach as references, including any surrounding passage provided with a quote. Be concise and helpful. If the attached text is insufficient, say so rather than inventing book text from outside it."
         )
         return lines.joined(separator: "\n")
     }

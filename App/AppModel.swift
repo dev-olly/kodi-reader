@@ -13,6 +13,12 @@ final class AppModel {
     private(set) var record: BookRecord?
     private(set) var reader: ReaderController?
     private(set) var recents: [BookRecord] = []
+    private(set) var webBrowser: WebBrowserController?
+    private(set) var isSavingWebPage = false
+    var isShowingOpenURLSheet = false
+    var pendingWebURLText = ""
+
+    var isBrowsing: Bool { webBrowser != nil }
 
     var errorMessage: String?
     var isShowingContents = false

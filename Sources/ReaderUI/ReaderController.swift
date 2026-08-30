@@ -671,6 +671,24 @@ public final class ReaderController {
         return TextPosition(elementPath: path, offset: raw["offset"] as? Int ?? 0)
     }
 
+    private static func decodeSurroundingPassage(_ result: Any?) -> ReaderSurroundingPassage {
+        let body: [String: Any]
+        if let string = result as? String,
+           let data = string.data(using: .utf8),
+           let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            body = parsed
+        } else if let parsed = result as? [String: Any] {
+            body = parsed
+        } else {
+            return ReaderSurroundingPassage()
+        }
+        return ReaderSurroundingPassage(
+            before: (body["before"] as? String) ?? "",
+            quote: (body["quote"] as? String) ?? "",
+            after: (body["after"] as? String) ?? ""
+        )
+    }
+
     private static func decodeUtterances(_ result: Any?) -> [ReaderUtterance] {
         let rows: [[String: Any]]
         if let string = result as? String,

@@ -382,21 +382,40 @@ final class AppModel {
             chat.shouldFocusComposer = true
             return
         }
-        chat.addReference(
-            ChatReference(
-                quotedText: selection.text,
-                chapterTitle: reader.chapterTitle,
-                spineIndex: selection.locator.spineIndex
-            )
+        let reference = ChatReference(
+            quotedText: selection.text,
+            chapterTitle: reader.chapterTitle,
+            spineIndex: selection.locator.spineIndex
         )
+        let locator = selection.locator
+        chat.addReference(reference)
         reader.clearSelection()
+        reader.extractSurroundingPassage(from: locator) { [weak self] passage in
+            Task { @MainActor in
+                let before = passage.before.trimmingCharacters(in: .whitespacesAndNewlines)
+                let after = passage.after.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !before.isEmpty || !after.isEmpty else { return }
+                self?.chat.updateReference(
+                    reference.id,
+                    contextBefore: before.isEmpty ? nil : before,
+                    contextAfter: after.isEmpty ? nil : after
+                )
+            }
+        }
     }
 
-    private func persistChat(_ messages: [ChatMessage]) {
+    private func persistChat(_ threads: [ChatThread], activeID: UUID?) {
         guard var record, let bookID = book?.bookID else { return }
-        record.chatMessages = messages.isEmpty ? nil : messages
+        let stored = threads.filter { !$0.messages.isEmpty }
+        record.chats = stored.isEmpty ? nil : stored
+        record.activeChatID = stored.contains(where: { $0.id == activeID }) ? activeID : stored.first?.id
+        record.chatMessages = stored.first(where: { $0.id == record.activeChatID })?.messages
         self.record = record
-        store.update(bookID) { $0.chatMessages = record.chatMessages }
+        store.update(bookID) {
+            $0.chats = record.chats
+            $0.activeChatID = record.activeChatID
+            $0.chatMessages = record.chatMessages
+        }
     }
 
     // MARK: - Annotations

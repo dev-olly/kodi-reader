@@ -572,7 +572,14 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var annotations: [Annotation]
     public var bookmarks: [Bookmark]
     /// Ask AI conversation for this book. Optional so older library files decode.
+    /// Kept as the active thread's messages; prefer `chats` for the full history.
     public var chatMessages: [ChatMessage]?
+    /// All Ask AI threads for this book. Nil on records written before history.
+    public var chats: [ChatThread]?
+    /// Thread shown when the book is reopened.
+    public var activeChatID: UUID?
+    /// Original webpage this EPUB was frozen from. Nil for ordinary books.
+    public var sourceURL: URL?
 
     public init(
         id: String,

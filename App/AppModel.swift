@@ -287,7 +287,7 @@ final class AppModel {
     func closeBook() {
         readAloud.stop()
         chat.stop()
-        persistChat(chat.messages)
+        persistChat(chat.threads, activeID: chat.activeThreadID)
         store.flush()
         reader?.tearDown()
         reader = nil

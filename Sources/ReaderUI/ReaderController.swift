@@ -576,13 +576,25 @@ public final class ReaderController {
     private func handleLink(_ body: [String: Any]) {
         guard let href = body["href"] as? String, let book else { return }
 
-        // External links open in the browser; internal ones move the reader.
-        if let url = URL(string: href), let scheme = url.scheme,
-           scheme == "http" || scheme == "https" || scheme == "mailto" {
-            #if os(macOS)
-            NSWorkspace.shared.open(url)
-            #endif
-            return
+        // Web links go in-app when the host wired a handler; mailto/tel stay
+        // with the system default. Everything else is treated as in-book.
+        if let url = URL(string: href), let scheme = url.scheme?.lowercased() {
+            if scheme == "http" || scheme == "https" {
+                if let onExternalLink {
+                    onExternalLink(url)
+                } else {
+                    #if os(macOS)
+                    NSWorkspace.shared.open(url)
+                    #endif
+                }
+                return
+            }
+            if scheme == "mailto" || scheme == "tel" {
+                #if os(macOS)
+                NSWorkspace.shared.open(url)
+                #endif
+                return
+            }
         }
 
         let order = book.publication.readingOrder

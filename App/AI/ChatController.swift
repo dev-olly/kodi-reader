@@ -219,6 +219,35 @@ final class ChatController {
     }
 
     private func persist() {
-        onPersist?(messages)
+        syncActiveThread()
+        onPersist?(threads, activeThreadID)
+    }
+
+    private func syncActiveThread() {
+        if messages.isEmpty {
+            if let id = activeThreadID {
+                threads.removeAll { $0.id == id }
+                activeThreadID = nil
+            }
+            sortThreads()
+            return
+        }
+
+        let title = ChatThread.title(from: messages)
+        let now = Date()
+        if let id = activeThreadID, let index = threads.firstIndex(where: { $0.id == id }) {
+            threads[index].messages = messages
+            threads[index].title = title
+            threads[index].updatedAt = now
+        } else {
+            let thread = ChatThread(title: title, messages: messages, updatedAt: now)
+            threads.insert(thread, at: 0)
+            activeThreadID = thread.id
+        }
+        sortThreads()
+    }
+
+    private func sortThreads() {
+        threads.sort { $0.updatedAt > $1.updatedAt }
     }
 }

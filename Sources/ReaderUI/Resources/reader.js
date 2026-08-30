@@ -1603,6 +1603,14 @@
         return "[]";
       }
     },
+    extractSurroundingPassage: function (start, end) {
+      try {
+        return JSON.stringify(extractSurroundingPassage(start, end));
+      } catch (error) {
+        reportError("extractSurroundingPassage", error);
+        return JSON.stringify({ before: "", quote: "", after: "" });
+      }
+    },
     setReadingRange: setReadingRange,
     /*
      * Re-measures and reports where we are. The app calls this once a freshly

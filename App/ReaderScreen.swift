@@ -158,7 +158,7 @@ struct ReaderScreen: View {
             HighlightPalette(
                 onPick: { _ = model.addHighlight(color: $0) },
                 onAddNote: {
-                    if let created = model.addHighlight(color: .yellow) {
+                    if let created = model.addHighlight(color: model.nextColorForNewNote()) {
                         openNoteEditor(created, autofocus: true)
                     }
                 },

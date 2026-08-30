@@ -50,7 +50,7 @@ final class AIConfigStore {
 
     func remove(id: UUID) {
         configs.removeAll { $0.id == id }
-        KeychainStore.delete(account: id.uuidString)
+        APIKeyStore.delete(account: id.uuidString)
         if selectedModelID == id {
             selectedModelID = configs.first?.id
         }

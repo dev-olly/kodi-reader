@@ -63,13 +63,10 @@ final class AppModel {
 
         let aiConfig = AIConfigStore(directory: root)
         self.aiConfig = aiConfig
-        KeychainStore.migrateLegacyKeys(
-            additionalAccounts: aiConfig.configs.map(\.id.uuidString)
-        )
         let chat = ChatController(configStore: aiConfig)
         self.chat = chat
-        chat.onPersist = { [weak self] messages in
-            self?.persistChat(messages)
+        chat.onPersist = { [weak self] threads, activeID in
+            self?.persistChat(threads, activeID: activeID)
         }
         chat.contextProvider = { [weak self] in
             AIChatService.Context(

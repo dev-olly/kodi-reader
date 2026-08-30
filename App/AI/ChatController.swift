@@ -14,8 +14,12 @@ final class ChatController {
     /// Set by the panel so Cmd+L can park the caret in the composer.
     var shouldFocusComposer = false
 
+    /// Saved threads for the open book, newest first.
+    private(set) var threads: [ChatThread] = []
+    private(set) var activeThreadID: UUID?
+
     /// Called after the conversation changes so AppModel can write the book record.
-    var onPersist: (([ChatMessage]) -> Void)?
+    var onPersist: (([ChatThread], UUID?) -> Void)?
     /// Live book metadata for the system prompt.
     var contextProvider: () -> AIChatService.Context = {
         AIChatService.Context(bookTitle: "", author: "", chapterTitle: nil)

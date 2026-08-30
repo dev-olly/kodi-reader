@@ -10,7 +10,9 @@ struct RootView: View {
         @Bindable var model = model
 
         Group {
-            if let book = model.book, let reader = model.reader {
+            if let browser = model.webBrowser {
+                WebBrowserScreen(browser: browser)
+            } else if let book = model.book, let reader = model.reader {
                 ReaderScreen(book: book, reader: reader)
                     // Rebuild the whole reader when the book changes, so the
                     // web view and its scheme handler are recreated cleanly.

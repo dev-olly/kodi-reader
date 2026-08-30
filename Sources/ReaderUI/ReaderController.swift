@@ -76,6 +76,8 @@ public final class ReaderController {
     public var onHighlightActivated: ((UUID, CGRect) -> Void)?
     /// Fires after highlights are painted, with resolve/repair/orphan results.
     public var onAnchorsResolved: (([AnchorResolution]) -> Void)?
+    /// Fires when an external web link is tapped, so the app can open it in-app.
+    public var onExternalLink: ((URL) -> Void)?
 
     // MARK: - Private
 

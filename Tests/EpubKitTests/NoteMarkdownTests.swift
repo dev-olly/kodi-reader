@@ -321,7 +321,7 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertFalse(markdown.contains("_No notes yet._"))
     }
 
-    func testLibraryStoreMigratesV1ToV2() throws {
+    func testLibraryStoreMigratesV1ToCurrent() throws {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("library-v1-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }

@@ -111,9 +111,20 @@ struct WelcomeView: View {
         Button { model.reopen(record) } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(record.title)
-                        .fontWeight(.medium)
-                        .lineLimit(1)
+                    HStack(spacing: 6) {
+                        Text(record.title)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        if record.isWebDocument {
+                            Text("Web")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: .capsule)
+                        }
+                    }
                     Text(record.author)
                         .font(.caption)
                         .foregroundStyle(.secondary)

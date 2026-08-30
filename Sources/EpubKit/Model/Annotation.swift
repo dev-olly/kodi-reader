@@ -593,7 +593,10 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         progress: Double = 0,
         annotations: [Annotation] = [],
         bookmarks: [Bookmark] = [],
-        chatMessages: [ChatMessage]? = nil
+        chatMessages: [ChatMessage]? = nil,
+        chats: [ChatThread]? = nil,
+        activeChatID: UUID? = nil,
+        sourceURL: URL? = nil
     ) {
         self.id = id
         self.title = title

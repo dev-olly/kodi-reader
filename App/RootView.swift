@@ -28,7 +28,7 @@ struct RootView: View {
             loadDroppedBook(from: providers)
         }
         .alert(
-            "Could not open book",
+            "Could not open",
             isPresented: Binding(
                 get: { model.errorMessage != nil },
                 set: { if !$0 { model.errorMessage = nil } }

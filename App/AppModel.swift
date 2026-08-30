@@ -186,9 +186,16 @@ final class AppModel {
             record.author = book.author
             record.lastOpenedAt = Date()
             record.importedRelativePath = LibraryStore.relativeImportedPath(for: book.bookID)
+            if let sourceURL {
+                record.sourceURL = sourceURL
+            }
 
             // Preserve the user's original path/bookmark when reopening an import.
-            if store.isImportedURL(url) {
+            // Frozen webpages have no user-selected file — don't record the temp EPUB.
+            if sourceURL != nil {
+                record.lastKnownPath = existing?.lastKnownPath
+                record.fileBookmark = existing?.fileBookmark
+            } else if store.isImportedURL(url) {
                 record.lastKnownPath = existing?.lastKnownPath ?? record.lastKnownPath
                 record.fileBookmark = existing?.fileBookmark
             } else {

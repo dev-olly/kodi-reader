@@ -51,6 +51,20 @@ final class ChatController {
         errorMessage = nil
     }
 
+    func updateReference(_ id: UUID, contextBefore: String?, contextAfter: String?) {
+        if let index = pendingReferences.firstIndex(where: { $0.id == id }) {
+            pendingReferences[index].contextBefore = contextBefore
+            pendingReferences[index].contextAfter = contextAfter
+        }
+        if let messageIndex = messages.lastIndex(where: {
+            $0.role == .user && $0.references.contains(where: { $0.id == id })
+        }), let refIndex = messages[messageIndex].references.firstIndex(where: { $0.id == id }) {
+            messages[messageIndex].references[refIndex].contextBefore = contextBefore
+            messages[messageIndex].references[refIndex].contextAfter = contextAfter
+            persist()
+        }
+    }
+
     func removePendingReference(_ id: UUID) {
         pendingReferences.removeAll { $0.id == id }
     }

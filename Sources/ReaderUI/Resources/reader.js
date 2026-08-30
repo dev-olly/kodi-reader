@@ -1036,6 +1036,181 @@
     return result;
   }
 
+  var SURROUNDING_BLOCK_RADIUS = 2;
+  var SURROUNDING_MAX_CHARS = 2400;
+
+  function blockPlainText(block) {
+    var parts = [];
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      parts.push(block.nodes[i].textContent || "");
+    }
+    return parts.join("").replace(/\s+/g, " ").trim();
+  }
+
+  function textBeforeInBlock(block, node, offset) {
+    var out = "";
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      var n = block.nodes[i];
+      if (n === node) {
+        out += (n.textContent || "").slice(0, Math.max(0, offset));
+        break;
+      }
+      out += n.textContent || "";
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+
+  function textAfterInBlock(block, node, offset) {
+    var out = "";
+    var seen = false;
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      var n = block.nodes[i];
+      if (!seen) {
+        if (n === node) {
+          seen = true;
+          out += (n.textContent || "").slice(Math.max(0, offset));
+        }
+        continue;
+      }
+      out += n.textContent || "";
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+
+  function firstTextNode(node) {
+    if (!node) return null;
+    if (node.nodeType === Node.TEXT_NODE) return node;
+    var walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+    return walker.nextNode();
+  }
+
+  function groupSpeakableBlocks() {
+    var nodes = collectSpeakableNodes();
+    var blocks = [];
+    var current = null;
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!/\S/.test(node.textContent || "")) continue;
+      var parent = blockParent(node);
+      if (!current || current.el !== parent) {
+        current = { el: parent, nodes: [node] };
+        blocks.push(current);
+      } else {
+        current.nodes.push(node);
+      }
+    }
+    return blocks;
+  }
+
+  function blockContainsNode(block, node) {
+    if (!node) return false;
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      if (block.nodes[i] === node) return true;
+    }
+    return false;
+  }
+
+  function joinParagraphs(parts) {
+    return parts.filter(function (part) { return part; }).join("\n\n");
+  }
+
+  function trimSurroundingWindow(before, quote, after) {
+    function total() {
+      return before.length + quote.length + after.length;
+    }
+    while (total() > SURROUNDING_MAX_CHARS && (before || after)) {
+      if (before.length >= after.length) {
+        var cut = before.indexOf("\n\n");
+        if (cut >= 0) {
+          before = before.slice(cut + 2);
+        } else {
+          before = "";
+        }
+      } else {
+        var last = after.lastIndexOf("\n\n");
+        if (last >= 0) {
+          after = after.slice(0, last);
+        } else {
+          after = "";
+        }
+      }
+    }
+    return { before: before, after: after };
+  }
+
+  function extractSurroundingPassage(start, end) {
+    var empty = { before: "", quote: "", after: "" };
+    if (!start || !start.elementPath) return empty;
+
+    var startNode = firstTextNode(nodeAtPath(start.elementPath));
+    var endPos = end && end.elementPath ? end : start;
+    var endNode = firstTextNode(nodeAtPath(endPos.elementPath)) || startNode;
+    if (!startNode || !endNode) return empty;
+
+    var startOffset = start.offset || 0;
+    var endOffset = endPos.offset != null ? endPos.offset : startOffset;
+    var blocks = groupSpeakableBlocks();
+    if (!blocks.length) return empty;
+
+    var firstHit = -1;
+    var lastHit = -1;
+    var i;
+    for (i = 0; i < blocks.length; i++) {
+      if (blockContainsNode(blocks[i], startNode) || blockContainsNode(blocks[i], endNode)) {
+        if (firstHit < 0) firstHit = i;
+        lastHit = i;
+      }
+    }
+    if (firstHit < 0) {
+      var startBlock = blockParent(startNode);
+      var endBlock = blockParent(endNode);
+      for (i = 0; i < blocks.length; i++) {
+        if (blocks[i].el === startBlock || blocks[i].el === endBlock) {
+          if (firstHit < 0) firstHit = i;
+          lastHit = i;
+        }
+      }
+    }
+    if (firstHit < 0) return empty;
+
+    var from = Math.max(0, firstHit - SURROUNDING_BLOCK_RADIUS);
+    var to = Math.min(blocks.length - 1, lastHit + SURROUNDING_BLOCK_RADIUS);
+
+    var quote = "";
+    try {
+      var range = document.createRange();
+      range.setStart(startNode, Math.min(startOffset, startNode.textContent.length));
+      range.setEnd(endNode, Math.min(endOffset, endNode.textContent.length));
+      quote = range.toString().replace(/\s+/g, " ").trim();
+    } catch (error) {
+      quote = "";
+    }
+
+    var beforeParts = [];
+    for (i = from; i < firstHit; i++) {
+      beforeParts.push(blockPlainText(blocks[i]));
+    }
+    beforeParts.push(textBeforeInBlock(blocks[firstHit], startNode, startOffset));
+
+    var afterParts = [];
+    afterParts.push(textAfterInBlock(blocks[lastHit], endNode, endOffset));
+    for (i = lastHit + 1; i <= to; i++) {
+      afterParts.push(blockPlainText(blocks[i]));
+    }
+
+    var trimmed = trimSurroundingWindow(
+      joinParagraphs(beforeParts),
+      quote,
+      joinParagraphs(afterParts)
+    );
+    return { before: trimmed.before, quote: quote, after: trimmed.after };
+  }
+
   function extractUtterances(fromPosition) {
     var nodes = collectSpeakableNodes();
     if (!nodes.length) return [];

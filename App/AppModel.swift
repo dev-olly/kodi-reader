@@ -299,6 +299,7 @@ final class AppModel {
         scopedURL = nil
         recents = store.recentBooks()
         drawingCache.removeAll()
+        closeBrowser()
     }
 
     func removeFromRecents(_ record: BookRecord) {

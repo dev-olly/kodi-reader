@@ -93,6 +93,60 @@ struct AskAIPanel: View {
         .padding(12)
     }
 
+    private var historyList: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Chats in this book")
+                .font(.headline)
+                .padding(.horizontal, 12)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
+
+            if model.chat.threads.isEmpty {
+                Text("No previous chats")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(12)
+            } else {
+                List {
+                    ForEach(model.chat.threads) { thread in
+                        Button {
+                            model.chat.selectThread(thread.id)
+                            showingHistory = false
+                        } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Text(thread.title)
+                                    .font(.body)
+                                    .foregroundStyle(.primary)
+                                    .lineLimit(2)
+                                    .multilineTextAlignment(.leading)
+                                Spacer(minLength: 0)
+                                if thread.id == model.chat.activeThreadID {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(.tint)
+                                }
+                            }
+                            .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .contextMenu {
+                            Button("Delete", role: .destructive) {
+                                model.chat.deleteThread(thread.id)
+                            }
+                        }
+                    }
+                    .onDelete { indexSet in
+                        for index in indexSet {
+                            model.chat.deleteThread(model.chat.threads[index].id)
+                        }
+                    }
+                }
+                .frame(minWidth: 260, minHeight: 220)
+                .listStyle(.inset)
+            }
+        }
+        .frame(minWidth: 260, minHeight: 120)
+    }
+
     private var selectedModelBinding: Binding<UUID?> {
         Binding(
             get: { model.aiConfig.selectedModelID },

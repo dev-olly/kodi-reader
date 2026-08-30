@@ -4,6 +4,10 @@ import SwiftUI
 /// Shown when no book is open: a way in, plus whatever you were reading last.
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
+    @State private var urlText = ""
+    @State private var urlError: String?
+    @State private var isFieldHovered = false
+    @FocusState private var urlFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 28) {

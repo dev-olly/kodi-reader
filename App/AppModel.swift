@@ -501,6 +501,7 @@ final class AppModel {
             annotations[index].color = color
             annotations[index].modifiedAt = Date()
         }
+        lastAppliedHighlightColor = color
     }
 
     func deleteAnnotation(_ id: UUID) {

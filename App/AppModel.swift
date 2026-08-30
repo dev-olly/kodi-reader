@@ -330,6 +330,9 @@ final class AppModel {
         controller.onAnchorsResolved = { [weak self] resolutions in
             self?.applyAnchorResolutions(resolutions)
         }
+        controller.onExternalLink = { [weak self] url in
+            self?.openWebBrowser(url: url)
+        }
     }
 
     /// Called once the reader view is on screen and able to load content.

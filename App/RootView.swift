@@ -40,6 +40,10 @@ struct RootView: View {
             ManageModelsView()
                 .environment(model)
         }
+        .sheet(isPresented: $model.isShowingOpenURLSheet) {
+            OpenURLSheet()
+                .environment(model)
+        }
     }
 
     private func loadDroppedBook(from providers: [NSItemProvider]) -> Bool {

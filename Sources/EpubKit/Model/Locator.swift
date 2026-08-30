@@ -80,4 +80,11 @@ public enum HighlightColor: String, Codable, CaseIterable, Sendable {
         case .underline: return "transparent"
         }
     }
+
+    /// Next swatch in palette order, wrapping from underline back to yellow.
+    public var next: HighlightColor {
+        let all = Self.allCases
+        guard let index = all.firstIndex(of: self) else { return .yellow }
+        return all[(index + 1) % all.count]
+    }
 }

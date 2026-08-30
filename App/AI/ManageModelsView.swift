@@ -216,7 +216,7 @@ private struct ModelEditorView: View {
             }
         } else if !trimmedKey.isEmpty {
             do {
-                try KeychainStore.set(trimmedKey, account: config.id.uuidString)
+                try APIKeyStore.set(trimmedKey, account: config.id.uuidString)
             } catch {
                 saveError = error.localizedDescription
                 return

@@ -28,6 +28,14 @@
 	<true/>
 	<key>NSSupportsSuddenTermination</key>
 	<false/>
+	<!-- Live browsing and article-image downloads. Restricted in code to http/https. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoadsInWebContent</key>
+		<true/>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>

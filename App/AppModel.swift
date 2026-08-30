@@ -217,7 +217,7 @@ final class AppModel {
             recents = store.recentBooks()
             drawingCache.removeAll()
             errorMessage = nil
-            chat.load(record.conversation)
+            chat.load(threads: record.conversationThreads, activeID: record.activeChatID)
         } catch {
             if didScope { url.stopAccessingSecurityScopedResource() }
             errorMessage = error.localizedDescription

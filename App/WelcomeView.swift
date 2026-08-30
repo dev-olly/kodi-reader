@@ -19,14 +19,19 @@ struct WelcomeView: View {
                 Text("Kodi Reader")
                     .font(.system(size: 26, weight: .semibold, design: .serif))
 
-                Text("Drop an EPUB here, or open one to start reading.")
+                Text("Drop an EPUB here, or open a book or webpage to start reading.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
 
-            Button("Open Book…") { model.presentOpenPanel() }
-                .controlSize(.large)
-                .keyboardShortcut("o", modifiers: .command)
+            VStack(spacing: 14) {
+                urlField
+
+                Button("Open Book…") { model.presentOpenPanel() }
+                    .controlSize(.large)
+                    .keyboardShortcut("o", modifiers: .command)
+            }
+            .frame(maxWidth: 460)
 
             if !model.recents.isEmpty {
                 recents

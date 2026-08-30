@@ -137,7 +137,27 @@ final class ChatController {
 
     func newConversation() {
         stop()
+        syncActiveThread()
+        guard !messages.isEmpty else {
+            shouldFocusComposer = true
+            return
+        }
         messages = []
+        input = ""
+        pendingReferences = []
+        errorMessage = nil
+        activeThreadID = nil
+        persist()
+        shouldFocusComposer = true
+    }
+
+    func selectThread(_ id: UUID) {
+        guard id != activeThreadID else { return }
+        stop()
+        syncActiveThread()
+        guard let thread = threads.first(where: { $0.id == id }) else { return }
+        activeThreadID = thread.id
+        messages = thread.messages
         input = ""
         pendingReferences = []
         errorMessage = nil
@@ -145,12 +165,39 @@ final class ChatController {
         shouldFocusComposer = true
     }
 
-    /// Restore a book's conversation without writing back.
-    func load(_ stored: [ChatMessage]) {
+    func deleteThread(_ id: UUID) {
+        stop()
+        threads.removeAll { $0.id == id }
+        if activeThreadID == id {
+            if let next = threads.first {
+                activeThreadID = next.id
+                messages = next.messages
+            } else {
+                activeThreadID = nil
+                messages = []
+            }
+        }
+        input = ""
+        pendingReferences = []
+        persist()
+    }
+
+    /// Restore a book's threads without writing back.
+    func load(threads stored: [ChatThread], activeID: UUID?) {
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
-        messages = stored
+        threads = stored.sorted { $0.updatedAt > $1.updatedAt }
+        if let activeID, let thread = threads.first(where: { $0.id == activeID }) {
+            activeThreadID = thread.id
+            messages = thread.messages
+        } else if let latest = threads.first {
+            activeThreadID = latest.id
+            messages = latest.messages
+        } else {
+            activeThreadID = nil
+            messages = []
+        }
         input = ""
         pendingReferences = []
         errorMessage = nil

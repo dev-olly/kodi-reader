@@ -26,7 +26,7 @@ struct ManageModelsView: View {
                         }
                     }
                 } footer: {
-                    Text("Keys are stored in the Keychain. Local models such as Ollama do not need a key.")
+                    Text("Keys are stored in this app's private data folder. Local models such as Ollama do not need a key.")
                 }
 
                 Section {

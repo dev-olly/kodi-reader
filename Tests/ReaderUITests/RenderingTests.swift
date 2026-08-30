@@ -560,6 +560,61 @@ final class RenderingTests: XCTestCase {
         )
     }
 
+    /// Sidebar open/close shrinks the web view. Pinning the current position
+    /// before that width change must restore the same text, not chapter start.
+    func testPinRestoreOnceKeepsPositionAcrossViewportShrink() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 1400, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Need at least three pages to stand past the start")
+
+        var settings = reader.settings
+        settings.animatePageTurns = false
+        reader.settings = settings
+        XCTAssertTrue(
+            wait(timeout: 4) { reader.pageCount > 2 },
+            "Typography relayout after disabling animation lost pagination"
+        )
+
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page == 1 },
+            "Could not stand on page 2 (index 1) before shrinking"
+        )
+
+        XCTAssertFalse(
+            currentTextPosition(from: reader).elementPath.isEmpty,
+            "No text anchor before shrink"
+        )
+
+        var pinned = false
+        reader.evaluateForTesting("__reader.pinRestoreCurrentOnce()") { _ in pinned = true }
+        XCTAssertTrue(wait(timeout: 2) { pinned }, "pinRestoreCurrentOnce did not run")
+
+        let sidebarSize = CGSize(width: 800, height: 900)
+        window?.setContentSize(sidebarSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: sidebarSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: sidebarSize.width, height: sidebarSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) {
+                reader.spineIndex == chapter
+                    && reader.page > 0
+                    && (pagingGeometry(from: reader)["scrollLeft"] ?? 0) > 10
+            },
+            "Pinned resize jumped to chapter start (page \(reader.page), geo \(pagingGeometry(from: reader)))"
+        )
+    }
+
     /// The visible scroll position must actually move on a page turn after a
     /// resize — not just the reported page index. Before the fix, `scrollToPage`
     /// used a cached stride captured at the old size, so targets overshot and
@@ -620,6 +675,18 @@ final class RenderingTests: XCTestCase {
                 "Page \(target) did not land at the expected offset: \(pagingGeometry(from: reader))"
             )
         }
+    }
+
+    private func currentTextPosition(from reader: ReaderController) -> TextPosition {
+        var result: TextPosition?
+        reader.evaluateForTesting("window.__reader.state().position") { raw in
+            guard let body = raw as? [String: Any],
+                  let path = body["elementPath"] as? [Int]
+            else { return }
+            result = TextPosition(elementPath: path, offset: body["offset"] as? Int ?? 0)
+        }
+        _ = wait(timeout: 2) { result != nil }
+        return result ?? TextPosition(elementPath: [], offset: 0)
     }
 
     private func pagingGeometry(from reader: ReaderController) -> [String: Double] {

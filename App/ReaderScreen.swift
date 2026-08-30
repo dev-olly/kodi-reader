@@ -55,9 +55,12 @@ struct ReaderScreen: View {
             .onChange(of: model.settings.noteEditorPlacement) { _, placement in
                 handlePlacementChange(placement)
             }
+            .onChange(of: model.isShowingAskAI) { _, _ in
+                reader.pinRestoreCurrentPositionOnce()
+            }
             .onChange(of: model.isShowingAnnotations) { _, showing in
+                reader.pinRestoreCurrentPositionOnce()
                 if !showing, model.settings.noteEditorPlacement == .sidebar {
-                    reader.pinRestoreCurrentPositionOnce()
                     editingAnnotation = nil
                     inspectorOpenedForEditor = false
                     isDrawingExpanded = false
@@ -351,14 +354,15 @@ struct ReaderScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
-                if let chapter = reader.chapterTitle {
+                if let chapter = reader.chapterTitle, chapter != book.title {
                     Text(chapter)
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                         .lineLimit(1)
                 }
             }
-            .padding(.top, 10)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
         }
 
         ToolbarItemGroup(placement: .primaryAction) {

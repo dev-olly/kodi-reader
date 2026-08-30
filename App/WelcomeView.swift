@@ -24,18 +24,18 @@ struct WelcomeView: View {
                     .foregroundStyle(.secondary)
             }
 
-            VStack(spacing: 14) {
-                urlField
-
-                Button("Open Book…") { model.presentOpenPanel() }
-                    .controlSize(.large)
-                    .keyboardShortcut("o", modifiers: .command)
-            }
-            .frame(maxWidth: 460)
+            urlField
+                .frame(maxWidth: 460)
 
             if !model.recents.isEmpty {
                 recents
             }
+
+            Button("Open Book…") { model.presentOpenPanel() }
+                .buttonStyle(.plain)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .keyboardShortcut("o", modifiers: .command)
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -54,9 +54,26 @@ struct WelcomeView: View {
                     .focused($urlFieldFocused)
                     .onSubmit { submitURL() }
                     .onChange(of: urlText) { _, _ in urlError = nil }
+
+                Button(action: submitURL) {
+                    Image(systemName: "arrow.right")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(hasURLText ? Color.white : Color.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            hasURLText
+                                ? AnyShapeStyle(Color.accentColor)
+                                : AnyShapeStyle(.quaternary),
+                            in: .circle
+                        )
+                }
+                .buttonStyle(.plain)
+                .disabled(!hasURLText)
+                .help("Open URL")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.leading, 16)
+            .padding(.trailing, 6)
+            .padding(.vertical, 6)
             .background(.quaternary.opacity(0.55), in: .capsule)
             .overlay {
                 Capsule()
@@ -76,6 +93,10 @@ struct WelcomeView: View {
                     .padding(.horizontal, 16)
             }
         }
+    }
+
+    private var hasURLText: Bool {
+        !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func submitURL() {

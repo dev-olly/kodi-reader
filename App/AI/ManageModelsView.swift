@@ -190,7 +190,7 @@ private struct ModelEditorView: View {
     private func loadKey() {
         guard !keyLoaded else { return }
         keyLoaded = true
-        if let existing = KeychainStore.get(account: config.id.uuidString) {
+        if let existing = APIKeyStore.get(account: config.id.uuidString) {
             keyDraft = existing
         }
     }

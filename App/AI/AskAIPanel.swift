@@ -319,6 +319,11 @@ struct AskAIPanel: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
+                if reference.hasSurroundingContext {
+                    Text("with nearby paragraphs")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
             }
             Spacer(minLength: 0)
             if removable {

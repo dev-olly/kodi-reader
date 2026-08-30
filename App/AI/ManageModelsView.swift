@@ -80,7 +80,7 @@ struct ManageModelsView: View {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(.tint)
                     .help("Selected")
-            } else if config.requiresKey, !KeychainStore.hasKey(account: config.id.uuidString) {
+            } else if config.requiresKey, !APIKeyStore.hasKey(account: config.id.uuidString) {
                 Text("No key")
                     .font(.caption)
                     .foregroundStyle(.orange)

@@ -84,6 +84,39 @@ final class RenderingTests: XCTestCase {
         XCTAssertEqual(reader.spineIndex, 0)
     }
 
+    func testHTTPSLinkFiresOnExternalLink() throws {
+        let (reader, _) = try makeReader(SampleBooks.alice)
+        reader.start(at: nil, annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading }, "Reader never finished loading")
+
+        var opened: URL?
+        reader.onExternalLink = { opened = $0 }
+
+        reader.evaluateForTesting(
+            "window.webkit.messageHandlers.reader.postMessage({type: 'link', href: 'https://example.com/article'})"
+        ) { _ in }
+
+        XCTAssertTrue(wait { opened != nil }, "onExternalLink never fired for an https link")
+        XCTAssertEqual(opened?.absoluteString, "https://example.com/article")
+    }
+
+    func testMailtoLinkDoesNotFireOnExternalLink() throws {
+        let (reader, _) = try makeReader(SampleBooks.alice)
+        reader.start(at: nil, annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading }, "Reader never finished loading")
+
+        var opened: URL?
+        reader.onExternalLink = { opened = $0 }
+
+        reader.evaluateForTesting(
+            "window.webkit.messageHandlers.reader.postMessage({type: 'link', href: 'mailto:test@example.com'})"
+        ) { _ in }
+
+        // Give the message a beat to arrive; mailto must not go in-app.
+        _ = wait(timeout: 0.5) { opened != nil }
+        XCTAssertNil(opened, "mailto: must stay with the system handler")
+    }
+
     /// A long chapter in a small window must produce several pages, which is
     /// the real proof that the multi-column layout is doing its job.
     func testLongChapterProducesMultiplePages() throws {

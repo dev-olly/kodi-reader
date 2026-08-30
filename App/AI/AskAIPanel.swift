@@ -46,6 +46,19 @@ struct AskAIPanel: View {
                     .font(.headline)
                 Spacer(minLength: 0)
                 Button {
+                    showingHistory.toggle()
+                } label: {
+                    Image(systemName: "clock")
+                }
+                .buttonStyle(.borderless)
+                .help("Chat history")
+                .disabled(model.chat.threads.isEmpty)
+                .popover(isPresented: $showingHistory, arrowEdge: .bottom) {
+                    historyList
+                }
+
+                Button {
+                    showingHistory = false
                     model.chat.newConversation()
                 } label: {
                     Image(systemName: "square.and.pencil")

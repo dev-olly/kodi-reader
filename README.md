@@ -16,7 +16,6 @@ or the XBMC Foundation.
 Paginated EPUB rendering with typography, margin, and theme controls, plus position and progress that survive layout changes.
 
 ![Book reading](docs/screenshots/reading.png)
-![Two-column spread](docs/screenshots/spread.png)
 
 ### Notes taking
 Text highlights in multiple colors, each with an attached note, stored alongside the book.
@@ -26,7 +25,7 @@ Text highlights in multiple colors, each with an attached note, stored alongside
 ### Visual notes
 Freeform sketches per highlight via a bundled, offline [Excalidraw](https://excalidraw.com/) editor.
 
-![Visual notes with Excalidraw](docs/screenshots/visual-notes.png)
+![Visual notes with Excalidraw](docs/screenshots/visual.png)
 
 ### Ask AI
 Opt-in, configurable OpenAI-compatible chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.

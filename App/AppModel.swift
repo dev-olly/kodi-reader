@@ -437,8 +437,20 @@ final class AppModel {
             chapterTitle: reader.chapterTitle
         )
         mutateAnnotations(bookID: bookID) { $0.append(annotation) }
+        lastAppliedHighlightColor = color
         reader.clearSelection()
         return annotation
+    }
+
+    /// Colour for a new note: the next swatch after the last applied colour.
+    func nextColorForNewNote() -> HighlightColor {
+        if let last = lastAppliedHighlightColor {
+            return last.next
+        }
+        if let latest = record?.annotations.max(by: { $0.createdAt < $1.createdAt }) {
+            return latest.color.next
+        }
+        return .yellow
     }
 
     func updateNote(_ note: String, for id: UUID) {

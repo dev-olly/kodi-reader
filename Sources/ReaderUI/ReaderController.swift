@@ -26,6 +26,19 @@ public struct ReaderUtterance: Equatable, Sendable {
     }
 }
 
+/// Neighboring paragraphs around a locator, used to give Ask AI more context.
+public struct ReaderSurroundingPassage: Equatable, Sendable {
+    public var before: String
+    public var quote: String
+    public var after: String
+
+    public init(before: String = "", quote: String = "", after: String = "") {
+        self.before = before
+        self.quote = quote
+        self.after = after
+    }
+}
+
 /// Drives the web view: loads spine documents, moves between pages and
 /// chapters, tracks position, and relays selections and highlights.
 @Observable

@@ -4,9 +4,8 @@
 <dict>
 	<key>com.apple.security.app-sandbox</key>
 	<true/>
-	<!-- WKWebView's content process refuses to launch inside the sandbox
-	     without this, even though every resource is served locally from the
-	     EPUB by our own scheme handler and nothing touches the network. -->
+	<!-- WKWebView needs this to launch inside the sandbox. Live webpage
+	     browsing and article-image downloads also use the network. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
 	<!-- Books are opened through the open panel; the security-scoped bookmark

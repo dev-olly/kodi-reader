@@ -39,6 +39,52 @@ struct WelcomeView: View {
         }
         .padding(40)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear { urlFieldFocused = true }
+    }
+
+    private var urlField: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 10) {
+                Image(systemName: "globe")
+                    .foregroundStyle(.secondary)
+                    .imageScale(.medium)
+
+                TextField("Paste or type a URL", text: $urlText)
+                    .textFieldStyle(.plain)
+                    .focused($urlFieldFocused)
+                    .onSubmit { submitURL() }
+                    .onChange(of: urlText) { _, _ in urlError = nil }
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+            .background(.quaternary.opacity(0.55), in: .capsule)
+            .overlay {
+                Capsule()
+                    .strokeBorder(
+                        urlFieldFocused || isFieldHovered
+                            ? Color.secondary.opacity(0.45)
+                            : Color.clear,
+                        lineWidth: 1
+                    )
+            }
+            .onHover { isFieldHovered = $0 }
+
+            if let urlError {
+                Text(urlError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .padding(.horizontal, 16)
+            }
+        }
+    }
+
+    private func submitURL() {
+        guard let url = WebPageURL.normalized(from: urlText) else {
+            urlError = ArticleError.invalidURL.localizedDescription
+            return
+        }
+        urlError = nil
+        model.openWebBrowser(url: url)
     }
 
     private var recents: some View {

@@ -13,17 +13,31 @@ public struct ChatReference: Codable, Identifiable, Hashable, Sendable {
     public var quotedText: String
     public var chapterTitle: String?
     public var spineIndex: Int
+    /// Paragraphs immediately before the quote, if the reader could extract them.
+    public var contextBefore: String?
+    /// Paragraphs immediately after the quote, if the reader could extract them.
+    public var contextAfter: String?
 
     public init(
         id: UUID = UUID(),
         quotedText: String,
         chapterTitle: String? = nil,
-        spineIndex: Int
+        spineIndex: Int,
+        contextBefore: String? = nil,
+        contextAfter: String? = nil
     ) {
         self.id = id
         self.quotedText = quotedText
         self.chapterTitle = chapterTitle
         self.spineIndex = spineIndex
+        self.contextBefore = contextBefore
+        self.contextAfter = contextAfter
+    }
+
+    public var hasSurroundingContext: Bool {
+        let before = contextBefore?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let after = contextAfter?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return !before.isEmpty || !after.isEmpty
     }
 
     /// Short label for chips in the composer and message list.

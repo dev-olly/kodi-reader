@@ -610,11 +610,31 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         self.annotations = annotations
         self.bookmarks = bookmarks
         self.chatMessages = chatMessages
+        self.chats = chats
+        self.activeChatID = activeChatID
+        self.sourceURL = sourceURL
     }
 
-    /// Non-optional view of the stored conversation.
+    public var isWebDocument: Bool { sourceURL != nil }
+
+    /// Non-optional view of the active conversation.
     public var conversation: [ChatMessage] {
-        chatMessages ?? []
+        if let thread = conversationThreads.first(where: { $0.id == activeChatID }) {
+            return thread.messages
+        }
+        if let latest = conversationThreads.max(by: { $0.updatedAt < $1.updatedAt }) {
+            return latest.messages
+        }
+        return chatMessages ?? []
+    }
+
+    /// Saved threads, wrapping a legacy `chatMessages` list when needed.
+    public var conversationThreads: [ChatThread] {
+        if let chats, !chats.isEmpty { return chats }
+        if let messages = chatMessages, !messages.isEmpty {
+            return [ChatThread.wrappingLegacyMessages(messages)]
+        }
+        return []
     }
 
     public func annotations(inSpineIndex index: Int) -> [Annotation] {

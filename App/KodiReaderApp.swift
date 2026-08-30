@@ -30,14 +30,23 @@ struct KodiReaderApp: App {
 
     @CommandsBuilder
     private var readerCommands: some Commands {
-        // Keep the system New Item group; only append Open / Close Book.
+        // Keep the system New Item group; append Open / Close commands.
         CommandGroup(after: .newItem) {
             Button("Open Book…") { model.presentOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
 
-            Button("Close Book") { model.closeBook() }
+            Button("Open Webpage…") { model.presentOpenURL() }
+                .keyboardShortcut("o", modifiers: [.command, .shift])
+
+            Button("Save Webpage to Library") { model.saveCurrentWebPage() }
+                .keyboardShortcut("s", modifiers: [.command, .shift])
+                .disabled(!model.isBrowsing || model.isSavingWebPage)
+
+            Button(model.isBrowsing ? "Close Webpage" : "Close Book") {
+                if model.isBrowsing { model.closeBrowser() } else { model.closeBook() }
+            }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
-                .disabled(model.book == nil)
+                .disabled(model.book == nil && !model.isBrowsing)
         }
 
         CommandMenu("Go") {

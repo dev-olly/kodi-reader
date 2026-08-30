@@ -91,7 +91,68 @@ final class AppModel {
         open(url: url)
     }
 
-    func open(url: URL) {
+    func presentOpenURL() {
+        pendingWebURLText = webBrowser?.currentURL?.absoluteString ?? ""
+        isShowingOpenURLSheet = true
+    }
+
+    func submitOpenURL() {
+        guard let url = WebPageURL.normalized(from: pendingWebURLText) else {
+            errorMessage = ArticleError.invalidURL.localizedDescription
+            return
+        }
+        isShowingOpenURLSheet = false
+        pendingWebURLText = ""
+        openWebBrowser(url: url)
+    }
+
+    func openWebBrowser(url: URL) {
+        if let webBrowser {
+            webBrowser.load(url)
+            return
+        }
+        let controller = WebBrowserController()
+        webBrowser = controller
+        controller.load(url)
+    }
+
+    func closeBrowser() {
+        webBrowser?.tearDown()
+        webBrowser = nil
+        isSavingWebPage = false
+    }
+
+    func openOriginalInBrowser(_ record: BookRecord) {
+        guard let url = record.sourceURL else { return }
+        openWebBrowser(url: url)
+    }
+
+    func saveCurrentWebPage() {
+        guard let browser = webBrowser, !isSavingWebPage else { return }
+        isSavingWebPage = true
+        errorMessage = nil
+        browser.extractArticle { [weak self] result in
+            Task { @MainActor in
+                await self?.finishSavingWebpage(result)
+            }
+        }
+    }
+
+    private func finishSavingWebpage(_ result: Result<ArticleContent, Error>) async {
+        defer { isSavingWebPage = false }
+        do {
+            let article = try result.get()
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("kodi-web-\(UUID().uuidString).epub")
+            defer { try? FileManager.default.removeItem(at: tempURL) }
+            try await ArticleEPUBBuilder.build(article, to: tempURL)
+            open(url: tempURL, sourceURL: article.sourceURL)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    func open(url: URL, sourceURL: URL? = nil) {
         closeBook()
 
         let didScope = url.startAccessingSecurityScopedResource()

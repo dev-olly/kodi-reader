@@ -323,6 +323,18 @@ public final class ReaderController {
         }
     }
 
+    /// A few paragraphs around `locator`, capped so prompts stay small.
+    public func extractSurroundingPassage(
+        from locator: Locator,
+        completion: @escaping (ReaderSurroundingPassage) -> Void
+    ) {
+        let start = json(locator.start)
+        let end = json(locator.end ?? locator.start)
+        evaluate("__reader.extractSurroundingPassage(\(start), \(end))") { result in
+            completion(Self.decodeSurroundingPassage(result))
+        }
+    }
+
     /// Paints a live read-aloud overlay. Pass `nil` to clear it.
     public func setReadingRange(_ locator: Locator?, charStart: Int? = nil, charEnd: Int? = nil) {
         guard let locator else {

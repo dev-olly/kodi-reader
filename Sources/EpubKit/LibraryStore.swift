@@ -7,8 +7,9 @@ import Foundation
 /// and the data trivially inspectable and backup-friendly.
 public final class LibraryStore: @unchecked Sendable {
     /// Current on-disk schema. v1 notes decode as-is; missing `anchorStatus`
-    /// defaults to `.unknown` on the Annotation type.
-    public static let currentVersion = 2
+    /// defaults to `.unknown` on the Annotation type. v3 adds optional
+    /// `sourceURL` on BookRecord for frozen webpages.
+    public static let currentVersion = 3
 
     private struct Payload: Codable {
         var version: Int = LibraryStore.currentVersion

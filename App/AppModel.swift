@@ -28,6 +28,8 @@ final class AppModel {
     /// True while the modal note editor sheet is presented — disables page-turn shortcuts.
     /// Sidebar editing does not set this, so paging still works.
     var isNoteEditorOpen = false
+    /// Last colour applied via a swatch, a new note, or the note editor picker.
+    private(set) var lastAppliedHighlightColor: HighlightColor?
     let readAloud = ReadAloudController()
     let aiConfig: AIConfigStore
     let chat: ChatController

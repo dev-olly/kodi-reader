@@ -203,6 +203,23 @@ struct AIChatService {
                     parts.append("From “\(chapter)”:")
                 }
                 parts.append(quote)
+                if reference.hasSurroundingContext {
+                    parts.append("Surrounding passage:")
+                    var passage: [String] = []
+                    if let before = reference.contextBefore?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !before.isEmpty {
+                        passage.append(before)
+                    }
+                    let marked = reference.quotedText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !marked.isEmpty {
+                        passage.append(">>> \(marked) <<<")
+                    }
+                    if let after = reference.contextAfter?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !after.isEmpty {
+                        passage.append(after)
+                    }
+                    parts.append(passage.joined(separator: "\n\n"))
+                }
             }
         }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)

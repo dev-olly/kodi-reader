@@ -210,6 +210,8 @@ final class ChatController {
         streamTask = nil
         isStreaming = false
         messages = []
+        threads = []
+        activeThreadID = nil
         input = ""
         pendingReferences = []
         errorMessage = nil

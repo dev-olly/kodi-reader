@@ -63,3 +63,7 @@ targets:
         CODE_SIGN_ENTITLEMENTS: App/KodiReader.entitlements
         ENABLE_PREVIEWS: YES
         COMBINE_HIDPI_IMAGES: YES
+      configs:
+        Release:
+          CODE_SIGN_ENTITLEMENTS: App/KodiReader.release.entitlements
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO

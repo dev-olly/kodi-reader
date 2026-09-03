@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kodi Reader</title>
+  <meta name="description" content="A lightweight native EPUB reader for macOS. Without the store, the sync, or the library management.">
+  <meta property="og:title" content="Kodi Reader">
+  <meta property="og:description" content="A lightweight native EPUB reader for macOS. Without the store, the sync, or the library management.">
+  <meta property="og:image" content="assets/reading.png">
+  <meta property="og:type" content="website">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <svg class="mark" xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>
+        <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/>
+      </svg>
+      <h1>Kodi Reader</h1>
+      <p class="lede">A lightweight native EPUB reader for macOS. Without the store, the sync, or the library management.</p>
+      <p class="cta">
+        <a id="download" class="button" href="https://github.com/dev-olly/kodi-reader/releases/latest">Download for Mac</a>
+      </p>
+      <p class="meta">macOS 15 · Apple Silicon<span id="version"></span></p>
+      <p class="meta">First open may need Right-click → Open.</p>
+    </header>
+
+    <figure class="shot">
+      <img src="assets/reading.png" srcset="assets/reading.png 1x, assets/reading@2x.png 2x" width="1024" height="754" alt="Kodi Reader showing a two-page spread of High Agency in 30 Minutes by George Mack">
+    </figure>
+
+    <section class="features">
+      <article>
+        <h2>Ask AI</h2>
+        <p>Opt-in chat about the book, with the passage you are reading as context.</p>
+        <figure>
+          <img src="assets/ask-ai.png" srcset="assets/ask-ai.png 1x, assets/ask-ai@2x.png 2x" width="1024" height="660" alt="Ask AI sidebar explaining a passage from Computer Systems: A Programmer's Perspective">
+        </figure>
+      </article>
+
+      <article>
+        <h2>Notes</h2>
+        <p>Highlights in multiple colors, each with a note stored alongside the book.</p>
+        <figure>
+          <img src="assets/notes.png" srcset="assets/notes.png 1x, assets/notes@2x.png 2x" width="1024" height="660" alt="Notes sidebar with a highlight and markdown editor">
+        </figure>
+      </article>
+
+      <article>
+        <h2>Draw</h2>
+        <p>Freeform sketches on a highlight, offline, in the app.</p>
+        <figure>
+          <img src="assets/draw.png" srcset="assets/draw.png 1x, assets/draw@2x.png 2x" width="1024" height="660" alt="Drawing canvas on a highlight with Excalidraw tools">
+        </figure>
+      </article>
+
+      <article>
+        <h2>Audio</h2>
+        <p>On-device read-aloud. No cloud TTS.</p>
+        <figure>
+          <img src="assets/audio.png" srcset="assets/audio.png 1x, assets/audio@2x.png 2x" width="1024" height="664" alt="Read-aloud player at the bottom of the reading view">
+        </figure>
+      </article>
+
+      <article>
+        <h2>A cool reading experience</h2>
+        <p>Paginated pages, typography and theme controls, progress that survives layout changes.</p>
+      </article>
+    </section>
+  </main>
+
+  <footer>
+    <p>
+      <a href="https://github.com/dev-olly/kodi-reader">Source on GitHub</a>
+      · MIT
+      · Books stay on this Mac
+    </p>
+    <p class="disclaimer">
+      Kodi Reader is not affiliated with the
+      <a href="https://kodi.tv/">Kodi media center</a>
+      or the XBMC Foundation.
+    </p>
+  </footer>
+
+  <script src="download.js"></script>
+</body>
+</html>

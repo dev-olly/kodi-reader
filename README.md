@@ -49,7 +49,7 @@ not the goal right now** — this is a source-available personal project, not a
 contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
-There is no binary download yet. Build from source (Xcode 26).
+A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). The build is ad-hoc signed; first open may need Right-click → Open. You can also build from source (Xcode 26).
 
 ## Privacy
 
@@ -80,6 +80,7 @@ brew install xcodegen
 The app target needs Xcode 26 (KokoroSwift). `swift test` for EpubKit and
 ReaderUI still runs on older toolchains. Signing is ad-hoc (`CODE_SIGN_IDENTITY:
 "-"`) so the app runs locally; it is not a notarized distribution build.
+First open of a downloaded build may need Right-click → Open.
 
 ```sh
 xcodegen generate
@@ -98,6 +99,20 @@ regenerate it after pulling changes that touch the project layout.
 
 The bundle identifier is `com.olly.KodiReader`. Product name lives in
 `project.yml` as `PRODUCT_NAME: Kodi Reader`.
+
+Push a `v*` tag to cut a GitHub Release. Actions builds `KodiReader.dmg`
+and attaches it:
+
+```sh
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Or package locally (Apple Silicon, Xcode 26):
+
+```sh
+./Scripts/package-dmg.sh 0.1.0
+```
 
 ## Testing
 

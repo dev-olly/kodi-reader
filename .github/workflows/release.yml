@@ -1,0 +1,47 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  dmg:
+    runs-on: macos-26
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Package DMG
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            ./Scripts/package-dmg.sh "${GITHUB_REF_NAME}"
+          else
+            ./Scripts/package-dmg.sh
+          fi
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: KodiReader.dmg
+          path: KodiReader.dmg
+
+      - name: Create GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          notes="Unsigned Apple Silicon build. First open: Right-click the app and choose Open."
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            gh release upload "${GITHUB_REF_NAME}" KodiReader.dmg --clobber
+          else
+            gh release create "${GITHUB_REF_NAME}" KodiReader.dmg \
+              --title "Kodi Reader ${GITHUB_REF_NAME}" \
+              --notes "$notes"
+          fi

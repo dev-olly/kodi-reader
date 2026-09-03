@@ -51,6 +51,8 @@ contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 
 A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). The build is ad-hoc signed; first open may need Right-click → Open. You can also build from source (Xcode 26).
 
+The site is at [dev-olly.github.io/kodi-reader](https://dev-olly.github.io/kodi-reader/).
+
 ## Privacy
 
 - Books, highlights, notes, and drawings stay on this Mac (sandbox Application

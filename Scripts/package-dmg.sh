@@ -59,6 +59,11 @@ fi
 rm -rf "$STAGING" "$OUT"
 mkdir -p "$STAGING"
 ditto "$APP" "$STAGING/${APP_NAME}.app"
+# One ad-hoc identity for the app and every embedded SPM framework so
+# Hardened Runtime library validation does not see mismatched Team IDs.
+codesign --force --deep --sign - --options runtime \
+  --entitlements App/KodiReader.release.entitlements \
+  "$STAGING/${APP_NAME}.app"
 ln -s /Applications "$STAGING/Applications"
 
 hdiutil create \

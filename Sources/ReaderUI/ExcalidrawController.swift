@@ -38,11 +38,13 @@ public final class ExcalidrawController {
         messageProxy = messages
         configuration.userContentController.add(messages, name: "excalidraw")
 
-        let webView = WKWebView(frame: .zero, configuration: configuration)
-        webView.allowsMagnification = false
         #if os(macOS)
+        let webView = ExcalidrawHostWebView(frame: .zero, configuration: configuration)
         webView.setValue(false, forKey: "drawsBackground")
+        #else
+        let webView = WKWebView(frame: .zero, configuration: configuration)
         #endif
+        webView.allowsMagnification = false
 
         let navigation = ExcalidrawNavigationProxy(controller: self)
         navigationProxy = navigation
@@ -62,6 +64,14 @@ public final class ExcalidrawController {
         navigationProxy = nil
         schemeHandler = nil
         isReady = false
+    }
+
+    /// Gives the canvas key focus so arrows nudge shapes instead of paging.
+    public func focusCanvas() {
+        #if os(macOS)
+        guard let webView else { return }
+        webView.window?.makeFirstResponder(webView)
+        #endif
     }
 
     public func load(scene: Data?) {
@@ -131,7 +141,7 @@ public final class ExcalidrawController {
         #if os(macOS)
         guard let webView else { return }
         let color: NSColor = pendingTheme == "dark"
-            ? NSColor(calibratedRed: 28 / 255, green: 28 / 255, blue: 30 / 255, alpha: 1)
+            ? NSColor(calibratedRed: 32 / 255, green: 37 / 255, blue: 34 / 255, alpha: 1)
             : .white
         webView.underPageBackgroundColor = color
         webView.wantsLayer = true
@@ -218,3 +228,17 @@ private final class ExcalidrawNavigationProxy: NSObject, WKNavigationDelegate {
         controller?.handleProcessTermination()
     }
 }
+
+#if os(macOS)
+/// Takes first responder on click so canvas shortcuts reach Excalidraw, not the book.
+private final class ExcalidrawHostWebView: WKWebView {
+    override var acceptsFirstResponder: Bool { true }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        super.mouseDown(with: event)
+    }
+}
+#endif

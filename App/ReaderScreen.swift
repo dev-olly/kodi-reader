@@ -17,27 +17,32 @@ struct ReaderScreen: View {
     @State private var inspectorOpenedForEditor = false
     @State private var isDrawingExpanded = false
     @State private var windowWidth: CGFloat = 0
+    @State private var workspaceWidth: CGFloat = 340
+    @State private var dragStartWidth: CGFloat?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         @Bindable var model = model
 
         HStack(spacing: 0) {
-            if model.isShowingAskAI {
-                AskAIPanel()
-                    .frame(width: Self.askAIWidth)
-                    .transition(.move(edge: .leading).combined(with: .opacity))
-                Divider()
-            }
-
             page
+                .frame(maxWidth: .infinity)
         }
-        .animation(.easeInOut(duration: 0.18), value: model.isShowingAskAI)
-        .inspector(isPresented: $model.isShowingAnnotations) {
-                inspectorContent
+        .padding(.trailing, model.workspace != .closed && !usesWorkspaceOverlay ? workspaceWidth : 0)
+        .overlay(alignment: .trailing) {
+            if model.workspace != .closed {
+                workspacePanel
+                    .frame(width: model.workspace == .notes && isDrawingExpanded ? expandedWorkspaceWidth : workspaceWidth)
+                    .shadow(color: .black.opacity(usesWorkspaceOverlay ? 0.12 : 0), radius: 16, x: -6)
             }
+        }
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.workspace)
             .toolbar { toolbarContent }
             .task { model.startReading() }
-            .onAppear { reader.onHighlightActivated = handleHighlightActivated }
+            .onAppear {
+                reader.onHighlightActivated = handleHighlightActivated
+                model.resumeReadingAfterBrowser()
+            }
             .sheet(item: sheetAnnotation) { annotation in
                 // Re-read from the model so color/status updates while the sheet is open.
                 NoteSheet(
@@ -49,31 +54,116 @@ struct ReaderScreen: View {
                     onTogglePlacement: { toggleNoteEditorPlacement() }
                 )
             }
-            .onChange(of: editingAnnotation) { _, _ in
-                syncModalEditorFlag()
-            }
             .onChange(of: model.settings.noteEditorPlacement) { _, placement in
                 handlePlacementChange(placement)
             }
             .onChange(of: model.isShowingAskAI) { _, _ in
+                // Backup if a caller toggled visibility without pinning first.
                 reader.pinRestoreCurrentPositionOnce()
             }
             .onChange(of: model.isShowingAnnotations) { _, showing in
                 reader.pinRestoreCurrentPositionOnce()
-                if !showing, model.settings.noteEditorPlacement == .sidebar {
+                if !showing, model.workspace == .closed, model.settings.noteEditorPlacement == .sidebar {
                     editingAnnotation = nil
                     inspectorOpenedForEditor = false
                     isDrawingExpanded = false
                     reader.pinRestore(to: nil)
-                    syncModalEditorFlag()
                 }
             }
+            .onChange(of: windowWidth) { _, _ in reader.pinRestoreCurrentPositionOnce() }
             .onDisappear {
                 model.isNoteEditorOpen = false
             }
             .background {
                 WindowWidthReader { windowWidth = $0 }
             }
+    }
+
+    private var usesWorkspaceOverlay: Bool { windowWidth < 900 || (model.workspace == .notes && isDrawingExpanded) }
+
+    private var expandedWorkspaceWidth: CGFloat {
+        let width = windowWidth > 0 ? windowWidth : 1200
+        return min(width, max(340, width * 0.5))
+    }
+
+    private var workspacePanel: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in
+                    Button { model.workspace = tab } label: {
+                        Label(tab == .notes ? "Notes" : "Ask AI", systemImage: tab == .notes ? "note.text" : "sparkles")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(model.workspace == tab ? model.settings.theme.accent : model.settings.theme.muted)
+                            .frame(maxWidth: .infinity, minHeight: 44)
+                            .contentShape(Rectangle())
+                            .overlay(alignment: .bottom) {
+                                if model.workspace == tab {
+                                    Rectangle().fill(model.settings.theme.accent).frame(height: 2)
+                                }
+                            }
+                    }
+                    .buttonStyle(.plain)
+                    .frame(maxWidth: .infinity)
+                    .contentShape(Rectangle())
+                    .accessibilityLabel(tab == .notes ? "Notes" : "Ask AI")
+                    .accessibilityAddTraits(model.workspace == tab ? .isSelected : [])
+                }
+                if model.workspace == .notes && isDrawingExpanded {
+                    Button { isDrawingExpanded = false } label: {
+                        Image(systemName: "arrow.down.right.and.arrow.up.left")
+                            .frame(width: 36, height: 44)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Collapse drawing workspace")
+                }
+                Button { model.workspace = .closed } label: {
+                    Image(systemName: "xmark")
+                        .frame(width: 36, height: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Close workspace")
+                .accessibilityLabel("Close workspace")
+            }
+            .padding(.horizontal, 16)
+            Divider()
+            ZStack {
+                inspectorContent
+                    .opacity(model.workspace == .notes ? 1 : 0)
+                    .allowsHitTesting(model.workspace == .notes)
+                    .accessibilityHidden(model.workspace != .notes)
+                AskAIPanel()
+                    .opacity(model.workspace == .askAI ? 1 : 0)
+                    .allowsHitTesting(model.workspace == .askAI)
+                    .accessibilityHidden(model.workspace != .askAI)
+            }
+        }
+        .background(model.settings.theme.surface)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(model.settings.theme.border).frame(width: 1)
+        }
+        .overlay(alignment: .leading) {
+            if model.workspace != .notes || !isDrawingExpanded {
+                Color.clear.frame(width: 7)
+                    .contentShape(Rectangle())
+                    .gesture(DragGesture()
+                        .onChanged { value in
+                            if dragStartWidth == nil {
+                                dragStartWidth = workspaceWidth
+                                reader.pinRestoreCurrentPositionOnce()
+                            }
+                            workspaceWidth = min(420, max(300, (dragStartWidth ?? 340) - value.translation.width))
+                        }
+                        .onEnded { _ in dragStartWidth = nil })
+                    .accessibilityLabel("Workspace width")
+                    .accessibilityValue("\(Int(workspaceWidth)) points")
+                    .accessibilityAdjustableAction { direction in
+                        reader.pinRestoreCurrentPositionOnce()
+                        workspaceWidth = min(420, max(300, workspaceWidth + (direction == .increment ? 20 : -20)))
+                    }
+            }
+        }
     }
 
     private var chapterTitles: [String] {
@@ -85,12 +175,11 @@ struct ReaderScreen: View {
 
     // MARK: - Page
 
-    private static let navRailWidth: CGFloat = 60
+    private static let navRailWidth: CGFloat = 32
     /// Gap between each nav rail and the reading surface.
-    private static let navContentGap: CGFloat = 12
+    private static let navContentGap: CGFloat = 0
     /// Caps the web view so two-page columns stay readable on ultra-wide displays.
     private static let maxReadingWidth: CGFloat = 2000
-    private static let askAIWidth: CGFloat = 340
     private static var maxReadingClusterWidth: CGFloat {
         maxReadingWidth + 2 * navRailWidth + 2 * navContentGap
     }
@@ -107,14 +196,14 @@ struct ReaderScreen: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .readerKeyboardShortcuts(
                             reader,
-                            enabled: !isModalNoteEditor,
                             spaceAction: {
                                 if model.readAloud.isActive {
                                     model.readAloud.togglePause()
                                 } else {
                                     reader.nextPage()
                                 }
-                            }
+                            },
+                            onSuppressChange: { model.isNoteEditorOpen = $0 }
                         )
                         .overlay(alignment: .topLeading) { selectionPopover }
 
@@ -185,7 +274,7 @@ struct ReaderScreen: View {
         model.settings.noteEditorPlacement == .sidebar
     }
 
-    /// Modal sheet is up — page-turn shortcuts should stay off.
+    /// Modal sheet is presented (as opposed to the sidebar inspector).
     private var isModalNoteEditor: Bool {
         editingAnnotation != nil && !isSidebarPlacement
     }
@@ -214,7 +303,14 @@ struct ReaderScreen: View {
                             drawingScene: model.drawingScene(for: annotation.id),
                             isDark: model.settings.theme.isDark,
                             onSave: { model.updateNote($0, for: annotation.id) },
-                            onSaveDrawing: { model.updateDrawing(scene: $0, elementCount: $1, for: annotation.id) },
+                            onSaveDrawing: { scene, elementCount, completion in
+                                model.updateDrawing(
+                                    scene: scene,
+                                    elementCount: elementCount,
+                                    for: annotation.id,
+                                    completion: completion
+                                )
+                            },
                             onChangeColor: { model.changeColor($0, for: annotation.id) },
                             onDelete: { model.deleteAnnotation(annotation.id) },
                             onClose: { finishEditing() },
@@ -246,12 +342,8 @@ struct ReaderScreen: View {
                     }
             }
         }
-        .inspectorColumnWidth(
-            min: inspectorWidths.min,
-            ideal: inspectorWidths.ideal,
-            max: inspectorWidths.max
-        )
-        .animation(.easeInOut(duration: 0.22), value: isDrawingExpanded)
+        .background(model.settings.theme.surface)
+        .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isDrawingExpanded)
     }
 
     private var inspectorWidths: (min: CGFloat, ideal: CGFloat, max: CGFloat) {
@@ -271,12 +363,11 @@ struct ReaderScreen: View {
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
         noteEditorAutofocus = autofocus
         if isSidebarPlacement, !model.isShowingAnnotations {
-            reader.pinRestoreCurrentPositionOnce()
+            reader.pinRestoreOnce(to: annotation.locator.start)
             inspectorOpenedForEditor = true
             model.isShowingAnnotations = true
         }
         editingAnnotation = annotation
-        syncModalEditorFlag()
     }
 
     private func finishEditing() {
@@ -287,7 +378,6 @@ struct ReaderScreen: View {
             model.isShowingAnnotations = false
             inspectorOpenedForEditor = false
         }
-        syncModalEditorFlag()
     }
 
     private func backToNotesList() {
@@ -296,7 +386,6 @@ struct ReaderScreen: View {
         isDrawingExpanded = false
         reader.pinRestore(to: nil)
         model.isShowingAnnotations = true
-        syncModalEditorFlag()
     }
 
     private func setDrawingExpanded(_ active: Bool, annotation: Annotation) {
@@ -317,10 +406,7 @@ struct ReaderScreen: View {
     }
 
     private func handlePlacementChange(_ placement: NoteEditorPlacement) {
-        if editingAnnotation == nil {
-            syncModalEditorFlag()
-            return
-        }
+        guard editingAnnotation != nil else { return }
         if placement == .sidebar {
             if !model.isShowingAnnotations {
                 inspectorOpenedForEditor = true
@@ -330,19 +416,19 @@ struct ReaderScreen: View {
             model.isShowingAnnotations = false
             inspectorOpenedForEditor = false
         }
-        syncModalEditorFlag()
-    }
-
-    private func syncModalEditorFlag() {
-        model.isNoteEditorOpen = isModalNoteEditor
     }
 
     // MARK: - Toolbar
 
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
-        ToolbarItem(placement: .navigation) {
-            Button { model.isShowingAskAI.toggle() } label: {
+        ToolbarItemGroup(placement: .navigation) {
+            Button { model.goHome() } label: {
+                Label("Home", systemImage: "house")
+            }
+            .quickHelp("Home")
+
+            Button { model.toggleAskAI() } label: {
                 Label("Ask AI", systemImage: "sparkles")
             }
             .quickHelp(model.isShowingAskAI ? "Hide Ask AI" : "Ask AI")
@@ -413,7 +499,7 @@ struct ReaderScreen: View {
                 .frame(width: 320, height: 480)
             }
 
-            Button { model.isShowingAnnotations.toggle() } label: {
+            Button { model.toggleAnnotations() } label: {
                 Label("Notes", systemImage: "list.bullet.rectangle")
             }
             .quickHelp("Notes and highlights")
@@ -485,12 +571,12 @@ private struct PageTurnButton: View {
     var body: some View {
         Button(action: action) {
             Image(systemName: systemImage)
-                .font(.system(size: 22, weight: .semibold))
+                .font(.system(size: 14, weight: .medium))
                 .foregroundStyle(.primary.opacity(isHovered ? 0.9 : 0.55))
-                .frame(width: 48, height: 48)
+                .frame(width: 28, height: 36)
                 .background(
                     Circle()
-                        .fill(.primary.opacity(isHovered ? 0.14 : 0.08))
+                        .fill(.primary.opacity(isHovered ? 0.09 : 0.025))
                 )
         }
         .buttonStyle(.plain)
@@ -518,8 +604,8 @@ private struct ProgressFooter: View {
                 .monospacedDigit()
         }
         .padding(.horizontal, 36)
-        .padding(.bottom, 22)
-        .padding(.top, 8)
+        .padding(.vertical, 14)
+        .overlay(alignment: .top) { Divider() }
         .allowsHitTesting(false)
     }
 

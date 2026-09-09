@@ -25,7 +25,7 @@ struct WebBrowserScreen: View {
             WebBrowserView(controller: browser)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .background(model.settings.theme.uiBackground)
+        .background(model.settings.theme.surface)
         .toolbar { toolbarContent }
         .onAppear { syncAddress() }
         .onChange(of: browser.currentURL) { _, _ in
@@ -45,6 +45,11 @@ struct WebBrowserScreen: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItemGroup(placement: .navigation) {
+            Button { model.goHome() } label: {
+                Label("Home", systemImage: "house")
+            }
+            .quickHelp("Home")
+
             Button { browser.goBack() } label: {
                 Label("Back", systemImage: "chevron.left")
             }

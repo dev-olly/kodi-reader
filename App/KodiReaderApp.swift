@@ -42,20 +42,28 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!model.isBrowsing || model.isSavingWebPage)
 
+            Divider()
+
+            Button("Home") { model.goHome() }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(!model.canGoHome)
+
             Button(model.isBrowsing ? "Close Webpage" : "Close Book") {
                 if model.isBrowsing { model.closeBrowser() } else { model.closeBook() }
             }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
-                .disabled(model.book == nil && !model.isBrowsing)
+                .disabled(!model.canGoHome)
         }
 
         CommandMenu("Go") {
+            Button("Home") { model.goHome() }
+                .keyboardShortcut("h", modifiers: [.command, .shift])
+                .disabled(!model.canGoHome)
+            Divider()
             Button("Next Page") { model.reader?.nextPage() }
-                .keyboardShortcut(.rightArrow, modifiers: [])
-                .disabled(model.isNoteEditorOpen)
+                .disabled(model.reader == nil)
             Button("Previous Page") { model.reader?.previousPage() }
-                .keyboardShortcut(.leftArrow, modifiers: [])
-                .disabled(model.isNoteEditorOpen)
+                .disabled(model.reader == nil)
             Divider()
             Button("Next Chapter") { model.reader?.goToNextChapter() }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
@@ -83,17 +91,17 @@ struct KodiReaderApp: App {
 
             Button("Skip Forward 15 Seconds") { model.readAloud.skipForward() }
             .keyboardShortcut(.rightArrow, modifiers: [.option])
-            .disabled(!model.readAloud.isActive)
+            .disabled(!model.readAloud.isActive || model.isNoteEditorOpen)
 
             Button("Skip Back 15 Seconds") { model.readAloud.skipBack() }
             .keyboardShortcut(.leftArrow, modifiers: [.option])
-            .disabled(!model.readAloud.isActive)
+            .disabled(!model.readAloud.isActive || model.isNoteEditorOpen)
         }
 
         CommandMenu("View") {
             Button("Table of Contents") { model.isShowingContents.toggle() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])
-            Button("Notes & Highlights") { model.isShowingAnnotations.toggle() }
+            Button("Notes & Highlights") { model.toggleAnnotations() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
             Toggle(
                 "Notes in Sidebar",
@@ -123,7 +131,7 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("l", modifiers: .command)
                 .disabled(model.book == nil)
             Button(model.isShowingAskAI ? "Hide Sidebar" : "Show Sidebar") {
-                model.isShowingAskAI.toggle()
+                model.toggleAskAI()
             }
             .disabled(model.book == nil)
             Divider()

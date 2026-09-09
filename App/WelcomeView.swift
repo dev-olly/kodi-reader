@@ -1,4 +1,5 @@
 import EpubKit
+import ReaderUI
 import SwiftUI
 
 /// Shown when no book is open: a way in, plus whatever you were reading last.
@@ -10,36 +11,41 @@ struct WelcomeView: View {
     @FocusState private var urlFieldFocused: Bool
 
     var body: some View {
-        VStack(spacing: 28) {
-            VStack(spacing: 10) {
-                Image(systemName: "book.closed")
-                    .font(.system(size: 52, weight: .thin))
-                    .foregroundStyle(.tertiary)
-
-                Text("Kodi Reader")
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
-
-                Text("Drop an EPUB here, or open a book or webpage to start reading.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
+        ScrollView {
+          VStack(alignment: .leading, spacing: 32) {
+            HStack {
+                Label("Kodi Reader", systemImage: "book.closed")
+                    .font(.headline)
+                    .foregroundStyle(model.settings.theme.accent)
+                Spacer()
+                Button { model.presentOpenPanel() } label: {
+                    Label("Open Book", systemImage: "plus")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .keyboardShortcut("o", modifiers: .command)
             }
-
+            VStack(alignment: .leading, spacing: 12) {
+                Text(model.recents.isEmpty ? "A little more absorbed." : "Your next chapter.")
+                    .font(.system(size: 36, weight: .regular, design: .serif))
+                Text(model.recents.isEmpty ? "Your books. Your thoughts." : "Pick up where you left off.")
+                    .foregroundStyle(model.settings.theme.muted)
+            }
             urlField
-                .frame(maxWidth: 460)
-
+                .frame(maxWidth: 520)
+            Divider()
             if !model.recents.isEmpty {
                 recents
+            } else {
+                ContentUnavailableView("Room for a good book", systemImage: "books.vertical")
+                    .frame(maxWidth: .infinity)
             }
-
-            Button("Open Book…") { model.presentOpenPanel() }
-                .buttonStyle(.plain)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .keyboardShortcut("o", modifiers: .command)
+          }
+          .padding(40)
+          .frame(maxWidth: 1000, alignment: .leading)
+          .frame(maxWidth: .infinity)
         }
-        .padding(40)
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear { urlFieldFocused = true }
+        .background(model.settings.theme.surface)
     }
 
     private var urlField: some View {
@@ -74,9 +80,9 @@ struct WelcomeView: View {
             .padding(.leading, 16)
             .padding(.trailing, 6)
             .padding(.vertical, 6)
-            .background(.quaternary.opacity(0.55), in: .capsule)
+            .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
             .overlay {
-                Capsule()
+                RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(
                         urlFieldFocused || isFieldHovered
                             ? Color.secondary.opacity(0.45)
@@ -110,27 +116,24 @@ struct WelcomeView: View {
 
     private var recents: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Recent")
+            Text("Continue reading")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
                 .textCase(.uppercase)
 
-            ScrollView {
-                LazyVStack(spacing: 2) {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
                     ForEach(model.recents) { record in
                         recentRow(record)
                     }
                 }
-            }
-            .frame(maxHeight: 260)
         }
-        .frame(maxWidth: 460)
     }
 
     private func recentRow(_ record: BookRecord) -> some View {
         Button { model.reopen(record) } label: {
             HStack(spacing: 12) {
+                RecentBookCover(record: record, url: model.importedURL(for: record))
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
                         Text(record.title)
@@ -150,6 +153,8 @@ struct WelcomeView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    ProgressView(value: min(1, max(0, record.progress)))
+                        .padding(.top, 8)
                 }
 
                 Spacer(minLength: 12)
@@ -166,7 +171,11 @@ struct WelcomeView: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .background(.quaternary.opacity(0.35), in: .rect(cornerRadius: 8))
+        .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(record.title), \(record.author)")
+        .accessibilityValue("\(Int(record.progress * 100)) percent read")
+        .accessibilityAddTraits(.isButton)
         .contextMenu {
             if record.sourceURL != nil {
                 Button("Open Original in Browser") {
@@ -176,6 +185,37 @@ struct WelcomeView: View {
             Button("Remove from Recent", role: .destructive) {
                 model.removeFromRecents(record)
             }
+        }
+    }
+}
+
+private struct RecentBookCover: View {
+    let record: BookRecord
+    let url: URL?
+    @State private var image: NSImage?
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image).resizable().scaledToFill()
+            } else {
+                ZStack {
+                    Color.accentColor.opacity(0.12)
+                    Text(String(record.title.prefix(1)))
+                        .font(.system(size: 30, design: .serif))
+                        .foregroundStyle(.tint)
+                }
+            }
+        }
+        .frame(width: 48, height: 70)
+        .clipShape(.rect(cornerRadius: 4))
+        .accessibilityHidden(true)
+        .task(id: url) {
+            guard let url else { return }
+            let data = await Task.detached(priority: .utility) {
+                (try? EPUBBook(fileURL: url))?.coverImageData
+            }.value
+            if !Task.isCancelled { image = data.flatMap(NSImage.init(data:)) }
         }
     }
 }

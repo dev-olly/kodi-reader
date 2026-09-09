@@ -63,6 +63,7 @@ struct TypographyPopover: View {
             )
         }
         .padding(20)
+        .background(model.settings.theme.surface)
         .frame(width: 320)
     }
 

@@ -23,6 +23,8 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(model.settings.theme.uiBackground)
+        .foregroundStyle(model.settings.theme.uiForeground)
+        .tint(model.settings.theme.accent)
         .preferredColorScheme(model.settings.theme.colorScheme)
         .onDrop(of: [.fileURL], isTargeted: nil) { providers in
             loadDroppedBook(from: providers)

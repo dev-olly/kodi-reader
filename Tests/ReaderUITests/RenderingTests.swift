@@ -615,6 +615,109 @@ final class RenderingTests: XCTestCase {
         )
     }
 
+    /// Closing Ask AI (or any leading sidebar) *widens* the web view. The pin
+    /// must be taken before that expand, or relayout restores chapter start.
+    func testPinRestoreOnceKeepsPositionAcrossViewportExpand() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 800, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Need at least three pages to stand past the start")
+
+        var settings = reader.settings
+        settings.animatePageTurns = false
+        reader.settings = settings
+        XCTAssertTrue(
+            wait(timeout: 4) { reader.pageCount > 2 },
+            "Typography relayout after disabling animation lost pagination"
+        )
+
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page == 1 },
+            "Could not stand on page 2 (index 1) before expanding"
+        )
+
+        XCTAssertFalse(
+            currentTextPosition(from: reader).elementPath.isEmpty,
+            "No text anchor before expand"
+        )
+
+        var pinned = false
+        reader.evaluateForTesting("__reader.pinRestoreCurrentOnce()") { _ in pinned = true }
+        XCTAssertTrue(wait(timeout: 2) { pinned }, "pinRestoreCurrentOnce did not run")
+
+        let fullSize = CGSize(width: 1400, height: 900)
+        window?.setContentSize(fullSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: fullSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: fullSize.width, height: fullSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) {
+                reader.spineIndex == chapter
+                    && reader.page > 0
+                    && (pagingGeometry(from: reader)["scrollLeft"] ?? 0) > 10
+            },
+            "Pinned expand jumped to chapter start (page \(reader.page), geo \(pagingGeometry(from: reader)))"
+        )
+    }
+
+    /// Selection-driven actions (Add Note / Ask AI) need to restore the acted-on
+    /// passage, not just the page's first text probe, when a sidebar narrows the
+    /// reader.
+    func testSpecificPinRestoreKeepsPinnedTextVisibleAcrossViewportShrink() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 1400, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Need at least three pages to stand past the start")
+
+        var settings = reader.settings
+        settings.animatePageTurns = false
+        reader.settings = settings
+        XCTAssertTrue(wait(timeout: 4) { reader.pageCount > 2 })
+
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(wait(timeout: 5) { reader.page == 1 })
+
+        let pinned = try XCTUnwrap(
+            visibleTextPosition(from: reader),
+            "No visible text position to pin before shrink"
+        )
+        reader.pinRestoreOnce(to: pinned)
+        var genericPinRan = false
+        reader.evaluateForTesting("__reader.pinRestoreCurrentOnce()") { _ in genericPinRan = true }
+        XCTAssertTrue(wait(timeout: 2) { genericPinRan })
+
+        let sidebarSize = CGSize(width: 800, height: 900)
+        window?.setContentSize(sidebarSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: sidebarSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: sidebarSize.width, height: sidebarSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) {
+                reader.spineIndex == chapter && isTextPositionVisible(pinned, in: reader)
+            },
+            "Specific pinned text was not visible after shrink (page \(reader.page), geo \(pagingGeometry(from: reader)))"
+        )
+    }
+
     /// The visible scroll position must actually move on a page turn after a
     /// resize — not just the reported page index. Before the fix, `scrollToPage`
     /// used a cached stride captured at the old size, so targets overshot and
@@ -687,6 +790,95 @@ final class RenderingTests: XCTestCase {
         }
         _ = wait(timeout: 2) { result != nil }
         return result ?? TextPosition(elementPath: [], offset: 0)
+    }
+
+    private func visibleTextPosition(from reader: ReaderController) -> TextPosition? {
+        var result: TextPosition?
+        reader.evaluateForTesting(
+            """
+            (function () {
+              function pathOfNode(node) {
+                var path = [];
+                var current = node;
+                while (current && current !== document.body) {
+                  var parent = current.parentNode;
+                  if (!parent) break;
+                  path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+                  current = parent;
+                }
+                return path;
+              }
+              var xs = [window.innerWidth * 0.75, window.innerWidth * 0.25, window.innerWidth * 0.5];
+              var ys = [window.innerHeight * 0.72, window.innerHeight * 0.58, window.innerHeight * 0.42];
+              for (var yi = 0; yi < ys.length; yi++) {
+                for (var xi = 0; xi < xs.length; xi++) {
+                  var range = document.caretRangeFromPoint(xs[xi], ys[yi]);
+                  if (!range || !range.startContainer) continue;
+                  if (range.startContainer === document.body) continue;
+                  if (range.startContainer.nodeType !== Node.TEXT_NODE) continue;
+                  return {
+                    elementPath: pathOfNode(range.startContainer),
+                    offset: range.startOffset
+                  };
+                }
+              }
+              return null;
+            })()
+            """
+        ) { raw in
+            guard let body = raw as? [String: Any],
+                  let path = body["elementPath"] as? [Int]
+            else { return }
+            result = TextPosition(elementPath: path, offset: body["offset"] as? Int ?? 0)
+        }
+        _ = wait(timeout: 2) { result != nil }
+        return result
+    }
+
+    private func isTextPositionVisible(_ position: TextPosition, in reader: ReaderController) -> Bool {
+        guard let encoded = jsonString([
+            "elementPath": position.elementPath,
+            "offset": position.offset,
+        ]) else { return false }
+
+        var result: Bool?
+        reader.evaluateForTesting(
+            """
+            (function (position) {
+              function nodeAtPath(path) {
+                var node = document.body;
+                for (var i = 0; i < path.length; i++) {
+                  node = node.childNodes[path[i]];
+                  if (!node) return null;
+                }
+                return node;
+              }
+              var node = nodeAtPath(position.elementPath || []);
+              if (!node || node.nodeType !== Node.TEXT_NODE) return false;
+              var range = document.createRange();
+              var offset = Math.min(Math.max(position.offset || 0, 0), node.textContent.length);
+              range.setStart(node, offset);
+              range.setEnd(node, Math.min(offset + 1, node.textContent.length));
+              var rect = range.getBoundingClientRect();
+              return rect.width > 0 &&
+                rect.height > 0 &&
+                rect.right >= 0 &&
+                rect.left <= window.innerWidth &&
+                rect.bottom >= 0 &&
+                rect.top <= window.innerHeight;
+            })(\(encoded))
+            """
+        ) { result = $0 as? Bool }
+        _ = wait(timeout: 2) { result != nil }
+        return result == true
+    }
+
+    private func jsonString(_ value: Any) -> String? {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value),
+              let string = String(data: data, encoding: .utf8)
+        else { return nil }
+        return string
     }
 
     private func pagingGeometry(from reader: ReaderController) -> [String: Double] {

@@ -2,11 +2,11 @@ const RELEASES_PAGE = "https://github.com/dev-olly/kodi-reader/releases/latest";
 const RELEASES_API = "https://api.github.com/repos/dev-olly/kodi-reader/releases/latest";
 
 (function wireDownload() {
-  const button = document.getElementById("download");
+  const buttons = document.querySelectorAll("[data-download]");
   const versionEl = document.getElementById("version");
-  if (!button) return;
+  if (!buttons.length) return;
 
-  button.href = RELEASES_PAGE;
+  buttons.forEach((button) => { button.href = RELEASES_PAGE; });
 
   fetch(RELEASES_API, {
     headers: { Accept: "application/vnd.github+json" },
@@ -28,7 +28,7 @@ const RELEASES_API = "https://api.github.com/repos/dev-olly/kodi-reader/releases
       }
 
       if (dmg && dmg.browser_download_url) {
-        button.href = dmg.browser_download_url;
+        buttons.forEach((button) => { button.href = dmg.browser_download_url; });
       }
 
       if (release.tag_name && versionEl) {

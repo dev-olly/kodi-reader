@@ -30,7 +30,7 @@ struct ReadAloudBar: View {
         .padding(.horizontal, 20)
         .padding(.top, 10)
         .padding(.bottom, 14)
-        .background(.regularMaterial)
+        .background(model.settings.theme.surface)
         .overlay(alignment: .top) {
             Divider()
         }
@@ -68,7 +68,7 @@ struct ReadAloudBar: View {
 
                 ProgressView(value: readAloud.chapterProgress)
                     .progressViewStyle(.linear)
-                    .tint(.primary)
+                    .tint(model.settings.theme.accent)
 
                 if let remaining = readAloud.chapterRemaining {
                     Text("−" + Self.formatTime(remaining))
@@ -145,7 +145,7 @@ struct ReadAloudBar: View {
                     .font(.system(size: 15, weight: .bold))
                     .foregroundStyle(.background)
                     .frame(width: 36, height: 36)
-                    .background(.primary, in: Circle())
+                    .background(model.settings.theme.accent, in: Circle())
             }
             .quickHelp(readAloud.isPlaying ? "Pause" : "Play")
 

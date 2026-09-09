@@ -7,6 +7,8 @@ theme controls, highlights with notes and drawings, configurable Ask AI, webpage
 reading, and fluent on-device read-aloud — without the store, the sync, or the
 library management.
 
+![Kodi Reader showing a highlighted passage and note](website/assets/reading-enhanced.png)
+
 Kodi Reader is **not affiliated with** the [Kodi media center](https://kodi.tv/)
 or the XBMC Foundation.
 
@@ -15,22 +17,22 @@ or the XBMC Foundation.
 ### Book reading
 Paginated EPUB rendering with typography, margin, and theme controls, plus position and progress that survive layout changes.
 
-![Book reading](docs/screenshots/reading.png)
+![Book reading](website/assets/reading.png)
 
 ### Notes taking
 Text highlights in multiple colors, each with an attached note, stored alongside the book.
 
-![Highlight with a note](docs/screenshots/note.png)
+![Highlight with a note](website/assets/notes.png)
 
 ### Visual notes
 Freeform sketches per highlight via a bundled, offline [Excalidraw](https://excalidraw.com/) editor.
 
-![Visual notes with Excalidraw](docs/screenshots/visual.png)
+![Visual notes with Excalidraw](website/assets/draw.png)
 
 ### Ask AI
 Opt-in, configurable OpenAI-compatible chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.
 
-![Ask AI](docs/screenshots/ask-ai.png)
+![Ask AI](website/assets/ask-ai.png)
 
 ### Open web apps and websites
 Load an article or page, extract the readable content, and read it in the same paginated view as a book.
@@ -40,7 +42,7 @@ Load an article or page, extract the readable content, and read it in the same p
 ### Audio reading
 On-device read-aloud using [Kokoro](https://github.com/hexgrad/kokoro), no cloud TTS.
 
-![Audio reading](docs/screenshots/audio.png)
+![Audio reading](website/assets/audio.png)
 
 ## Status
 
@@ -69,31 +71,65 @@ The site is at [dev-olly.github.io/kodi-reader](https://dev-olly.github.io/kodi-
 
 ## Requirements
 
-- macOS 15 or later, Apple Silicon (read-aloud uses Kokoro / MLX)
+- macOS 15 or later
+- Apple Silicon for read-aloud (Kokoro / MLX)
 - Xcode 26 or later (KokoroSwift requires Swift 6.2)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the project file
+- Node.js/npm only when changing the bundled Excalidraw drawing host
 
 ```sh
 brew install xcodegen
 ```
 
-## Building
+## Setup
+
+### Install the app
+
+Download `KodiReader.dmg` from
+[GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest),
+open it, and drag `Kodi Reader.app` into Applications.
+
+The build is ad-hoc signed, not notarized. On first launch, macOS may require
+Right-click → Open.
+
+### Build from source
+
+Clone the repository and install XcodeGen:
+
+```sh
+git clone https://github.com/dev-olly/kodi-reader.git
+cd kodi-reader
+brew install xcodegen
+```
 
 The app target needs Xcode 26 (KokoroSwift). `swift test` for EpubKit and
 ReaderUI still runs on older toolchains. Signing is ad-hoc (`CODE_SIGN_IDENTITY:
-"-"`) so the app runs locally; it is not a notarized distribution build.
-First open of a downloaded build may need Right-click → Open.
+"-"`) so the app runs locally; it is not a notarized distribution build. On a
+machine with multiple Xcode versions, point the shell at Xcode 26:
+
+```sh
+export DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer
+```
+
+Generate the Xcode project and open it:
 
 ```sh
 xcodegen generate
 open KodiReader.xcodeproj
 ```
 
-Or from the command line:
+Or build from the command line. Debug builds on this machine should disable
+code signing:
 
 ```sh
 xcodegen generate
-xcodebuild -project KodiReader.xcodeproj -scheme KodiReader -configuration Debug build
+xcodebuild \
+  -project KodiReader.xcodeproj \
+  -scheme KodiReader \
+  -configuration Debug \
+  -destination 'platform=macOS' \
+  CODE_SIGNING_ALLOWED=NO \
+  build
 ```
 
 The `.xcodeproj` is generated from `project.yml` and is not committed, so
@@ -102,19 +138,15 @@ regenerate it after pulling changes that touch the project layout.
 The bundle identifier is `com.olly.KodiReader`. Product name lives in
 `project.yml` as `PRODUCT_NAME: Kodi Reader`.
 
-Push a `v*` tag to cut a GitHub Release. Actions builds `KodiReader.dmg`
-and attaches it:
-
-```sh
-git tag v0.1.0
-git push origin v0.1.0
-```
-
-Or package locally (Apple Silicon, Xcode 26):
+### Package a DMG
 
 ```sh
 ./Scripts/package-dmg.sh 0.1.0
 ```
+
+The package script regenerates the Xcode project, builds a Release app for
+Apple Silicon, checks required embedded frameworks, signs ad-hoc, and writes
+`KodiReader.dmg` in the repository root.
 
 ## Testing
 

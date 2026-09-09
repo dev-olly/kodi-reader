@@ -20,36 +20,24 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// Soft off-white on charcoal in dark mode — readable without harsh glare.
     var textColor: String {
-        switch self {
-        case .light: return "#1a1a1a"
-        case .dark: return "#dcdcdc"
-        }
+        inkHex
     }
 
     var backgroundColor: String {
-        switch self {
-        case .light: return "#ffffff"
-        case .dark: return "#1c1c1e"
-        }
+        pageHex
     }
 
     /// Elevated panels / EPUB callouts remapped in dark mode.
     var surfaceColor: String {
-        switch self {
-        case .light: return "#f2f2f2"
-        case .dark: return "#2c2c2e"
-        }
+        surfaceHex
     }
 
     var linkColor: String {
-        switch self {
-        case .light: return "#1a6fd4"
-        case .dark: return "#6cb0f5"
-        }
+        accentHex
     }
 
     var selectionColor: String {
-        isDark ? "rgba(120, 180, 255, 0.35)" : "rgba(88, 172, 250, 0.32)"
+        isDark ? "rgba(172, 213, 180, 0.30)" : "rgba(114, 165, 124, 0.25)"
     }
 
     public var isDark: Bool {
@@ -64,10 +52,7 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
 
     /// SwiftUI equivalents, so the window chrome can match the page.
     public var uiBackground: Color {
-        switch self {
-        case .light: return .white
-        case .dark: return Color(red: 28 / 255, green: 28 / 255, blue: 30 / 255)
-        }
+        Color(readerHex: pageHex)
     }
 
     #if os(macOS)
@@ -77,13 +62,13 @@ public enum ReaderTheme: String, Codable, CaseIterable, Identifiable, Sendable {
         case .light:
             return .white
         case .dark:
-            return NSColor(calibratedRed: 28 / 255, green: 28 / 255, blue: 30 / 255, alpha: 1)
+            return NSColor(calibratedRed: 32 / 255, green: 37 / 255, blue: 34 / 255, alpha: 1)
         }
     }
     #endif
 
     public var uiForeground: Color {
-        isDark ? Color(red: 220 / 255, green: 220 / 255, blue: 220 / 255) : Color.black.opacity(0.85)
+        Color(readerHex: inkHex)
     }
 
     public var colorScheme: ColorScheme {
@@ -170,21 +155,30 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     public var theme: ReaderTheme = .light
     public var font: ReaderFont = .serif
     public var fontSize: Double = 19
-    public var lineHeight: Double = 1.68
+    public var lineHeight: Double = 1.8
     /// Fraction of the window width used as the side margin, per side.
     public var marginRatio: Double = 0.11
-    public var justified: Bool = true
+    public var justified: Bool = false
     public var hyphenated: Bool = true
     public var twoPageSpread: Bool = true
     public var animatePageTurns: Bool = true
     /// Sheet keeps the current modal editor; sidebar docks it in the inspector.
-    public var noteEditorPlacement: NoteEditorPlacement = .sheet
+    public var noteEditorPlacement: NoteEditorPlacement = .sidebar
     /// Kokoro voice id, e.g. `af_heart`.
     public var readAloudVoiceID: String = "af_heart"
     /// Playback rate applied after synthesis, independent of the model.
     public var readAloudRate: Double = 1.0
 
     public init() {}
+
+    public mutating func applyAppearanceDefaults() {
+        font = .serif
+        fontSize = 19
+        lineHeight = 1.8
+        marginRatio = 0.11
+        justified = false
+        noteEditorPlacement = .sidebar
+    }
 
     public static let fontSizeRange: ClosedRange<Double> = 12...32
     public static let lineHeightRange: ClosedRange<Double> = 1.2...2.4

@@ -8,8 +8,292 @@ body,
   background: transparent;
 }
 
+.kodi-excalidraw-host {
+  --kodi-toolbar-height: 48px;
+  --kodi-scroll-x: 0px;
+  --kodi-scroll-y: 0px;
+  --kodi-zoom: 1;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: #ffffff;
+}
+
 .excalidraw,
 .excalidraw .App-menu,
 .excalidraw .layer-ui__wrapper {
   --ui-font: system-ui, sans-serif;
+}
+
+.kodi-excalidraw-host .excalidraw {
+  height: 100%;
+}
+
+.kodi-simple-toolbar {
+  position: absolute;
+  z-index: 8;
+  top: 8px;
+  left: 8px;
+  right: 8px;
+  min-height: var(--kodi-toolbar-height);
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 5px;
+  border: 1px solid rgb(36 87 68 / 0.18);
+  border-radius: 8px;
+  background: rgb(255 255 255 / 0.94);
+  box-shadow: 0 8px 24px rgb(20 42 32 / 0.08);
+  color: #1f3329;
+  backdrop-filter: blur(10px);
+  overflow: visible;
+}
+
+.tool-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-right: 5px;
+  border-right: 1px solid rgb(36 87 68 / 0.12);
+}
+
+.tool-group.trailing {
+  margin-left: auto;
+  padding-right: 0;
+  border-right: 0;
+}
+
+.tool-group button,
+.zoom-readout {
+  box-sizing: border-box;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: 600 12px/1 system-ui, sans-serif;
+}
+
+.tool-group button {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.tool-group button[data-tooltip]::after {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  z-index: 20;
+  max-width: 160px;
+  padding: 5px 7px;
+  border-radius: 5px;
+  background: rgb(31 51 41 / 0.94);
+  color: #ffffff;
+  content: attr(data-tooltip);
+  font: 600 11px/1.2 system-ui, sans-serif;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%) translateY(-2px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease;
+  white-space: nowrap;
+}
+
+.tool-group.trailing button[data-tooltip]::after {
+  left: auto;
+  right: 0;
+  transform: translateY(-2px);
+}
+
+.tool-group button[data-tooltip]:hover::after,
+.tool-group button[data-tooltip]:focus-visible::after {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.tool-group.trailing button[data-tooltip]:hover::after,
+.tool-group.trailing button[data-tooltip]:focus-visible::after {
+  transform: translateY(0);
+}
+
+.tool-group button:hover {
+  background: rgb(36 87 68 / 0.08);
+}
+
+.tool-group button:focus-visible {
+  outline: 2px solid #648676;
+  outline-offset: 2px;
+}
+
+.tool-group button.is-active {
+  border-color: rgb(36 87 68 / 0.28);
+  background: #e1eddb;
+}
+
+.tool-group .icon-button {
+  width: 32px;
+  padding: 0;
+}
+
+.tool-group svg {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+}
+
+.widths svg {
+  width: 22px;
+}
+
+.template-button {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.swatches .swatch {
+  width: 26px;
+  min-width: 26px;
+  height: 26px;
+  padding: 0;
+  border-color: rgb(36 87 68 / 0.2);
+  border-radius: 50%;
+  background:
+    linear-gradient(135deg, transparent 47%, rgb(36 87 68 / 0.35) 48%, rgb(36 87 68 / 0.35) 52%, transparent 53%),
+    var(--swatch);
+  box-shadow: inset 0 0 0 3px #fff;
+}
+
+.swatches .swatch[style*="transparent"] {
+  background:
+    linear-gradient(135deg, transparent 47%, var(--swatch-stroke) 48%, var(--swatch-stroke) 52%, transparent 53%),
+    #fff;
+}
+
+.zoom-readout {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  color: rgb(31 51 41 / 0.72);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.advanced-button {
+  width: 32px;
+  min-width: 32px;
+  padding: 0;
+}
+
+.kodi-dot-grid {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+  pointer-events: none;
+  background-image: radial-gradient(circle, rgb(36 87 68 / 0.17) 1px, transparent 1.25px);
+  background-size: calc(26px * var(--kodi-zoom)) calc(26px * var(--kodi-zoom));
+  background-position:
+    calc(var(--kodi-scroll-x) * var(--kodi-zoom))
+    calc(var(--kodi-scroll-y) * var(--kodi-zoom));
+  mix-blend-mode: multiply;
+}
+
+.is-simple .layer-ui__wrapper > .App-menu,
+.is-simple .layer-ui__wrapper > .FixedSideContainer,
+.is-simple .layer-ui__wrapper > .Island,
+.is-simple .layer-ui__wrapper > footer,
+.is-simple .layer-ui__wrapper .App-toolbar,
+.is-simple .layer-ui__wrapper .App-bottom-bar,
+.is-simple .layer-ui__wrapper .Stack_vertical {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.is-simple .undo-redo-buttons,
+.is-simple .zoom-actions {
+  position: absolute;
+  left: -10000px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: auto;
+}
+
+.is-advanced .kodi-simple-toolbar {
+  right: auto;
+  max-width: min(720px, calc(100% - 16px));
+}
+
+.excalidraw.theme--dark,
+.theme--dark .kodi-excalidraw-host,
+.kodi-excalidraw-host:has(.excalidraw.theme--dark) {
+  background: #202522;
+}
+
+.kodi-excalidraw-host:has(.excalidraw.theme--dark) .kodi-simple-toolbar {
+  border-color: rgb(225 237 219 / 0.16);
+  background: rgb(32 37 34 / 0.9);
+  color: #eef4ec;
+  box-shadow: 0 10px 26px rgb(0 0 0 / 0.22);
+}
+
+.kodi-excalidraw-host:has(.excalidraw.theme--dark) .tool-group {
+  border-right-color: rgb(225 237 219 / 0.13);
+}
+
+.kodi-excalidraw-host:has(.excalidraw.theme--dark) .tool-group button:hover {
+  background: rgb(225 237 219 / 0.09);
+}
+
+.kodi-excalidraw-host:has(.excalidraw.theme--dark) .tool-group button.is-active {
+  border-color: rgb(225 237 219 / 0.24);
+  background: rgb(100 134 118 / 0.24);
+}
+
+.kodi-excalidraw-host:has(.excalidraw.theme--dark) .kodi-dot-grid {
+  background-image: radial-gradient(circle, rgb(225 237 219 / 0.12) 1px, transparent 1.25px);
+  mix-blend-mode: screen;
+}
+
+@media (max-width: 760px) {
+  .kodi-simple-toolbar {
+    gap: 3px;
+    padding-inline: 4px;
+  }
+
+  .tool-group {
+    gap: 1px;
+    padding-right: 4px;
+  }
+
+  .tool-group .icon-button,
+  .advanced-button {
+    width: 30px;
+    min-width: 30px;
+  }
+
+  .swatches .swatch {
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+  }
+
+  .zoom-readout {
+    min-width: 42px;
+  }
+
+  .tool-group.trailing {
+    margin-left: 0;
+  }
 }

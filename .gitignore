@@ -5,6 +5,7 @@
 !*.xcodeproj/project.pbxproj
 xcuserdata/
 DerivedData/
+.xcode-derived-data/
 *.xcworkspace/
 !*.xcworkspace/contents.xcworkspacedata
 build/

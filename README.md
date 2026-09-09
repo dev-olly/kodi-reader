@@ -7,7 +7,7 @@ theme controls, highlights with notes and drawings, configurable Ask AI, webpage
 reading, and fluent on-device read-aloud — without the store, the sync, or the
 library management.
 
-![Kodi Reader showing a highlighted passage and note](website/assets/reading-enhanced.png)
+![Kodi Reader showing a highlighted passage and note](docs/screenshots/app-overview.png)
 
 Kodi Reader is **not affiliated with** the [Kodi media center](https://kodi.tv/)
 or the XBMC Foundation.
@@ -17,32 +17,32 @@ or the XBMC Foundation.
 ### Book reading
 Paginated EPUB rendering with typography, margin, and theme controls, plus position and progress that survive layout changes.
 
-![Book reading](website/assets/reading.png)
+![Book reading](docs/screenshots/app-reading.png)
 
 ### Notes taking
 Text highlights in multiple colors, each with an attached note, stored alongside the book.
 
-![Highlight with a note](website/assets/notes.png)
+![Highlight with a note](docs/screenshots/app-note-editor.png)
 
 ### Visual notes
 Freeform sketches per highlight via a bundled, offline [Excalidraw](https://excalidraw.com/) editor.
 
-![Visual notes with Excalidraw](website/assets/draw.png)
+![Visual notes with Excalidraw](docs/screenshots/app-draw.png)
 
 ### Ask AI
 Opt-in, configurable OpenAI-compatible chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.
 
-![Ask AI](website/assets/ask-ai.png)
+![Ask AI](docs/screenshots/app-ask-ai.png)
 
 ### Open web apps and websites
 Load an article or page, extract the readable content, and read it in the same paginated view as a book.
 
-![Open web app or website](docs/screenshots/web.png)
+![Open web app or website](docs/screenshots/app-web.png)
 
 ### Audio reading
 On-device read-aloud using [Kokoro](https://github.com/hexgrad/kokoro), no cloud TTS.
 
-![Audio reading](website/assets/audio.png)
+![Audio reading](docs/screenshots/app-audio.png)
 
 ## Status
 

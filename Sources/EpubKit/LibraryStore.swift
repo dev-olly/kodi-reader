@@ -15,6 +15,8 @@ public final class LibraryStore: @unchecked Sendable {
         var version: Int = LibraryStore.currentVersion
         var books: [String: BookRecord] = [:]
         var settingsJSON: Data?
+        var appearanceMigrationVersion: Int?
+        var settingsBeforeAppearanceMigration: Data?
     }
 
     private let fileURL: URL
@@ -194,6 +196,41 @@ public final class LibraryStore: @unchecked Sendable {
         payload.settingsJSON = data
         lock.unlock()
         scheduleSave()
+    }
+
+    /// Back up and replace settings in one payload, so interruption cannot
+    /// persist the new values without also persisting the migration marker.
+    public func migrateAppearanceSettings<T: Codable>(
+        defaultSettings: T, transform: (inout T) -> Void
+    ) throws -> T {
+        lock.lock()
+        do {
+            var settings = try payload.settingsJSON.map {
+                try JSONDecoder().decode(T.self, from: $0)
+            } ?? defaultSettings
+            guard (payload.appearanceMigrationVersion ?? 0) < 1 else {
+                lock.unlock()
+                return settings
+            }
+            transform(&settings)
+            let encoded = try JSONEncoder().encode(settings)
+            payload.settingsBeforeAppearanceMigration = payload.settingsJSON
+            payload.settingsJSON = encoded
+            payload.appearanceMigrationVersion = 1
+            lock.unlock()
+            flush()
+            return settings
+        } catch {
+            lock.unlock()
+            throw error
+        }
+    }
+
+    public func settingsBeforeAppearanceMigration<T: Decodable>(_ type: T.Type) -> T? {
+        lock.lock()
+        let data = payload.settingsBeforeAppearanceMigration
+        lock.unlock()
+        return data.flatMap { try? JSONDecoder().decode(type, from: $0) }
     }
 
     // MARK: - Persistence

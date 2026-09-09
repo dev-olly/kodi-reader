@@ -22,11 +22,23 @@ final class AppModel {
 
     var errorMessage: String?
     var isShowingContents = false
-    var isShowingAnnotations = false
-    var isShowingAskAI = false
+    enum Workspace: String { case closed, notes, askAI }
+    var workspace: Workspace = .closed {
+        willSet {
+            if newValue != workspace { reader?.pinRestoreCurrentPositionOnce() }
+        }
+    }
+    var isShowingAnnotations: Bool {
+        get { workspace == .notes }
+        set { if newValue { workspace = .notes } else if workspace == .notes { workspace = .closed } }
+    }
+    var isShowingAskAI: Bool {
+        get { workspace == .askAI }
+        set { if newValue { workspace = .askAI } else if workspace == .askAI { workspace = .closed } }
+    }
     var isShowingManageModels = false
-    /// True while the modal note editor sheet is presented — disables page-turn shortcuts.
-    /// Sidebar editing does not set this, so paging still works.
+    /// True when page-turn shortcuts should yield to the focused control —
+    /// the note editor, Excalidraw, the notes list, or any other sidebar field.
     var isNoteEditorOpen = false
     /// Last colour applied via a swatch, a new note, or the note editor picker.
     private(set) var lastAppliedHighlightColor: HighlightColor?
@@ -53,12 +65,16 @@ final class AppModel {
     @ObservationIgnored private var scopedURL: URL?
     /// Live drawing scenes, so switching sheet/sidebar does not wait on disk.
     @ObservationIgnored private var drawingCache: [UUID: Data] = [:]
+    /// Reading position captured before an in-app browser preview, restored on close.
+    @ObservationIgnored private var positionBeforeBrowser: Locator?
 
     init() {
         let root = AppDataDirectory.prepare()
         let store = LibraryStore(fileURL: root.appendingPathComponent("library.json"))
         self.store = store
-        settings = store.loadSettings(ReaderSettings.self) ?? ReaderSettings()
+        settings = (try? store.migrateAppearanceSettings(defaultSettings: ReaderSettings()) {
+            $0.applyAppearanceDefaults()
+        }) ?? store.loadSettings(ReaderSettings.self) ?? ReaderSettings()
         recents = store.recentBooks()
 
         let aiConfig = AIConfigStore(directory: root)
@@ -107,6 +123,8 @@ final class AppModel {
     }
 
     func openWebBrowser(url: URL) {
+        positionBeforeBrowser = record?.position
+        reader?.pinRestoreCurrentPositionOnce()
         if let webBrowser {
             webBrowser.load(url)
             return
@@ -120,6 +138,13 @@ final class AppModel {
         webBrowser?.tearDown()
         webBrowser = nil
         isSavingWebPage = false
+    }
+
+    /// Called when the reader is on screen again after a browser preview.
+    func resumeReadingAfterBrowser() {
+        guard let reader, let locator = positionBeforeBrowser else { return }
+        positionBeforeBrowser = nil
+        reader.restorePosition(locator)
     }
 
     func openOriginalInBrowser(_ record: BookRecord) {
@@ -284,6 +309,13 @@ final class AppModel {
         }
     }
 
+    var canGoHome: Bool { book != nil || isBrowsing }
+
+    /// Leaves the current book or webpage and returns to the welcome screen.
+    func goHome() {
+        closeBook()
+    }
+
     func closeBook() {
         readAloud.stop()
         chat.stop()
@@ -294,17 +326,22 @@ final class AppModel {
         book = nil
         record = nil
         chat.detach()
-        isShowingAskAI = false
+        workspace = .closed
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
         recents = store.recentBooks()
         drawingCache.removeAll()
+        positionBeforeBrowser = nil
         closeBrowser()
     }
 
     func removeFromRecents(_ record: BookRecord) {
         store.remove(bookID: record.id)
         recents = store.recentBooks()
+    }
+
+    func importedURL(for record: BookRecord) -> URL? {
+        store.existingImportedURL(for: record)
     }
 
     func flush() {
@@ -374,14 +411,38 @@ final class AppModel {
 
     // MARK: - Ask AI
 
+    /// Pins the on-screen passage before a width change so relayout cannot
+    /// fall back to chapter start. Prefer the last saved locator; JS capture
+    /// is the fallback when that has not been reported yet.
+    func pinReaderForViewportChange() {
+        if let start = record?.position?.start {
+            reader?.pinRestoreOnce(to: start)
+        } else {
+            reader?.pinRestoreCurrentPositionOnce()
+        }
+    }
+
+    func toggleAskAI() {
+        pinReaderForViewportChange()
+        isShowingAskAI.toggle()
+    }
+
+    func toggleAnnotations() {
+        pinReaderForViewportChange()
+        isShowingAnnotations.toggle()
+    }
+
     /// Opens the leading chat panel and attaches the current selection, if any.
     func addSelectionToChat() {
         guard book != nil else { return }
-        isShowingAskAI = true
         guard let reader, let selection = reader.selection else {
+            pinReaderForViewportChange()
+            isShowingAskAI = true
             chat.shouldFocusComposer = true
             return
         }
+        reader.pinRestoreOnce(to: selection.locator.start)
+        isShowingAskAI = true
         let reference = ChatReference(
             quotedText: selection.text,
             chapterTitle: reader.chapterTitle,
@@ -474,23 +535,39 @@ final class AppModel {
         return data
     }
 
-    func updateDrawing(scene: Data, elementCount: Int, for id: UUID) {
-        guard let bookID = book?.bookID else { return }
+    func updateDrawing(
+        scene: Data,
+        elementCount: Int,
+        for id: UUID,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
+        guard let bookID = book?.bookID else {
+            completion?(.failure(DrawingPersistenceError.missingBook))
+            return
+        }
         let hasDrawing = elementCount > 0
+        drawingCache[id] = hasDrawing ? scene : nil
+        let finish: (Result<Void, Error>) -> Void = { [weak self] result in
+            guard let self else { return }
+            switch result {
+            case .success:
+                self.mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
+                    guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+                    annotations[index].hasDrawing = hasDrawing
+                    annotations[index].modifiedAt = Date()
+                }
+                if let annotations = self.record?.annotations {
+                    self.reader?.setAnnotations(annotations)
+                }
+            case .failure:
+                break
+            }
+            completion?(result)
+        }
         if hasDrawing {
-            drawingCache[id] = scene
-            store.drawingStore.saveScene(scene, bookID: bookID, annotationID: id)
+            store.drawingStore.saveScene(scene, bookID: bookID, annotationID: id, completion: finish)
         } else {
-            drawingCache[id] = nil
-            store.drawingStore.deleteScene(bookID: bookID, annotationID: id)
-        }
-        mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
-            guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
-            annotations[index].hasDrawing = hasDrawing
-            annotations[index].modifiedAt = Date()
-        }
-        if let annotations = record?.annotations {
-            reader?.setAnnotations(annotations)
+            store.drawingStore.deleteScene(bookID: bookID, annotationID: id, completion: finish)
         }
     }
 
@@ -598,5 +675,13 @@ final class AppModel {
             spineIndex: reader.spineIndex,
             start: TextPosition(elementPath: [], offset: 0)
         )
+    }
+}
+
+private enum DrawingPersistenceError: LocalizedError {
+    case missingBook
+
+    var errorDescription: String? {
+        "Could not save the drawing because no book is open."
     }
 }

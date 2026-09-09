@@ -9,6 +9,7 @@ public final class DrawingStore: @unchecked Sendable {
         var data: Data
         var bookID: String
         var work: DispatchWorkItem
+        var completion: ((Result<Void, Error>) -> Void)?
     }
 
     private let rootDirectory: URL
@@ -35,16 +36,29 @@ public final class DrawingStore: @unchecked Sendable {
     }
 
     /// Debounced atomic write. Call `flush()` before quitting or closing a note.
-    public func saveScene(_ data: Data, bookID: String, annotationID: UUID) {
+    public func saveScene(
+        _ data: Data,
+        bookID: String,
+        annotationID: UUID,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
         lock.lock()
         pendingSaves[annotationID]?.work.cancel()
         let work = DispatchWorkItem { [weak self] in
-            self?.write(data, bookID: bookID, annotationID: annotationID)
+            let result = Result { try self?.write(data, bookID: bookID, annotationID: annotationID) }
             self?.lock.lock()
             self?.pendingSaves[annotationID] = nil
             self?.lock.unlock()
+            DispatchQueue.main.async {
+                completion?(result.map { _ in () })
+            }
         }
-        pendingSaves[annotationID] = PendingScene(data: data, bookID: bookID, work: work)
+        pendingSaves[annotationID] = PendingScene(
+            data: data,
+            bookID: bookID,
+            work: work,
+            completion: completion
+        )
         lock.unlock()
         queue.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
@@ -57,17 +71,31 @@ public final class DrawingStore: @unchecked Sendable {
         lock.unlock()
         for (annotationID, scene) in pending {
             scene.work.cancel()
-            write(scene.data, bookID: scene.bookID, annotationID: annotationID)
+            let result = Result { try write(scene.data, bookID: scene.bookID, annotationID: annotationID) }
+            DispatchQueue.main.async {
+                scene.completion?(result.map { _ in () })
+            }
         }
     }
 
-    public func deleteScene(bookID: String, annotationID: UUID) {
+    public func deleteScene(
+        bookID: String,
+        annotationID: UUID,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
         lock.lock()
         pendingSaves[annotationID]?.work.cancel()
         pendingSaves[annotationID] = nil
         lock.unlock()
         let url = sceneURL(bookID: bookID, annotationID: annotationID)
-        try? FileManager.default.removeItem(at: url)
+        let result = Result {
+            if FileManager.default.fileExists(atPath: url.path) {
+                try FileManager.default.removeItem(at: url)
+            }
+        }
+        DispatchQueue.main.async {
+            completion?(result.map { _ in () })
+        }
     }
 
     public func deleteAllScenes(bookID: String) {
@@ -90,10 +118,10 @@ public final class DrawingStore: @unchecked Sendable {
         )
     }
 
-    private func write(_ data: Data, bookID: String, annotationID: UUID) {
+    private func write(_ data: Data, bookID: String, annotationID: UUID) throws {
         let directory = bookDirectory(for: bookID)
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = sceneURL(bookID: bookID, annotationID: annotationID)
-        try? data.write(to: url, options: .atomic)
+        try data.write(to: url, options: .atomic)
     }
 }

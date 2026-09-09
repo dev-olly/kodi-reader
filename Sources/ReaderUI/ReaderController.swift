@@ -115,6 +115,9 @@ public final class ReaderController {
     /// away the loaded chapter and reading position.
     public func makeWebView(for book: EPUBBook) -> WKWebView {
         if let existing = webView, self.book?.bookID == book.bookID {
+            #if os(macOS)
+            existing.identifier = ReaderKeyTarget.pageWebViewIdentifier
+            #endif
             return existing
         }
         self.book = book
@@ -134,6 +137,7 @@ public final class ReaderController {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.allowsMagnification = false
         #if os(macOS)
+        webView.identifier = ReaderKeyTarget.pageWebViewIdentifier
         webView.setValue(false, forKey: "drawsBackground")
         #endif
 
@@ -364,6 +368,17 @@ public final class ReaderController {
         evaluate("__reader.goToPosition(\(json(position)), false)")
     }
 
+    /// Re-applies a reading position after the web view was temporarily taken
+    /// out of the window (in-app browser preview).
+    public func restorePosition(_ locator: Locator) {
+        pinRestoreOnce(to: locator.start)
+        if locator.spineIndex == spineIndex {
+            evaluate("__reader.goToPosition(\(json(locator.start)), false)")
+        } else {
+            loadSpineItem(index: locator.spineIndex, position: locator.start)
+        }
+    }
+
     /// Pins resize restore to this position so inspector expansion cannot jump to chapter start.
     public func pinRestore(to position: TextPosition?) {
         if let position, !position.elementPath.isEmpty {
@@ -379,6 +394,12 @@ public final class ReaderController {
     /// imminent width change (opening/closing the sidebar note editor) restores here.
     public func pinRestoreCurrentPositionOnce() {
         evaluate("__reader.pinRestoreCurrentOnce()")
+    }
+
+    /// Uses a specific text position as the next resize anchor.
+    public func pinRestoreOnce(to position: TextPosition) {
+        guard !position.elementPath.isEmpty else { return }
+        evaluate("__reader.pinRestoreOnce(\(json(position)))")
     }
 
     private func pushPinRestore() {

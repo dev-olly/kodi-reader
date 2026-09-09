@@ -20,17 +20,17 @@
   --column-width: 600px;
 
   --font-size: 19px;
-  --line-height: 1.68;
+  --line-height: 1.8;
   --font-family: -apple-system, "SF Pro Text", "Iowan Old Style", Georgia, serif;
   --paragraph-spacing: 0.75em;
   --text-align: start;
   --hyphens: auto;
 
-  --color-text: #1a1a1a;
+  --color-text: #192a24;
   --color-background: #ffffff;
-  --color-surface: #f2f2f2;
-  --color-link: #1a6fd4;
-  --color-selection: rgba(88, 172, 250, 0.35);
+  --color-surface: #f0f5f1;
+  --color-link: #245744;
+  --color-selection: rgba(114, 165, 124, 0.25);
 }
 
 html {

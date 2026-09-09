@@ -240,9 +240,16 @@
   }
 
   function pinRestoreCurrentOnce() {
+    if (pinnedRestoreOnce) return;
     var p = currentPosition();
     if (p && p.elementPath && p.elementPath.length > 0) {
       pinnedRestoreOnce = p;
+    }
+  }
+
+  function pinRestoreOnce(position) {
+    if (position && position.elementPath && position.elementPath.length > 0) {
+      pinnedRestoreOnce = position;
     }
   }
 
@@ -1533,11 +1540,12 @@
 
   var resizeTimer = null;
   function onResize() {
+    // Snapshot before the new width is applied; later probes often see
+    // scrollLeft already reset to 0 and would restore chapter start.
+    pinRestoreCurrentOnce();
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
-      // Capture the anchor after the window has settled, not on the first
-      // intermediate resize event, so we restore what is actually on screen.
-      // A pinned locator (Draw) wins over the on-screen probe.
+      // A pinned locator (Draw, or a Swift pin before a sidebar toggle) wins.
       relayout(pinnedRestore || pinnedRestoreOnce || currentPosition());
     }, 90);
   }
@@ -1588,6 +1596,7 @@
     goToFragment: goToFragment,
     goToPosition: goToPosition,
     pinRestore: pinRestore,
+    pinRestoreOnce: pinRestoreOnce,
     pinRestoreCurrentOnce: pinRestoreCurrentOnce,
     goToEnd: function () {
       measure();

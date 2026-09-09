@@ -1,7 +1,7 @@
 import EpubKit
 import SwiftUI
 
-/// Cursor-style chat docked on the leading edge of the reader.
+/// Conversation surface in the shared reading workspace.
 struct AskAIPanel: View {
     @Environment(AppModel.self) private var model
     @FocusState private var composerFocused: Bool
@@ -11,15 +11,13 @@ struct AskAIPanel: View {
     var body: some View {
         VStack(spacing: 0) {
             header
-            Divider()
             messageList
             if let error = model.chat.errorMessage, !error.isEmpty {
                 errorBanner(error)
             }
-            Divider()
             composer
         }
-        .background(.background)
+        .background(model.settings.theme.uiBackground)
         .onChange(of: model.chat.shouldFocusComposer) { _, should in
             if should {
                 composerFocused = true
@@ -30,7 +28,7 @@ struct AskAIPanel: View {
             bottomID = UUID()
         }
         .onAppear {
-            if model.chat.shouldFocusComposer {
+            if model.isShowingAskAI, model.chat.shouldFocusComposer {
                 composerFocused = true
                 model.chat.shouldFocusComposer = false
             }
@@ -40,57 +38,138 @@ struct AskAIPanel: View {
     // MARK: - Header
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("Ask AI")
-                    .font(.headline)
-                Spacer(minLength: 0)
-                Button {
-                    showingHistory.toggle()
-                } label: {
-                    Image(systemName: "clock")
-                }
-                .buttonStyle(.borderless)
-                .help("Chat history")
-                .disabled(model.chat.threads.isEmpty)
-                .popover(isPresented: $showingHistory, arrowEdge: .bottom) {
-                    historyList
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Ask AI")
+                        .font(.system(size: 24, weight: .regular, design: .serif))
+                        .foregroundStyle(model.settings.theme.uiForeground)
+                    Text(model.chat.messages.isEmpty ? "A fresh thread" : "\(model.chat.messages.count) messages")
+                        .font(.caption)
+                        .foregroundStyle(model.settings.theme.muted)
                 }
 
-                Button {
-                    showingHistory = false
-                    model.chat.newConversation()
-                } label: {
-                    Image(systemName: "square.and.pencil")
-                }
-                .buttonStyle(.borderless)
-                .help("New chat")
-                .disabled(model.chat.messages.isEmpty && model.chat.input.isEmpty)
+                Spacer(minLength: 8)
 
-                Button {
-                    model.isShowingManageModels = true
-                } label: {
-                    Image(systemName: "gearshape")
+                HStack(spacing: 2) {
+                    headerIcon(
+                        "clock",
+                        help: "Chat history",
+                        disabled: model.chat.threads.isEmpty
+                    ) {
+                        showingHistory.toggle()
+                    }
+                    .popover(isPresented: $showingHistory, arrowEdge: .bottom) {
+                        historyList
+                    }
+
+                    headerIcon(
+                        "square.and.pencil",
+                        help: "New chat",
+                        disabled: model.chat.messages.isEmpty && model.chat.input.isEmpty
+                    ) {
+                        showingHistory = false
+                        model.chat.newConversation()
+                    }
+
+                    headerIcon("gearshape", help: "Manage models") {
+                        model.isShowingManageModels = true
+                    }
                 }
-                .buttonStyle(.borderless)
-                .help("Manage models")
+                .padding(3)
+                .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(model.settings.theme.border.opacity(0.8), lineWidth: 1)
+                }
             }
 
             if model.aiConfig.configs.isEmpty {
-                Button("Add a model…") {
+                Button {
                     model.isShowingManageModels = true
-                }
-                .font(.caption)
-            } else {
-                Picker("Model", selection: selectedModelBinding) {
-                    ForEach(model.aiConfig.configs) { config in
-                        Text(config.name).tag(config.id as UUID?)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "plus.circle.fill")
+                        Text("Add Model")
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(model.settings.theme.muted)
                     }
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .contentShape(Rectangle())
                 }
-                .labelsHidden()
+                .buttonStyle(.plain)
+                .foregroundStyle(model.settings.theme.accent)
+                .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(model.settings.theme.border, lineWidth: 1)
+                }
+            } else {
+                Menu {
+                    Picker("Model", selection: selectedModelBinding) {
+                        ForEach(model.aiConfig.configs) { config in
+                            Text(config.name).tag(config.id as UUID?)
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "sparkle.magnifyingglass")
+                            .font(.system(size: 13, weight: .medium))
+                            .foregroundStyle(model.settings.theme.accent)
+                        Text(selectedModelName)
+                            .font(.system(size: 12, weight: .medium))
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        Image(systemName: "chevron.up.chevron.down")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(model.settings.theme.muted)
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity, minHeight: 36)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.settings.theme.uiForeground)
+                .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(model.settings.theme.border, lineWidth: 1)
+                }
             }
         }
-        .padding(12)
+        .padding(.horizontal, 20)
+        .padding(.top, 20)
+        .padding(.bottom, 16)
+        .background {
+            model.settings.theme.uiBackground
+                .overlay(alignment: .bottom) {
+                    Rectangle()
+                        .fill(model.settings.theme.border.opacity(0.8))
+                        .frame(height: 1)
+                }
+        }
+    }
+
+    private func headerIcon(
+        _ systemName: String,
+        help: String,
+        disabled: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .medium))
+                .frame(width: 30, height: 30)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(disabled ? model.settings.theme.muted.opacity(0.4) : model.settings.theme.muted)
+        .disabled(disabled)
+        .help(help)
     }
 
     private var historyList: some View {
@@ -154,20 +233,51 @@ struct AskAIPanel: View {
         )
     }
 
+    private var selectedModelName: String {
+        guard let selectedID = model.aiConfig.selectedModelID,
+              let config = model.aiConfig.configs.first(where: { $0.id == selectedID })
+        else {
+            return model.aiConfig.configs.first?.name ?? "Choose Model"
+        }
+        return config.name
+    }
+
     // MARK: - Messages
 
     private var messageList: some View {
         Group {
             if model.chat.messages.isEmpty {
-                ContentUnavailableView(
-                    "Ask about this book",
-                    systemImage: "sparkles",
-                    description: Text("Select a passage and press ⌘L to attach it, then ask a question.")
-                )
+                VStack(alignment: .leading, spacing: 20) {
+                    Spacer(minLength: 8)
+                    VStack(alignment: .leading, spacing: 10) {
+                        Image(systemName: "quote.bubble.fill")
+                            .font(.system(size: 22))
+                            .foregroundStyle(model.settings.theme.accent)
+                        Text("What caught your attention?")
+                            .font(.system(size: 27, weight: .regular, design: .serif))
+                            .foregroundStyle(model.settings.theme.uiForeground)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Bring a passage here, or ask from where you are.")
+                            .font(.system(size: 13))
+                            .foregroundStyle(model.settings.theme.muted)
+                            .lineSpacing(3)
+                    }
+
+                    VStack(alignment: .leading, spacing: 8) {
+                        promptSuggestion("Explain the argument in this section")
+                        promptSuggestion("What is the author implying here?")
+                        promptSuggestion("Turn this into a note I can keep")
+                    }
+
+                    Spacer()
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 24)
+                .padding(.vertical, 26)
             } else {
                 ScrollViewReader { proxy in
                     ScrollView {
-                        LazyVStack(alignment: .leading, spacing: 14) {
+                        LazyVStack(alignment: .leading, spacing: 24) {
                             ForEach(model.chat.messages) { message in
                                 messageBubble(message)
                                     .id(message.id)
@@ -176,7 +286,7 @@ struct AskAIPanel: View {
                                 .frame(height: 1)
                                 .id(bottomID)
                         }
-                        .padding(12)
+                        .padding(20)
                     }
                     .onChange(of: model.chat.messages.last?.text) { _, _ in
                         proxy.scrollTo(bottomID, anchor: .bottom)
@@ -190,9 +300,37 @@ struct AskAIPanel: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    private func promptSuggestion(_ text: String) -> some View {
+        Button {
+            model.chat.input = text
+            composerFocused = true
+        } label: {
+            HStack(spacing: 8) {
+                Text(text)
+                    .font(.system(size: 12))
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(model.settings.theme.muted)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(model.settings.theme.uiForeground)
+        .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(model.settings.theme.border.opacity(0.8), lineWidth: 1)
+        }
+    }
+
     @ViewBuilder
     private func messageBubble(_ message: ChatMessage) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 14) {
             if !message.references.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(message.references) { reference in
@@ -202,27 +340,39 @@ struct AskAIPanel: View {
             }
 
             if message.role == .assistant {
+                Label("KODI AI", systemImage: "sparkles")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(model.settings.theme.accent)
                 if message.text.isEmpty, model.chat.isStreaming {
                     ProgressView()
                         .controlSize(.small)
                 } else {
                     NoteMarkdownPreview(text: message.text)
+                        .font(.system(size: 13))
+                        .lineSpacing(5)
                         .textSelection(.enabled)
                 }
             } else {
                 Text(message.text)
+                    .font(.system(size: 13))
+                    .lineSpacing(4)
                     .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: 260, alignment: .leading)
+                    .padding(12)
+                    .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(model.settings.theme.border.opacity(0.7), lineWidth: 1)
+                    }
             }
         }
-        .padding(10)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            message.role == .user
-                ? Color.primary.opacity(0.06)
-                : Color.clear,
-            in: .rect(cornerRadius: 8)
-        )
+        .padding(.leading, message.role == .assistant ? 14 : 0)
+        .frame(maxWidth: .infinity, alignment: message.role == .assistant ? .leading : .trailing)
+        .overlay(alignment: .leading) {
+            if message.role == .assistant {
+                Rectangle().fill(model.settings.theme.accent.opacity(0.45)).frame(width: 2)
+            }
+        }
     }
 
     private func errorBanner(_ text: String) -> some View {
@@ -251,9 +401,9 @@ struct AskAIPanel: View {
     // MARK: - Composer
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 10) {
             if !model.chat.pendingReferences.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
+                VStack(alignment: .leading, spacing: 8) {
                     ForEach(model.chat.pendingReferences) { reference in
                         referenceChip(reference, removable: true)
                     }
@@ -274,25 +424,46 @@ struct AskAIPanel: View {
                         model.chat.stop()
                     } label: {
                         Image(systemName: "stop.fill")
+                            .frame(width: 26, height: 26)
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
+                    .foregroundStyle(model.settings.theme.accent)
                     .help("Stop")
                 } else {
                     Button {
                         model.chat.send()
                     } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.title2)
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundStyle(model.settings.theme.uiBackground)
+                            .frame(width: 26, height: 26)
+                            .background(
+                                Circle()
+                                    .fill(model.chat.canSend ? model.settings.theme.accent : model.settings.theme.muted.opacity(0.35))
+                            )
                     }
-                    .buttonStyle(.borderless)
+                    .buttonStyle(.plain)
                     .disabled(!model.chat.canSend)
                     .help("Send")
                 }
             }
-            .padding(8)
-            .background(.quaternary.opacity(0.5), in: .rect(cornerRadius: 8))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(composerFocused ? model.settings.theme.accent : model.settings.theme.border, lineWidth: 1)
+            }
         }
-        .padding(12)
+        .padding(14)
+        .background {
+            model.settings.theme.surface
+                .overlay(alignment: .top) {
+                    Rectangle()
+                        .fill(model.settings.theme.border.opacity(0.8))
+                        .frame(height: 1)
+                }
+        }
     }
 
     private var inputBinding: Binding<String> {
@@ -304,25 +475,22 @@ struct AskAIPanel: View {
 
     private func referenceChip(_ reference: ChatReference, removable: Bool) -> some View {
         HStack(alignment: .top, spacing: 6) {
-            Image(systemName: "quote.opening")
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 8) {
                 if let chapter = reference.chapterTitle, !chapter.isEmpty {
                     Text(chapter)
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(model.settings.theme.muted)
                         .lineLimit(1)
                 }
                 Text(reference.preview)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
+                    .font(.system(size: 17, design: .serif))
+                    .foregroundStyle(model.settings.theme.uiForeground)
+                    .lineSpacing(5)
+                    .lineLimit(removable ? 3 : 5)
                 if reference.hasSurroundingContext {
                     Text("with nearby paragraphs")
                         .font(.caption2)
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(model.settings.theme.muted)
                 }
             }
             Spacer(minLength: 0)
@@ -338,8 +506,10 @@ struct AskAIPanel: View {
                 .help("Remove reference")
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(.quaternary.opacity(0.6), in: .rect(cornerRadius: 6))
+        .padding(.leading, 12)
+        .padding(.vertical, 4)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(Color.yellow.opacity(0.65)).frame(width: 3)
+        }
     }
 }

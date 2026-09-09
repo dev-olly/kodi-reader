@@ -35,6 +35,8 @@ struct ManageModelsView: View {
                     }
                 }
             }
+            .scrollContentBackground(.hidden)
+            .background(model.settings.theme.surface)
             .navigationTitle("Manage Models")
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -56,6 +58,8 @@ struct ManageModelsView: View {
             }
         }
         .frame(minWidth: 480, minHeight: 420)
+        .tint(model.settings.theme.accent)
+        .background(model.settings.theme.surface)
     }
 
     private func row(for config: AIModelConfig) -> some View {

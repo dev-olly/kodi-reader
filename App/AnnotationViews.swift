@@ -1,5 +1,6 @@
 import AppKit
 import EpubKit
+import ReaderUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -267,6 +268,7 @@ private enum NotesFilter: String, CaseIterable, Identifiable {
 
 /// Sidebar listing bookmarks and a searchable notes library for the open book.
 struct AnnotationsInspector: View {
+    @Environment(AppModel.self) private var model
     let annotations: [Annotation]
     let bookmarks: [Bookmark]
     let chapterTitles: [String]
@@ -324,15 +326,22 @@ struct AnnotationsInspector: View {
                     }
                 }
             }
-            .navigationTitle("Notes")
-            .toolbar {
-                ToolbarItem(placement: .primaryAction) {
+            .background(model.settings.theme.uiBackground)
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack {
+                    Text("Your margin")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(model.settings.theme.muted)
+                    Spacer()
                     Button(action: onExport) {
                         Label("Export", systemImage: "square.and.arrow.up")
+                            .labelStyle(.iconOnly)
                     }
+                    .buttonStyle(.plain)
                     .quickHelp("Export notes as Markdown")
                     .disabled(annotations.filter(\.hasContent).isEmpty)
                 }
+                .padding(14)
             }
         }
     }
@@ -402,7 +411,8 @@ struct AnnotationsInspector: View {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
                             Text(annotation.title)
-                                .font(.callout.weight(.medium))
+                                .font(.system(size: 16, design: .serif))
+                                .lineSpacing(4)
                                 .lineLimit(3)
                             if annotation.isOrphaned {
                                 Image(systemName: "exclamationmark.triangle.fill")

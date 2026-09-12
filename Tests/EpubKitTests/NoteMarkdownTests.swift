@@ -3,12 +3,18 @@ import XCTest
 
 final class NoteMarkdownTests: XCTestCase {
     func testPlainPreviewStripsCommonMarkers() {
-        let markdown = "**Bold** and *italic* with a [link](https://example.com) and `code`"
+        let markdown = """
+        **Bold** and *italic* with ~~strike~~, a [link](https://example.com), and `code`
+        - [x] task
+        """
         let preview = NoteMarkdown.plainPreview(of: markdown)
         XCTAssertFalse(preview.contains("**"))
+        XCTAssertFalse(preview.contains("~~"))
         XCTAssertFalse(preview.contains("["))
         XCTAssertTrue(preview.contains("Bold"))
         XCTAssertTrue(preview.contains("italic"))
+        XCTAssertTrue(preview.contains("strike"))
+        XCTAssertTrue(preview.contains("task"))
         XCTAssertTrue(preview.contains("link"))
         XCTAssertTrue(preview.contains("code"))
     }
@@ -141,6 +147,36 @@ final class NoteMarkdownTests: XCTestCase {
                     alignments: [.leading, .trailing]
                 ),
             ]
+        )
+    }
+
+    func testPreviewBlocksParsesTaskListsBeforePlainBullets() {
+        let markdown = """
+        - [x] Keep data
+        - [ ] Ship editor
+        """
+        XCTAssertEqual(
+            NoteMarkdown.previewBlocks(of: markdown),
+            [
+                .taskList([
+                    .init(checked: true, text: "Keep data"),
+                    .init(checked: false, text: "Ship editor"),
+                ]),
+            ]
+        )
+    }
+
+    func testUnsupportedConstructDetection() {
+        let markdown = """
+        <aside>raw html</aside>
+        ![cover](cover.png)
+        A footnote[^1]
+
+        [ref]: https://example.com
+        """
+        XCTAssertEqual(
+            NoteMarkdown.unsupportedConstructs(in: markdown).map(\.label),
+            ["HTML", "images", "footnotes", "reference links"]
         )
     }
 

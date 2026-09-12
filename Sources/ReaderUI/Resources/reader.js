@@ -173,6 +173,10 @@
 
   // Intended page while a smooth scroll is in flight; null otherwise.
   var pendingPageTarget = null;
+  // Exact target is separate because a preserved reading column can begin
+  // halfway through a two-page spread.
+  var pendingScrollTarget = null;
+  var scrollSettleTimer = null;
 
   function syncPageFromScroll() {
     var actual = pageFromScroll();
@@ -180,9 +184,10 @@
       state.currentPage = actual;
       return actual;
     }
-    var expected = pendingPageTarget * currentStride();
+    var expected = pendingScrollTarget;
     if (Math.abs(getScrollLeft() - expected) <= 2) {
       pendingPageTarget = null;
+      pendingScrollTarget = null;
       state.currentPage = actual;
       return actual;
     }
@@ -230,6 +235,33 @@
   // One-shot resize anchor: captured before an imminent width change (e.g.
   // opening the sidebar note editor) and consumed by the next relayout.
   var pinnedRestoreOnce = null;
+  // Last position observed while the viewport was stable. WKWebView can reset
+  // horizontal scroll to zero before either Swift's pin call or the resize
+  // event reaches this runtime, so probing only at resize time is too late.
+  var lastViewportPosition = null;
+  var viewportResizePending = false;
+  var viewportCaptureTimer = null;
+
+  function isRestorablePosition(position) {
+    return !!(
+      position &&
+      position.elementPath &&
+      position.elementPath.length > 0
+    );
+  }
+
+  function copyPosition(position) {
+    if (!isRestorablePosition(position)) return null;
+    return {
+      elementPath: position.elementPath.slice(),
+      offset: position.offset || 0,
+    };
+  }
+
+  function rememberViewportPosition(position) {
+    var copy = copyPosition(position);
+    if (copy) lastViewportPosition = copy;
+  }
 
   function pinRestore(position) {
     if (position && position.elementPath && position.elementPath.length > 0) {
@@ -242,9 +274,17 @@
   function pinRestoreCurrentOnce() {
     if (pinnedRestoreOnce) return;
     var p = currentPosition();
-    if (p && p.elementPath && p.elementPath.length > 0) {
-      pinnedRestoreOnce = p;
+    // A width change can zero scrollLeft while currentPage still describes the
+    // page the user was reading. In that gap, the live probe points at the
+    // chapter start; prefer the position captured before layout moved.
+    if (
+      lastViewportPosition &&
+      state.currentPage > 0 &&
+      getScrollLeft() <= 2
+    ) {
+      p = lastViewportPosition;
     }
+    pinnedRestoreOnce = copyPosition(p) || copyPosition(lastViewportPosition);
   }
 
   function pinRestoreOnce(position) {
@@ -275,7 +315,12 @@
     void document.documentElement.offsetWidth;
 
     var generation = ++relayoutGeneration;
+    if (scrollSettleTimer) {
+      clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = null;
+    }
     pendingPageTarget = null;
+    pendingScrollTarget = null;
     var last = null;
     var stableCount = 0;
     var attempts = 0;
@@ -287,6 +332,8 @@
       pendingRestore = null;
       measure();
       pendingPageTarget = null;
+      pendingScrollTarget = null;
+      viewportResizePending = false;
       if (restore) {
         goToPosition(restore, false);
       } else {
@@ -335,30 +382,53 @@
 
   // ------------------------------------------------------------ navigation
 
+  function scrollToOffset(offset, animated) {
+    var stride = currentStride();
+    var target = clamp(offset, 0, maxScrollLeft());
+    var useSmooth = animated && settings.animatePageTurns;
+
+    if (useSmooth) {
+      pendingPageTarget = clamp(Math.round(target / stride), 0, state.pageCount - 1);
+      pendingScrollTarget = target;
+      state.currentPage = pendingPageTarget;
+      setScrollLeft(target, "smooth");
+      if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = setTimeout(function () {
+        if (pendingScrollTarget !== target) return;
+        // Hidden/background WKWebViews do not reliably emit scroll events.
+        // Snap to the requested endpoint so state and the persisted locator
+        // are still reported from the page actually requested.
+        setScrollLeft(target, "auto");
+        pendingPageTarget = null;
+        pendingScrollTarget = null;
+        scrollSettleTimer = null;
+        notifyPageChanged();
+      }, 220);
+      return;
+    }
+
+    if (scrollSettleTimer) {
+      clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = null;
+    }
+    pendingPageTarget = null;
+    pendingScrollTarget = null;
+    setScrollLeft(target, "auto");
+    state.currentPage = pageFromScroll();
+  }
+
   function scrollToPage(page, animated) {
     var stride = currentStride();
     // Clamp to the real scrollable range so an over-counted pageCount can never
     // send the caret past the last column, which would read as "the counter
     // moved but the page didn't".
     var requested = clamp(page, 0, state.pageCount - 1);
-    var target = clamp(requested * stride, 0, maxScrollLeft());
-    var useSmooth = animated && settings.animatePageTurns;
-
-    if (useSmooth) {
-      pendingPageTarget = clamp(Math.round(target / stride), 0, state.pageCount - 1);
-      state.currentPage = pendingPageTarget;
-      setScrollLeft(target, "smooth");
-      return;
-    }
-
-    pendingPageTarget = null;
-    setScrollLeft(target, "auto");
-    state.currentPage = pageFromScroll();
+    scrollToOffset(requested * stride, animated);
   }
 
   function goToPage(page, animated) {
     scrollToPage(page, animated !== false);
-    notifyPageChanged();
+    if (pendingPageTarget == null) notifyPageChanged();
   }
 
   /*
@@ -379,15 +449,21 @@
 
   function nextPage() {
     remeasureBounds();
-    if (state.currentPage >= state.pageCount - 1) return false;
-    goToPage(state.currentPage + 1, true);
+    var current = pendingScrollTarget == null ? getScrollLeft() : pendingScrollTarget;
+    var target = Math.min(maxScrollLeft(), current + currentStride());
+    if (target <= current + 2) return false;
+    scrollToOffset(target, true);
+    if (pendingPageTarget == null) notifyPageChanged();
     return true;
   }
 
   function previousPage() {
     remeasureBounds();
-    if (state.currentPage <= 0) return false;
-    goToPage(state.currentPage - 1, true);
+    var current = pendingScrollTarget == null ? getScrollLeft() : pendingScrollTarget;
+    var target = Math.max(0, current - currentStride());
+    if (target >= current - 2) return false;
+    scrollToOffset(target, true);
+    if (pendingPageTarget == null) notifyPageChanged();
     return true;
   }
 
@@ -422,13 +498,17 @@
     if (pendingPageTarget == null) {
       syncPageFromScroll();
     }
+    var position = currentPosition();
+    if (!viewportResizePending && pendingPageTarget == null) {
+      rememberViewportPosition(position);
+    }
     post({
       type: "pageChanged",
       spineIndex: state.spineIndex,
       page: state.currentPage,
       pageCount: state.pageCount,
       progression: state.pageCount > 1 ? state.currentPage / (state.pageCount - 1) : 0,
-      position: currentPosition(),
+      position: position,
     });
   }
 
@@ -632,7 +712,16 @@
         /* Fall through with the empty rect; pageForRect handles it. */
       }
     }
-    goToPage(pageForRect(rect), animated === true);
+    // Restore the physical reading column at the leading edge. Aligning only
+    // to a whole viewport can put this anchor in the right-hand column after
+    // the sidebar closes, exposing an earlier page on the left and making the
+    // reader appear to jump back to the chapter start.
+    var stride = currentStride();
+    var columnStride = stride / Math.max(1, state.columns);
+    var absolute = rect.left + getScrollLeft();
+    var target = Math.floor(Math.max(0, absolute) / columnStride) * columnStride;
+    scrollToOffset(target, animated === true);
+    if (pendingPageTarget == null) notifyPageChanged();
   }
 
   // ------------------------------------------------------------- selection
@@ -1540,14 +1629,42 @@
 
   var resizeTimer = null;
   function onResize() {
-    // Snapshot before the new width is applied; later probes often see
-    // scrollLeft already reset to 0 and would restore chapter start.
-    pinRestoreCurrentOnce();
+    viewportResizePending = true;
+    if (viewportCaptureTimer) {
+      clearTimeout(viewportCaptureTimer);
+      viewportCaptureTimer = null;
+    }
+    // The event may arrive after WebKit has reset scrollLeft. Use the last
+    // settled position instead of trusting a now-first-page caret probe.
+    if (!pinnedRestore && !pinnedRestoreOnce && lastViewportPosition) {
+      pinnedRestoreOnce = copyPosition(lastViewportPosition);
+    } else {
+      pinRestoreCurrentOnce();
+    }
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
       // A pinned locator (Draw, or a Swift pin before a sidebar toggle) wins.
       relayout(pinnedRestore || pinnedRestoreOnce || currentPosition());
     }, 90);
+  }
+
+  function onScroll() {
+    if (viewportResizePending) return;
+    if (viewportCaptureTimer) clearTimeout(viewportCaptureTimer);
+    viewportCaptureTimer = setTimeout(function () {
+      viewportCaptureTimer = null;
+      if (viewportResizePending) return;
+      // Smooth page turns report once at their intended target before WebKit
+      // finishes scrolling. Capture and report again after it settles so the
+      // resize fallback and persisted locator both describe the visible page.
+      if (scrollSettleTimer) {
+        clearTimeout(scrollSettleTimer);
+        scrollSettleTimer = null;
+      }
+      pendingPageTarget = null;
+      pendingScrollTarget = null;
+      notifyPageChanged();
+    }, 120);
   }
 
   // ------------------------------------------------------------------ boot
@@ -1573,6 +1690,7 @@
       document.addEventListener("selectionchange", handleSelectionChange);
       document.addEventListener("click", onClick, true);
       window.addEventListener("resize", onResize);
+      window.addEventListener("scroll", onScroll, { passive: true });
       window.addEventListener("wheel", onWheel, { passive: false });
 
       state.ready = true;

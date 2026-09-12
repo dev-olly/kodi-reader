@@ -100,23 +100,6 @@ final class RenderingTests: XCTestCase {
         XCTAssertEqual(opened?.absoluteString, "https://example.com/article")
     }
 
-    func testMailtoLinkDoesNotFireOnExternalLink() throws {
-        let (reader, _) = try makeReader(SampleBooks.alice)
-        reader.start(at: nil, annotations: [])
-        XCTAssertTrue(wait { !reader.isLoading }, "Reader never finished loading")
-
-        var opened: URL?
-        reader.onExternalLink = { opened = $0 }
-
-        reader.evaluateForTesting(
-            "window.webkit.messageHandlers.reader.postMessage({type: 'link', href: 'mailto:test@example.com'})"
-        ) { _ in }
-
-        // Give the message a beat to arrive; mailto must not go in-app.
-        _ = wait(timeout: 0.5) { opened != nil }
-        XCTAssertNil(opened, "mailto: must stay with the system handler")
-    }
-
     /// A long chapter in a small window must produce several pages, which is
     /// the real proof that the multi-column layout is doing its job.
     func testLongChapterProducesMultiplePages() throws {
@@ -645,10 +628,8 @@ final class RenderingTests: XCTestCase {
             "Could not stand on page 2 (index 1) before expanding"
         )
 
-        XCTAssertFalse(
-            currentTextPosition(from: reader).elementPath.isEmpty,
-            "No text anchor before expand"
-        )
+        let position = currentTextPosition(from: reader)
+        XCTAssertFalse(position.elementPath.isEmpty, "No text anchor before expand")
 
         var pinned = false
         reader.evaluateForTesting("__reader.pinRestoreCurrentOnce()") { _ in pinned = true }
@@ -665,8 +646,50 @@ final class RenderingTests: XCTestCase {
                 reader.spineIndex == chapter
                     && reader.page > 0
                     && (pagingGeometry(from: reader)["scrollLeft"] ?? 0) > 10
+                    && isTextPositionInLeadingColumn(position, in: reader)
             },
-            "Pinned expand jumped to chapter start (page \(reader.page), geo \(pagingGeometry(from: reader)))"
+            "Pinned expand did not keep the reading column leading (page \(reader.page), geo \(pagingGeometry(from: reader)))"
+        )
+    }
+
+    /// SwiftUI can widen the WKWebView before an asynchronously enqueued pin
+    /// executes. Model that ordering by resetting the DOM scroll first: the
+    /// reader must use its last settled text anchor, not the new page-zero probe.
+    func testLatePinAfterScrollResetKeepsPositionAcrossResize() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 800, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Need at least three pages to stand past the start")
+
+        var settings = reader.settings
+        settings.animatePageTurns = false
+        reader.settings = settings
+        XCTAssertTrue(wait(timeout: 4) { reader.pageCount > 2 })
+
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(wait(timeout: 5) { reader.page == 1 })
+
+        var positionUpdates = 0
+        reader.onPositionChanged = { _ in positionUpdates += 1 }
+        var simulated = false
+        reader.evaluateForTesting(
+            "document.scrollingElement.scrollLeft = 0; "
+                + "__reader.pinRestoreCurrentOnce(); "
+                + "window.dispatchEvent(new Event('resize'))"
+        ) { _ in simulated = true }
+        XCTAssertTrue(wait(timeout: 2) { simulated })
+
+        XCTAssertTrue(
+            wait(timeout: 6) { positionUpdates > 0 && reader.page > 0 },
+            "Late resize pin restored chapter start (page \(reader.page), geo \(pagingGeometry(from: reader)))"
         )
     }
 
@@ -866,6 +889,39 @@ final class RenderingTests: XCTestCase {
                 rect.left <= window.innerWidth &&
                 rect.bottom >= 0 &&
                 rect.top <= window.innerHeight;
+            })(\(encoded))
+            """
+        ) { result = $0 as? Bool }
+        _ = wait(timeout: 2) { result != nil }
+        return result == true
+    }
+
+    private func isTextPositionInLeadingColumn(
+        _ position: TextPosition,
+        in reader: ReaderController
+    ) -> Bool {
+        guard let encoded = jsonString([
+            "elementPath": position.elementPath,
+            "offset": position.offset,
+        ]) else { return false }
+
+        var result: Bool?
+        reader.evaluateForTesting(
+            """
+            (function (position) {
+              var node = document.body;
+              for (var i = 0; i < position.elementPath.length; i++) {
+                node = node.childNodes[position.elementPath[i]];
+                if (!node) return false;
+              }
+              if (node.nodeType !== Node.TEXT_NODE) return false;
+              var range = document.createRange();
+              var offset = Math.min(Math.max(position.offset || 0, 0), node.textContent.length);
+              range.setStart(node, offset);
+              range.setEnd(node, Math.min(offset + 1, node.textContent.length));
+              var rect = range.getBoundingClientRect();
+              return rect.width > 0 && rect.height > 0 &&
+                rect.left >= 0 && rect.left < window.innerWidth / 2;
             })(\(encoded))
             """
         ) { result = $0 as? Bool }

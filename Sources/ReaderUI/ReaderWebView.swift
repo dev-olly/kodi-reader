@@ -44,6 +44,18 @@ public enum ReaderKeyTarget {
         return ownsNavigation(view)
     }
 
+    /// A detached sidebar editor can remain the window's first responder for a
+    /// short time after SwiftUI removes it. It must not keep receiving arrows:
+    /// AppKit otherwise rejects the key and plays the system alert sound.
+    public static func shouldSuppressPageTurns(
+        for responder: NSResponder?,
+        in window: NSWindow?
+    ) -> Bool {
+        guard let view = responder as? NSView, let viewWindow = view.window else { return false }
+        if let window, viewWindow !== window { return false }
+        return shouldSuppressPageTurns(for: view)
+    }
+
     public static func isInsideReaderPage(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let node = current {
@@ -55,16 +67,23 @@ public enum ReaderKeyTarget {
 
     /// Notes list, markdown editor, Excalidraw, search fields, and similar.
     public static func ownsNavigation(_ view: NSView) -> Bool {
+        navigationOwner(from: view) != nil
+    }
+
+    /// Nearest control that should receive arrows, page keys, and space.
+    public static func navigationOwner(from view: NSView) -> NSView? {
         var current: NSView? = view
+        var scrollView: NSScrollView?
         while let node = current {
-            if node is NSTextView || node is NSTextField { return true }
+            if node is NSTextView || node is NSTextField { return node }
             if node is NSTableView || node is NSOutlineView || node is NSCollectionView {
-                return true
+                return node
             }
-            if node is WKWebView || node is NSScrollView { return true }
+            if node is WKWebView { return node }
+            if scrollView == nil, let node = node as? NSScrollView { scrollView = node }
             current = node.superview
         }
-        return false
+        return scrollView
     }
 
     /// Directs key events at the sidebar control the user clicked.
@@ -183,8 +202,9 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
         private var mouseMonitor: Any?
         private var updateObserver: NSObjectProtocol?
         private var lastSuppress = false
-        /// Last click was on the sidebar (or another non-reader control).
-        private var clickedAwayFromReader = false
+        /// Sidebar control most recently clicked. Weak storage lets removal of
+        /// the panel immediately return navigation to the reader.
+        private weak var clickedNavigationOwner: NSView?
 
         override var acceptsFirstResponder: Bool { false }
 
@@ -237,10 +257,14 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
             guard let hit = content.hitTest(point) else { return event }
 
             if ReaderKeyTarget.isInsideReaderPage(hit) {
-                clickedAwayFromReader = false
-            } else if ReaderKeyTarget.ownsNavigation(hit) {
-                clickedAwayFromReader = true
+                clickedNavigationOwner = nil
+            } else if let owner = ReaderKeyTarget.navigationOwner(from: hit) {
+                clickedNavigationOwner = owner
                 ReaderKeyTarget.claimKeyFocus(from: hit, in: event.window)
+            } else {
+                // Toolbar and close buttons do not own arrow navigation. This
+                // also clears a prior editor/list click before a panel closes.
+                clickedNavigationOwner = nil
             }
             publishSuppressIfNeeded()
             return event
@@ -250,8 +274,11 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
             publishSuppressIfNeeded()
             guard enabled else { return event }
 
-            let responder = event.window?.firstResponder ?? NSApp.keyWindow?.firstResponder
-            if clickedAwayFromReader || ReaderKeyTarget.shouldSuppressPageTurns(for: responder) {
+            let eventWindow = event.window ?? NSApp.keyWindow
+            let responder = eventWindow?.firstResponder
+            if hasActiveNavigationOwner(in: eventWindow)
+                || ReaderKeyTarget.shouldSuppressPageTurns(for: responder, in: eventWindow)
+            {
                 return event
             }
 
@@ -282,15 +309,23 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
         }
 
         private func publishSuppressIfNeeded() {
-            let responder = window?.firstResponder ?? NSApp.keyWindow?.firstResponder
+            let activeWindow = window ?? NSApp.keyWindow
+            let responder = activeWindow?.firstResponder
             if let view = responder as? NSView, ReaderKeyTarget.isInsideReaderPage(view) {
-                clickedAwayFromReader = false
+                clickedNavigationOwner = nil
             }
-            let next = clickedAwayFromReader
-                || ReaderKeyTarget.shouldSuppressPageTurns(for: responder)
+            let next = hasActiveNavigationOwner(in: activeWindow)
+                || ReaderKeyTarget.shouldSuppressPageTurns(for: responder, in: activeWindow)
             guard next != lastSuppress else { return }
             lastSuppress = next
             onSuppressChange?(next)
+        }
+
+        private func hasActiveNavigationOwner(in activeWindow: NSWindow?) -> Bool {
+            guard let owner = clickedNavigationOwner, let ownerWindow = owner.window else {
+                return false
+            }
+            return activeWindow == nil || ownerWindow === activeWindow
         }
     }
 }

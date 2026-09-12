@@ -55,6 +55,17 @@ targets:
         product: MLXUtilsLibrary
       - sdk: AVFoundation.framework
       - sdk: MediaPlayer.framework
+    postBuildScripts:
+      - name: Embed KokoroSwift
+        script: |
+          set -euo pipefail
+          SOURCE_FRAMEWORK="${BUILT_PRODUCTS_DIR}/PackageFrameworks/KokoroSwift.framework"
+          DESTINATION="${TARGET_BUILD_DIR}/${FRAMEWORKS_FOLDER_PATH}"
+          if [[ -d "$SOURCE_FRAMEWORK" ]]; then
+            mkdir -p "$DESTINATION"
+            ditto "$SOURCE_FRAMEWORK" "$DESTINATION/KokoroSwift.framework"
+            codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY:-"-"}" --preserve-metadata=identifier,entitlements,flags "$DESTINATION/KokoroSwift.framework"
+          fi
     settings:
       base:
         PRODUCT_NAME: Kodi Reader

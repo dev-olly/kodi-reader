@@ -59,7 +59,7 @@ fi
 rm -rf "$STAGING" "$OUT"
 mkdir -p "$STAGING"
 ditto "$APP" "$STAGING/${APP_NAME}.app"
-# Xcode links this dynamic package but does not embed it in the app target.
+# Keep the package artifact self-contained even if Xcode package embedding changes.
 FRAMEWORKS="$STAGING/${APP_NAME}.app/Contents/Frameworks"
 mkdir -p "$FRAMEWORKS"
 ditto "$DERIVED/Build/Products/Release/PackageFrameworks/KokoroSwift.framework" \

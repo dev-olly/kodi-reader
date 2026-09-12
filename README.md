@@ -30,7 +30,7 @@ Freeform sketches per highlight via a bundled, offline [Excalidraw](https://exca
 ![Visual notes with Excalidraw](docs/screenshots/app-draw.png)
 
 ### Ask AI
-Opt-in, configurable OpenAI-compatible chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.
+Opt-in OpenAI-powered chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.
 
 ![Ask AI](docs/screenshots/app-ask-ai.png)
 
@@ -60,9 +60,10 @@ The site is at [dev-olly.github.io/kodi-reader](https://dev-olly.github.io/kodi-
 - Books, highlights, notes, and drawings stay on this Mac (sandbox Application
   Support). Nothing is extracted from the EPUB to a temp folder for reading.
 - There is no analytics or telemetry.
-- **Ask AI** is opt-in. You configure an OpenAI-compatible endpoint; quoted
-  passages and chat go only there. API keys live in `ai-keys.json` inside the
-  app's sandbox container (POSIX `0600`), not in the Keychain.
+- **Ask AI** is opt-in. Quoted passages and chat are sent to the hosted Kodi AI
+  proxy, which forwards requests to OpenAI. The OpenAI API key lives only on the
+  server, never in the Mac app. Kodi AI uses a stronger default model tuned for
+  simple explanations with references to the passages you attach.
 - Opened webpages are fetched and converted locally. There are no extra
   network calls beyond the page itself.
 - **Read-aloud** downloads the Kokoro voice model into Application Support on

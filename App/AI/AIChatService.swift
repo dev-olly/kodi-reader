@@ -4,7 +4,6 @@ import Foundation
 /// Errors from the OpenAI-compatible chat client.
 enum AIChatError: LocalizedError {
     case noModel
-    case missingKey(String)
     case invalidURL(String)
     case http(Int, String)
     case emptyResponse
@@ -13,9 +12,7 @@ enum AIChatError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .noModel:
-            return "Choose a model in Manage Models before asking."
-        case .missingKey(let name):
-            return "Add an API key for \(name) in Manage Models."
+            return "Ask AI is not configured."
         case .invalidURL(let url):
             return "The model endpoint is not a valid URL: \(url)"
         case .http(let code, let body):
@@ -42,7 +39,6 @@ struct AIChatService {
 
     func stream(
         config: AIModelConfig,
-        apiKey: String?,
         context: Context,
         history: [ChatMessage],
         userText: String,
@@ -53,7 +49,6 @@ struct AIChatService {
                 do {
                     try await run(
                         config: config,
-                        apiKey: apiKey,
                         context: context,
                         history: history,
                         userText: userText,
@@ -75,7 +70,6 @@ struct AIChatService {
 
     private func run(
         config: AIModelConfig,
-        apiKey: String?,
         context: Context,
         history: [ChatMessage],
         userText: String,
@@ -86,11 +80,6 @@ struct AIChatService {
             throw AIChatError.invalidURL(config.baseURL)
         }
 
-        let key = apiKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if config.requiresKey, key.isEmpty {
-            throw AIChatError.missingKey(config.name)
-        }
-
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 120
@@ -98,9 +87,6 @@ struct AIChatService {
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Kodi Reader", forHTTPHeaderField: "X-Title")
         request.setValue("https://github.com/dev-olly/kodi-reader", forHTTPHeaderField: "HTTP-Referer")
-        if !key.isEmpty {
-            request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
-        }
 
         let payload: [String: Any] = [
             "model": config.modelID,
@@ -188,7 +174,7 @@ struct AIChatService {
             lines.append("They are currently in the chapter “\(chapter)”.")
         }
         lines.append(
-            "Answer questions using the quoted passages they attach as references, including any surrounding passage provided with a quote. Be concise and helpful. If the attached text is insufficient, say so rather than inventing book text from outside it."
+            "Explain ideas in plain, simple language for a general reader. Prefer short paragraphs, concrete examples, and definitions of difficult terms. Answer using the quoted passages they attach as references, including any surrounding passage provided with a quote. When you rely on a passage, name the chapter if one was provided and include a short quoted phrase from the reference. If the attached text is insufficient, say what is missing rather than inventing book text from outside it."
         )
         return lines.joined(separator: "\n")
     }
@@ -197,10 +183,11 @@ struct AIChatService {
         var parts: [String] = []
         if !references.isEmpty {
             parts.append("References from the book:")
-            for reference in references {
+            for (index, reference) in references.enumerated() {
                 let quote = NoteMarkdown.blockquote(reference.quotedText)
+                parts.append("Reference \(index + 1):")
                 if let chapter = reference.chapterTitle, !chapter.isEmpty {
-                    parts.append("From “\(chapter)”:")
+                    parts.append("Chapter: “\(chapter)”")
                 }
                 parts.append(quote)
                 if reference.hasSurroundingContext {

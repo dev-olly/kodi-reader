@@ -1,0 +1,30 @@
+app = "kodi-reader-ai"
+primary_region = "ams"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  OPENAI_MODEL = "gpt-5.6-terra"
+  RATE_LIMIT_REQUESTS = "60"
+  RATE_LIMIT_WINDOW_MS = "3600000"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["app"]
+
+  [[http_service.checks]]
+    interval = "15s"
+    timeout = "2s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/health"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"

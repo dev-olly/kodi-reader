@@ -90,7 +90,6 @@ final class ChatController {
         let assistant = ChatMessage(role: .assistant, text: "")
         messages.append(assistant)
         isStreaming = true
-        let key = APIKeyStore.get(account: config.id.uuidString)
         let context = contextProvider()
 
         streamTask?.cancel()
@@ -99,7 +98,6 @@ final class ChatController {
             do {
                 let stream = self.service.stream(
                     config: config,
-                    apiKey: key,
                     context: context,
                     history: history,
                     userText: text,

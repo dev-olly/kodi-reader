@@ -134,8 +134,6 @@ struct KodiReaderApp: App {
                 model.toggleAskAI()
             }
             .disabled(model.book == nil)
-            Divider()
-            Button("Manage Models…") { model.isShowingManageModels = true }
         }
     }
 }

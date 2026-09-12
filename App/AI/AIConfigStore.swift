@@ -1,12 +1,11 @@
 import Foundation
 import Observation
 
-/// Persists Ask AI model configs and the selected model id next to `library.json`.
-/// API keys are never written here — they live in `ai-keys.json`.
+/// Keeps legacy Ask AI config readable while the product uses one hosted service.
 @MainActor
 @Observable
 final class AIConfigStore {
-    private(set) var configs: [AIModelConfig]
+    private(set) var configs: [AIModelConfig] = AIModelConfig.presets
     var selectedModelID: UUID? {
         didSet {
             guard selectedModelID != oldValue else { return }
@@ -20,20 +19,12 @@ final class AIConfigStore {
         Self.importLeakedConfigIfNeeded(into: directory)
         let url = directory.appendingPathComponent("ai-models.json")
         self.fileURL = url
-        if let payload = Self.load(from: url), !payload.configs.isEmpty {
-            configs = payload.configs
-            selectedModelID = payload.selectedModelID
-                ?? payload.configs.first?.id
-        } else {
-            configs = AIModelConfig.presets
-            selectedModelID = configs.first?.id
-            save()
-        }
+        selectedModelID = AIModelConfig.kodiHosted.id
+        if Self.load(from: url) == nil { save() }
     }
 
     var selectedConfig: AIModelConfig? {
-        guard let selectedModelID else { return configs.first }
-        return configs.first { $0.id == selectedModelID } ?? configs.first
+        AIModelConfig.kodiHosted
     }
 
     func upsert(_ config: AIModelConfig) {
@@ -50,7 +41,6 @@ final class AIConfigStore {
 
     func remove(id: UUID) {
         configs.removeAll { $0.id == id }
-        APIKeyStore.delete(account: id.uuidString)
         if selectedModelID == id {
             selectedModelID = configs.first?.id
         }

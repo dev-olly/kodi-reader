@@ -36,7 +36,6 @@ final class AppModel {
         get { workspace == .askAI }
         set { if newValue { workspace = .askAI } else if workspace == .askAI { workspace = .closed } }
     }
-    var isShowingManageModels = false
     /// True when page-turn shortcuts should yield to the focused control —
     /// the note editor, Excalidraw, the notes list, or any other sidebar field.
     var isNoteEditorOpen = false

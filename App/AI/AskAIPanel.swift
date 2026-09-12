@@ -72,9 +72,6 @@ struct AskAIPanel: View {
                         model.chat.newConversation()
                     }
 
-                    headerIcon("gearshape", help: "Manage models") {
-                        model.isShowingManageModels = true
-                    }
                 }
                 .padding(3)
                 .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
@@ -84,61 +81,25 @@ struct AskAIPanel: View {
                 }
             }
 
-            if model.aiConfig.configs.isEmpty {
-                Button {
-                    model.isShowingManageModels = true
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "plus.circle.fill")
-                        Text("Add Model")
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(model.settings.theme.muted)
-                    }
+            HStack(spacing: 8) {
+                Image(systemName: "sparkle.magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(model.settings.theme.accent)
+                Text("Kodi AI")
                     .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity, minHeight: 36)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.settings.theme.accent)
-                .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(model.settings.theme.border, lineWidth: 1)
-                }
-            } else {
-                Menu {
-                    Picker("Model", selection: selectedModelBinding) {
-                        ForEach(model.aiConfig.configs) { config in
-                            Text(config.name).tag(config.id as UUID?)
-                        }
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: "sparkle.magnifyingglass")
-                            .font(.system(size: 13, weight: .medium))
-                            .foregroundStyle(model.settings.theme.accent)
-                        Text(selectedModelName)
-                            .font(.system(size: 12, weight: .medium))
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        Image(systemName: "chevron.up.chevron.down")
-                            .font(.system(size: 10, weight: .semibold))
-                            .foregroundStyle(model.settings.theme.muted)
-                    }
-                    .padding(.horizontal, 12)
-                    .frame(maxWidth: .infinity, minHeight: 36)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.settings.theme.uiForeground)
-                .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(model.settings.theme.border, lineWidth: 1)
-                }
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Text("OpenAI")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(model.settings.theme.muted)
+            }
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, minHeight: 36)
+            .foregroundStyle(model.settings.theme.uiForeground)
+            .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(model.settings.theme.border, lineWidth: 1)
             }
         }
         .padding(.horizontal, 20)
@@ -224,22 +185,6 @@ struct AskAIPanel: View {
             }
         }
         .frame(minWidth: 260, minHeight: 120)
-    }
-
-    private var selectedModelBinding: Binding<UUID?> {
-        Binding(
-            get: { model.aiConfig.selectedModelID },
-            set: { model.aiConfig.selectedModelID = $0 }
-        )
-    }
-
-    private var selectedModelName: String {
-        guard let selectedID = model.aiConfig.selectedModelID,
-              let config = model.aiConfig.configs.first(where: { $0.id == selectedID })
-        else {
-            return model.aiConfig.configs.first?.name ?? "Choose Model"
-        }
-        return config.name
     }
 
     // MARK: - Messages

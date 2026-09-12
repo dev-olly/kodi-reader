@@ -161,6 +161,22 @@ public final class LibraryStore: @unchecked Sendable {
         scheduleSave()
     }
 
+    /// Applies a change and writes the library immediately, surfacing disk
+    /// errors to UI flows that need an accurate saved/failed state.
+    public func updateAndFlush(_ bookID: String, _ transform: (inout BookRecord) -> Void) throws {
+        lock.lock()
+        guard var record = payload.books[bookID] else {
+            lock.unlock()
+            throw LibraryStoreError.missingBook
+        }
+        transform(&record)
+        payload.books[bookID] = record
+        lock.unlock()
+        pendingSave?.cancel()
+        pendingSave = nil
+        try writeToDisk()
+    }
+
     public func remove(bookID: String) {
         lock.lock()
         payload.books.removeValue(forKey: bookID)
@@ -237,7 +253,7 @@ public final class LibraryStore: @unchecked Sendable {
 
     private func scheduleSave() {
         pendingSave?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.writeToDisk() }
+        let work = DispatchWorkItem { [weak self] in try? self?.writeToDisk() }
         pendingSave = work
         queue.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
@@ -247,18 +263,29 @@ public final class LibraryStore: @unchecked Sendable {
         pendingSave?.cancel()
         pendingSave = nil
         drawingStore.flush()
-        writeToDisk()
+        try? writeToDisk()
     }
 
-    private func writeToDisk() {
+    private func writeToDisk() throws {
         lock.lock()
         let snapshot = payload
         lock.unlock()
 
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(snapshot) else { return }
+        let data = try encoder.encode(snapshot)
         // Atomic so a crash mid-write cannot truncate the library.
-        try? data.write(to: fileURL, options: .atomic)
+        try data.write(to: fileURL, options: .atomic)
+    }
+}
+
+public enum LibraryStoreError: LocalizedError {
+    case missingBook
+
+    public var errorDescription: String? {
+        switch self {
+        case .missingBook:
+            return "Could not save because the book is no longer open."
+        }
     }
 }

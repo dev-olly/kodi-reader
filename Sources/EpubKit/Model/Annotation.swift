@@ -124,13 +124,32 @@ public enum NoteMarkdown {
         case trailing
     }
 
+    public struct TaskItem: Equatable, Sendable {
+        public var checked: Bool
+        public var text: String
+
+        public init(checked: Bool, text: String) {
+            self.checked = checked
+            self.text = text
+        }
+    }
+
     /// Structural blocks for the SwiftUI note preview renderer.
     public enum PreviewBlock: Equatable, Sendable {
         case paragraph(String)
         case unorderedList([String])
         case orderedList([String])
+        case taskList([TaskItem])
         case code(String)
         case table(header: [String], rows: [[String]], alignments: [TableAlignment])
+    }
+
+    public struct UnsupportedConstruct: Equatable, Sendable {
+        public var label: String
+
+        public init(label: String) {
+            self.label = label
+        }
     }
 
     /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.
@@ -154,6 +173,7 @@ public enum NoteMarkdown {
         var paragraphLines: [String] = []
         var unorderedItems: [String] = []
         var orderedItems: [String] = []
+        var taskItems: [TaskItem] = []
 
         func flushParagraph() {
             let text = paragraphLines.joined(separator: "\n")
@@ -178,9 +198,17 @@ public enum NoteMarkdown {
             }
         }
 
+        func flushTasks() {
+            if !taskItems.isEmpty {
+                blocks.append(.taskList(taskItems))
+                taskItems.removeAll(keepingCapacity: true)
+            }
+        }
+
         func flushLists() {
             flushUnordered()
             flushOrdered()
+            flushTasks()
         }
 
         var index = 0
@@ -212,9 +240,19 @@ public enum NoteMarkdown {
                 continue
             }
 
+            if let item = taskListItem(line) {
+                flushParagraph()
+                flushUnordered()
+                flushOrdered()
+                taskItems.append(item)
+                index += 1
+                continue
+            }
+
             if let item = unorderedListItem(line) {
                 flushParagraph()
                 flushOrdered()
+                flushTasks()
                 unorderedItems.append(item)
                 index += 1
                 continue
@@ -223,6 +261,7 @@ public enum NoteMarkdown {
             if let item = orderedListItem(line) {
                 flushParagraph()
                 flushUnordered()
+                flushTasks()
                 orderedItems.append(item)
                 index += 1
                 continue
@@ -291,6 +330,16 @@ public enum NoteMarkdown {
         return String(line[bodyRange])
     }
 
+    private static func taskListItem(_ line: String) -> TaskItem? {
+        let pattern = #"^\s*[-*+]\s+\[([ xX])\]\s+(.*)$"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let result = regex.firstMatch(in: line, range: NSRange(line.startIndex..., in: line)),
+              let markRange = Range(result.range(at: 1), in: line),
+              let bodyRange = Range(result.range(at: 2), in: line)
+        else { return nil }
+        return TaskItem(checked: line[markRange].lowercased() == "x", text: String(line[bodyRange]))
+    }
+
     private static func orderedListItem(_ line: String) -> String? {
         let pattern = #"^\s*(\d+)\.\s+(.*)$"#
         guard let regex = try? NSRegularExpression(pattern: pattern),
@@ -345,16 +394,18 @@ public enum NoteMarkdown {
 
     /// Strips a small set of markdown markers for list previews.
     public static func plainPreview(of markdown: String) -> String {
-        var text = markdown
+        var text = markdown.replacingOccurrences(of: "</?u>", with: "", options: .regularExpression)
         let patterns = [
             #"\*\*(.+?)\*\*"#,
             #"__(.+?)__"#,
+            #"~~(.+?)~~"#,
             #"\*(.+?)\*"#,
             #"_(.+?)_"#,
             #"\[(.+?)\]\(.+?\)"#,
-            #"^#{1,6}\s+"#,
-            #"^[-*+]\s+"#,
-            #"^\d+\.\s+"#,
+            #"(?m)^#{1,6}\s+"#,
+            #"(?m)^[-*+]\s+\[[ xX]\]\s+"#,
+            #"(?m)^[-*+]\s+"#,
+            #"(?m)^\d+\.\s+"#,
             #"`([^`]+)`"#,
         ]
         for pattern in patterns {
@@ -367,6 +418,23 @@ public enum NoteMarkdown {
         return text
             .replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    /// Constructs this app keeps in source mode so a future rich editor cannot
+    /// round-trip them destructively.
+    public static func unsupportedConstructs(in markdown: String) -> [UnsupportedConstruct] {
+        let checks: [(String, String)] = [
+            (#"(?m)^\s*</?[A-Za-z][^>]*>\s*$|<[A-Za-z][^>\n]*>"#, "HTML"),
+            (#"!\[[^\]]*\]\([^)]+\)"#, "images"),
+            (#"\[\^[^\]]+\]|(?m)^\[\^[^\]]+\]:"#, "footnotes"),
+            (#"(?m)^\[[^\]]+\]:\s+\S+"#, "reference links"),
+            (#"(?m)^\s{0,3}#{1,6}\s+.*\{#[^}]+\}\s*$"#, "heading attributes"),
+        ]
+        return checks.compactMap { pattern, label in
+            markdown.range(of: pattern, options: .regularExpression) == nil
+                ? nil
+                : UnsupportedConstruct(label: label)
+        }
     }
 
     /// Wraps `selection` with `prefix`/`suffix`, or inserts markers around the caret.

@@ -412,14 +412,10 @@ final class AppModel {
     // MARK: - Ask AI
 
     /// Pins the on-screen passage before a width change so relayout cannot
-    /// fall back to chapter start. Prefer the last saved locator; JS capture
-    /// is the fallback when that has not been reported yet.
+    /// fall back to chapter start. This must capture the live viewport, not the
+    /// last persisted locator, because saved progress can lag behind scrolling.
     func pinReaderForViewportChange() {
-        if let start = record?.position?.start {
-            reader?.pinRestoreOnce(to: start)
-        } else {
-            reader?.pinRestoreCurrentPositionOnce()
-        }
+        reader?.pinRestoreCurrentPositionOnce()
     }
 
     func toggleAskAI() {
@@ -514,17 +510,31 @@ final class AppModel {
         return .yellow
     }
 
-    func updateNote(_ note: String, for id: UUID) {
-        guard let bookID = book?.bookID else { return }
-        mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
-            guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
-            annotations[index].note = note.isEmpty ? nil : note
-            annotations[index].modifiedAt = Date()
+    func updateNote(
+        _ note: String,
+        for id: UUID,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
+        guard let bookID = book?.bookID, var record else {
+            completion?(.failure(NotePersistenceError.missingBook))
+            return
+        }
+        guard let index = record.annotations.firstIndex(where: { $0.id == id }) else {
+            completion?(.failure(NotePersistenceError.missingAnnotation))
+            return
+        }
+
+        record.annotations[index].note = note.isEmpty ? nil : note
+        record.annotations[index].modifiedAt = Date()
+        self.record = record
+        do {
+            try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
+            completion?(.success(()))
+        } catch {
+            completion?(.failure(error))
         }
         // Refresh the note-dot on painted highlights without a full re-resolve.
-        if let annotations = record?.annotations {
-            reader?.setAnnotations(annotations)
-        }
+        reader?.setAnnotations(record.annotations)
     }
 
     func drawingScene(for id: UUID) -> Data? {
@@ -683,5 +693,19 @@ private enum DrawingPersistenceError: LocalizedError {
 
     var errorDescription: String? {
         "Could not save the drawing because no book is open."
+    }
+}
+
+private enum NotePersistenceError: LocalizedError {
+    case missingBook
+    case missingAnnotation
+
+    var errorDescription: String? {
+        switch self {
+        case .missingBook:
+            return "Could not save the note because no book is open."
+        case .missingAnnotation:
+            return "Could not save the note because the highlight no longer exists."
+        }
     }
 }

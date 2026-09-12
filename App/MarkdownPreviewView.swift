@@ -4,6 +4,7 @@ import SwiftUI
 /// SwiftUI note preview: explicit blocks for lists/code, inline markdown for bold/italic/links.
 struct NoteMarkdownPreview: View {
     let text: String
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -31,6 +32,17 @@ struct NoteMarkdownPreview: View {
                                     .foregroundStyle(.secondary)
                                     .monospacedDigit()
                                 inlineText(item)
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                case let .taskList(items):
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(Array(items.enumerated()), id: \.offset) { _, item in
+                            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                                Image(systemName: item.checked ? "checkmark.square.fill" : "square")
+                                    .foregroundStyle(item.checked ? Color.accentColor : .secondary)
+                                inlineText(item.text)
                             }
                         }
                     }
@@ -106,15 +118,21 @@ struct NoteMarkdownPreview: View {
 
     @ViewBuilder
     private func inlineText(_ markdown: String) -> some View {
-        let options = AttributedString.MarkdownParsingOptions(
-            interpretedSyntax: .inlineOnlyPreservingWhitespace
-        )
-        if let attributed = try? AttributedString(markdown: markdown, options: options) {
-            Text(attributed)
+        if markdown.contains("<u>") {
+            Text(AttributedString(RichNoteCodec.decode(markdown, dark: colorScheme == .dark)))
+                .foregroundStyle(.primary)
                 .textSelection(.enabled)
         } else {
-            Text(markdown)
-                .textSelection(.enabled)
+            let options = AttributedString.MarkdownParsingOptions(
+                interpretedSyntax: .inlineOnlyPreservingWhitespace
+            )
+            if let attributed = try? AttributedString(markdown: markdown, options: options) {
+                Text(attributed)
+                    .textSelection(.enabled)
+            } else {
+                Text(markdown)
+                    .textSelection(.enabled)
+            }
         }
     }
 }

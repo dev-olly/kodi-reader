@@ -15,7 +15,7 @@ struct NoteEditor: View {
     var presentation: Presentation = .sheet
     var drawingScene: Data? = nil
     var isDark: Bool = false
-    let onSave: (String) -> Void
+    let onSave: (String, @escaping (Result<Void, Error>) -> Void) -> Void
     var onSaveDrawing: ((Data, Int, @escaping (Result<Void, Error>) -> Void) -> Void)? = nil
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
@@ -30,23 +30,20 @@ struct NoteEditor: View {
     @State private var mode: EditorMode = .edit
     @State private var saveWork: DispatchWorkItem?
     @State private var drawingWork: DispatchWorkItem?
+    @State private var didLoad = false
     @State private var didOpenDraw = false
     @State private var didLoadDrawingScene = false
+    @State private var lastSavedText = ""
+    @State private var saveRevision = 0
+    @State private var sourceModeReason: String?
     @State private var saveStatus: SaveStatus = .saved
     @State private var drawingController = ExcalidrawController()
 
-    private enum EditorMode: String, CaseIterable, Identifiable {
+    private enum EditorMode {
         case edit
+        case source
         case preview
         case draw
-        var id: String { rawValue }
-        var label: String {
-            switch self {
-            case .edit: return "Edit"
-            case .preview: return "Preview"
-            case .draw: return "Draw"
-            }
-        }
     }
 
     private enum SaveStatus: Equatable {
@@ -71,20 +68,16 @@ struct NoteEditor: View {
         }
     }
 
-    private var availableModes: [EditorMode] {
-        presentation == .sidebar ? EditorMode.allCases : [.edit, .preview]
-    }
-
     private var theme: ReaderTheme {
         isDark ? .dark : .light
     }
 
     private var horizontalPadding: CGFloat {
-        presentation == .sidebar ? 18 : 40
+        presentation == .sidebar ? 26 : 44
     }
 
     private var editorBackground: Color {
-        isDark ? theme.surface.opacity(0.55) : Color.white
+        isDark ? Color(red: 0.125, green: 0.145, blue: 0.133) : Color(red: 0.984, green: 0.988, blue: 0.976)
     }
 
     var body: some View {
@@ -97,7 +90,6 @@ struct NoteEditor: View {
                 if annotation.isOrphaned {
                     orphanBanner
                 }
-                toolbar
                 bodyEditor
                 footer
             }
@@ -119,6 +111,7 @@ struct NoteEditor: View {
         .foregroundStyle(theme.uiForeground)
         .colorScheme(theme.colorScheme)
         .onChange(of: text) { _, newValue in
+            guard didLoad else { return }
             scheduleAutosave(newValue)
         }
         .onChange(of: mode) { _, newValue in
@@ -135,10 +128,6 @@ struct NoteEditor: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: presentation == .sidebar ? 14 : 26) {
             HStack(alignment: .center, spacing: 12) {
-                if presentation == .sheet {
-                    windowDots
-                }
-
                 if presentation == .sidebar, let onBack {
                     Button(action: onBack) {
                         Label("Notes", systemImage: "chevron.left")
@@ -149,18 +138,13 @@ struct NoteEditor: View {
                     .help("Back to notes")
                 }
 
-                Text(presentation == .sheet ? "The lines you come back to" : "Margin note")
-                    .font(.system(size: presentation == .sheet ? 17 : 13, weight: .medium))
+                Text(presentation == .sheet ? "The lines you come back to" : "Your margin")
+                    .font(.system(size: presentation == .sheet ? 13 : 11, weight: .medium))
                     .foregroundStyle(theme.uiForeground.opacity(presentation == .sheet ? 0.88 : 0.72))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .multilineTextAlignment(presentation == .sheet ? .center : .leading)
 
-                if presentation == .sheet {
-                    Text("k.")
-                        .font(.system(size: 24, weight: .regular, design: .serif))
-                        .foregroundStyle(theme.uiForeground)
-                        .frame(width: 58, alignment: .trailing)
-                }
+                noteMenu
 
                 if let onTogglePlacement {
                     Button(action: onTogglePlacement) {
@@ -176,7 +160,7 @@ struct NoteEditor: View {
 
             VStack(alignment: .leading, spacing: 14) {
                 if let chapter = annotation.chapterTitle {
-                    Text(chapter.uppercased())
+                    Text("HIGHLIGHT / " + chapter.uppercased())
                         .font(.system(size: 11, weight: .medium))
                         .tracking(1.1)
                         .foregroundStyle(theme.muted)
@@ -187,7 +171,7 @@ struct NoteEditor: View {
 
                 colorRow
             }
-            .padding(.top, presentation == .sheet ? 32 : 0)
+            .padding(.top, presentation == .sheet ? 18 : 10)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.top, presentation == .sheet ? 26 : 18)
@@ -199,43 +183,29 @@ struct NoteEditor: View {
         }
     }
 
-    private var windowDots: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(Color(red: 1.0, green: 0.36, blue: 0.34))
-                .frame(width: 9, height: 9)
-            Circle()
-                .fill(Color(red: 1.0, green: 0.74, blue: 0.18))
-                .frame(width: 9, height: 9)
-            Circle()
-                .fill(Color(red: 0.16, green: 0.78, blue: 0.25))
-                .frame(width: 9, height: 9)
-        }
-        .frame(width: 58, height: 30, alignment: .leading)
-        .frame(width: 58, alignment: .leading)
-        .font(.system(size: 9))
+    private var quote: some View {
+        Text(quoteAttributedString)
+            .font(.system(size: presentation == .sidebar ? 20 : 28, weight: .regular, design: .serif))
+            .lineSpacing(presentation == .sidebar ? 4 : 7)
+            .lineLimit(4)
+            .fixedSize(horizontal: false, vertical: true)
+            .textSelection(.enabled)
     }
 
-    private var quote: some View {
-        Text(annotation.text)
-            .font(.system(size: presentation == .sidebar ? 19 : 32, weight: .regular, design: .serif))
-            .lineSpacing(presentation == .sidebar ? 5 : 7)
-            .lineLimit(presentation == .sidebar ? 5 : 6)
-            .textSelection(.enabled)
-            .foregroundStyle(theme.uiForeground)
-            .padding(.leading, 0)
-            .background(alignment: .bottomLeading) {
-                selectedColor.swiftUIColor
-                    .opacity(isDark ? 0.34 : 0.58)
-                    .frame(height: presentation == .sidebar ? 18 : 28)
-                    .offset(y: presentation == .sidebar ? -2 : -5)
-                    .allowsHitTesting(false)
-            }
+    private var quoteAttributedString: AttributedString {
+        var value = AttributedString(annotation.text)
+        value.foregroundColor = theme.uiForeground
+        if selectedColor == .underline {
+            value.underlineStyle = .single
+        } else {
+            value.backgroundColor = selectedColor.swiftUIColor.opacity(isDark ? 0.28 : 0.40)
+        }
+        return value
     }
 
     private var colorRow: some View {
         HStack(spacing: 10) {
-            Text("Highlight")
+            Text("COLOR")
                 .font(.system(size: 10, weight: .semibold))
                 .tracking(0.8)
                 .foregroundStyle(theme.muted)
@@ -264,6 +234,8 @@ struct NoteEditor: View {
                 }
                 .buttonStyle(.plain)
                 .help(color.displayName)
+                .accessibilityLabel(color.displayName + " highlight")
+                .accessibilityAddTraits(selectedColor == color ? [.isSelected] : [])
             }
         }
     }
@@ -282,73 +254,32 @@ struct NoteEditor: View {
         .background(Color.orange.opacity(0.12))
     }
 
-    private var toolbar: some View {
-        Group {
-            if presentation == .sidebar {
-                VStack(alignment: .leading, spacing: 10) {
-                    if mode != .draw {
-                        formatButtons
-                    }
-                    modePicker
-                        .frame(maxWidth: .infinity)
-                }
-            } else {
-                HStack(spacing: 12) {
-                    if mode != .draw {
-                        formatButtons
-                    }
-                    Spacer()
-                    modePicker
-                        .frame(width: 160)
-                }
+    private var noteMenu: some View {
+        Menu {
+            Button("Write") {
+                sourceModeReason = sourceModeFallbackReason(for: text)
+                mode = sourceModeReason == nil ? .edit : .source
             }
+            if presentation == .sidebar, onSaveDrawing != nil {
+                Button("Draw") { mode = .draw }
+            }
+            Divider()
+            Button("Markdown Source") { mode = .source }
+            Button("Preview") { mode = .preview }
+            Divider()
+            Text("⌘B Bold · ⌘I Italic · ⌘U Underline")
+            Text("⌘K Link · ⇧⌘X Strikethrough")
+            Text("⌥⌘1 Heading · ⌥⌘0 Body")
+            Text("⌥⌘7 Numbered list · ⌥⌘8 Bullets")
+        } label: {
+            Image(systemName: "ellipsis")
+                .frame(width: 26, height: 28)
         }
-        .padding(.horizontal, horizontalPadding)
-        .padding(.vertical, 14)
-        .background(theme.surface.opacity(isDark ? 0.45 : 0.56))
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(theme.border.opacity(0.72))
-                .frame(height: 1)
-        }
-    }
-
-    private var formatButtons: some View {
-        HStack(spacing: 8) {
-            formatButton("bold", help: "Bold") { wrap("**", "**") }
-            formatButton("italic", help: "Italic") { wrap("*", "*") }
-            formatButton("list.bullet", help: "Bulleted list") {
-                prefixLines(with: "- ")
-            }
-            formatButton("list.number", help: "Numbered list") {
-                prefixLines(with: "1. ")
-            }
-            formatButton("link", help: "Link") { wrap("[", "](url)") }
-            formatButton("chevron.left.forwardslash.chevron.right", help: "Code block") {
-                insertCodeBlock()
-            }
-            formatButton("tablecells", help: "Table") {
-                insertTable()
-            }
-        }
-        .disabled(mode == .preview)
-        .padding(4)
-        .background(editorBackground.opacity(isDark ? 0.28 : 0.72), in: .rect(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(theme.border.opacity(0.55), lineWidth: 1)
-        }
-    }
-
-    private var modePicker: some View {
-        Picker("Mode", selection: $mode) {
-            ForEach(availableModes) { item in
-                Text(item.label).tag(item)
-            }
-        }
-        .pickerStyle(.segmented)
-        .labelsHidden()
-        .controlSize(.large)
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Note options and keyboard shortcuts")
+        .accessibilityLabel("Note options")
     }
 
     @ViewBuilder
@@ -356,13 +287,14 @@ struct NoteEditor: View {
         Group {
             switch mode {
             case .edit:
-                MarkdownTextEditor(
-                    text: $text,
-                    selectedRange: $selectedRange,
-                    placeholder: "Write your note…"
-                )
-                .padding(.horizontal, horizontalPadding - 8)
-                .padding(.vertical, presentation == .sheet ? 26 : 16)
+                writingSurface(source: false)
+            case .source:
+                VStack(alignment: .leading, spacing: 12) {
+                    if let sourceModeReason {
+                        unsupportedMarkdownBanner(sourceModeReason)
+                    }
+                    writingSurface(source: true)
+                }
             case .preview:
                 ScrollView {
                     if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -383,6 +315,38 @@ struct NoteEditor: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func writingSurface(source: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(source ? "MARKDOWN SOURCE" : "MY NOTE")
+                .font(.system(size: 10, weight: .medium))
+                .tracking(1.6)
+                .foregroundStyle(theme.muted.opacity(0.72))
+                .padding(.horizontal, 8)
+            if source {
+                MarkdownTextEditor(text: $text, selectedRange: $selectedRange,
+                                   placeholder: "Write your note…")
+            } else {
+                RichNoteEditor(text: $text, isDark: isDark, autofocus: autofocus)
+            }
+        }
+        .padding(.horizontal, horizontalPadding - 8)
+        .padding(.top, presentation == .sheet ? 30 : 24)
+        .padding(.bottom, 12)
+    }
+
+    private func unsupportedMarkdownBanner(_ reason: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "curlybraces")
+                .foregroundStyle(theme.accent)
+            Text(reason)
+                .font(.caption)
+                .foregroundStyle(theme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.top, 14)
     }
 
     private var footer: some View {
@@ -406,6 +370,7 @@ struct NoteEditor: View {
                 .lineLimit(1)
             if case .failed = saveStatus {
                 Button("Retry") {
+                    persistNote(text)
                     flushDrawingBeforeClose(teardown: false)
                 }
                 .font(.caption)
@@ -415,13 +380,13 @@ struct NoteEditor: View {
                 onClose()
             }
             .buttonStyle(.borderedProminent)
-            .controlSize(.large)
+            .controlSize(.regular)
             .tint(theme.accent)
             .keyboardShortcut(.defaultAction)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, presentation == .sheet ? 18 : 14)
-        .background(theme.surface.opacity(isDark ? 0.54 : 0.72))
+        .background(editorBackground)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(theme.border.opacity(0.72))
@@ -437,75 +402,22 @@ struct NoteEditor: View {
         presentation == .sheet ? "Open in Sidebar" : "Open as Window"
     }
 
-    // MARK: - Formatting
-
-    private func formatButton(_ systemImage: String, help: String, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: systemImage)
-                .font(.system(size: 15, weight: .semibold))
-                .frame(width: 30, height: 28)
-        }
-        .buttonStyle(QuietIconButtonStyle(theme: theme))
-        .help(help)
-    }
-
-    private func wrap(_ prefix: String, _ suffix: String) {
-        guard let range = Range(selectedRange, in: text) else { return }
-        let result = NoteMarkdown.wrap(text, selection: range, prefix: prefix, suffix: suffix)
-        text = result.text
-        selectedRange = NSRange(result.selection, in: result.text)
-    }
-
-    private func prefixLines(with marker: String) {
-        guard let range = Range(selectedRange, in: text) else {
-            let end = text.endIndex
-            let result = NoteMarkdown.prefixLines(text, selection: end..<end, marker: marker)
-            text = result.text
-            selectedRange = NSRange(result.selection, in: result.text)
-            return
-        }
-        let result = NoteMarkdown.prefixLines(text, selection: range, marker: marker)
-        text = result.text
-        selectedRange = NSRange(result.selection, in: result.text)
-    }
-
-    private func insertCodeBlock() {
-        guard let range = Range(selectedRange, in: text) else {
-            let end = text.endIndex
-            let result = NoteMarkdown.fenceCodeBlock(text, selection: end..<end)
-            text = result.text
-            selectedRange = NSRange(result.selection, in: result.text)
-            return
-        }
-        let result = NoteMarkdown.fenceCodeBlock(text, selection: range)
-        text = result.text
-        selectedRange = NSRange(result.selection, in: result.text)
-    }
-
-    private func insertTable() {
-        guard let range = Range(selectedRange, in: text) else {
-            let end = text.endIndex
-            let result = NoteMarkdown.insertTable(text, selection: end..<end)
-            text = result.text
-            selectedRange = NSRange(result.selection, in: result.text)
-            return
-        }
-        let result = NoteMarkdown.insertTable(text, selection: range)
-        text = result.text
-        selectedRange = NSRange(result.selection, in: result.text)
-    }
-
     private func load() {
         text = annotation.note ?? ""
+        lastSavedText = text
+        sourceModeReason = sourceModeFallbackReason(for: text)
         selectedColor = annotation.color
         selectedRange = NSRange(location: (text as NSString).length, length: 0)
-        if autofocus {
+        if sourceModeReason != nil {
+            mode = .source
+        } else if autofocus {
             mode = .edit
         }
         wireDrawing()
         if mode == .draw {
             handleModeChange(.draw)
         }
+        didLoad = true
     }
 
     private func handleModeChange(_ newValue: EditorMode) {
@@ -529,7 +441,7 @@ struct NoteEditor: View {
 
     private func flush() {
         saveWork?.cancel()
-        onSave(text)
+        persistNote(text)
         drawingWork?.cancel()
         onDrawActiveChanged?(false)
         flushDrawingBeforeClose(teardown: true)
@@ -561,14 +473,47 @@ struct NoteEditor: View {
     }
 
     private func scheduleAutosave(_ value: String) {
-        saveStatus = .saving
         saveWork?.cancel()
-        let work = DispatchWorkItem {
-            onSave(value)
+        guard value != lastSavedText else {
             saveStatus = .saved
+            return
+        }
+        saveStatus = .saving
+        let work = DispatchWorkItem {
+            persistNote(value)
         }
         saveWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
+    }
+
+    private func persistNote(_ value: String) {
+        guard value != lastSavedText else {
+            saveStatus = .saved
+            return
+        }
+        saveRevision += 1
+        let revision = saveRevision
+        saveStatus = .saving
+        onSave(value) { result in
+            guard revision == saveRevision else { return }
+            switch result {
+            case .success:
+                lastSavedText = value
+                saveStatus = .saved
+            case .failure(let error):
+                saveStatus = .failed(error.localizedDescription)
+            }
+        }
+    }
+
+    private func sourceModeFallbackReason(for markdown: String) -> String? {
+        let constructs = NoteMarkdown.unsupportedConstructs(in: markdown.replacingOccurrences(of: "</?u>", with: "", options: .regularExpression))
+        if let reason = RichNoteCodec.sourceOnlyReason(markdown) {
+            return "This note contains \(reason). Markdown source keeps its formatting intact."
+        }
+        guard !constructs.isEmpty else { return nil }
+        let labels = constructs.map(\.label).joined(separator: ", ")
+        return "This note contains \(labels), so it opens in Markdown source mode to preserve the original text."
     }
 
     private func scheduleDrawingSave(_ data: Data, elementCount: Int) {
@@ -616,7 +561,8 @@ private struct QuietIconButtonStyle: ButtonStyle {
 struct NoteSheet: View {
     let annotation: Annotation
     var autofocus: Bool = false
-    let onSave: (String) -> Void
+    var isDark: Bool = false
+    let onSave: (String, @escaping (Result<Void, Error>) -> Void) -> Void
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     var onTogglePlacement: (() -> Void)? = nil
@@ -628,12 +574,13 @@ struct NoteSheet: View {
             annotation: annotation,
             autofocus: autofocus,
             presentation: .sheet,
+            isDark: isDark,
             onSave: onSave,
             onChangeColor: onChangeColor,
             onDelete: onDelete,
             onClose: { dismiss() },
             onTogglePlacement: onTogglePlacement
         )
-        .frame(minWidth: 520, idealWidth: 560, minHeight: 480, idealHeight: 560)
+        .frame(minWidth: 520, idealWidth: 580, minHeight: 560, idealHeight: 640)
     }
 }

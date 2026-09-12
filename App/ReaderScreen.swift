@@ -17,7 +17,9 @@ struct ReaderScreen: View {
     @State private var inspectorOpenedForEditor = false
     @State private var isDrawingExpanded = false
     @State private var windowWidth: CGFloat = 0
-    @State private var workspaceWidth: CGFloat = 340
+    @AppStorage("reader.workspaceWidth") private var preferredWorkspaceWidth: Double = 340
+    @AppStorage("reader.expandedWorkspaceWidth") private var preferredExpandedWorkspaceWidth: Double = 0
+    @State private var isResizeHandleHovered = false
     @State private var dragStartWidth: CGFloat?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -32,7 +34,7 @@ struct ReaderScreen: View {
         .overlay(alignment: .trailing) {
             if model.workspace != .closed {
                 workspacePanel
-                    .frame(width: model.workspace == .notes && isDrawingExpanded ? expandedWorkspaceWidth : workspaceWidth)
+                    .frame(width: activeWorkspaceWidth)
                     .shadow(color: .black.opacity(usesWorkspaceOverlay ? 0.12 : 0), radius: 16, x: -6)
             }
         }
@@ -48,7 +50,10 @@ struct ReaderScreen: View {
                 NoteSheet(
                     annotation: model.annotation(with: annotation.id) ?? annotation,
                     autofocus: noteEditorAutofocus,
-                    onSave: { model.updateNote($0, for: annotation.id) },
+                    isDark: model.settings.theme.isDark,
+                    onSave: { note, completion in
+                        model.updateNote(note, for: annotation.id, completion: completion)
+                    },
                     onChangeColor: { model.changeColor($0, for: annotation.id) },
                     onDelete: { model.deleteAnnotation(annotation.id) },
                     onTogglePlacement: { toggleNoteEditorPlacement() }
@@ -81,9 +86,42 @@ struct ReaderScreen: View {
 
     private var usesWorkspaceOverlay: Bool { windowWidth < 900 || (model.workspace == .notes && isDrawingExpanded) }
 
+    private var maximumWorkspaceWidth: CGFloat {
+        let width = windowWidth > 0 ? windowWidth : 1200
+        // Keep room for the book, or a visible strip beside an overlay.
+        return max(300, min(800, width - (windowWidth < 900 ? 56 : 400)))
+    }
+
+    private var workspaceWidth: CGFloat {
+        min(maximumWorkspaceWidth, max(300, CGFloat(preferredWorkspaceWidth)))
+    }
+
+    private var activeWorkspaceWidth: CGFloat {
+        model.workspace == .notes && isDrawingExpanded ? expandedWorkspaceWidth : workspaceWidth
+    }
+
+    private func resizeWorkspace(to width: CGFloat) {
+        if model.workspace == .notes && isDrawingExpanded {
+            preferredExpandedWorkspaceWidth = Double(min(maximumExpandedWorkspaceWidth, max(minimumExpandedWorkspaceWidth, width)))
+        } else {
+            preferredWorkspaceWidth = Double(min(maximumWorkspaceWidth, max(300, width)))
+        }
+    }
+
+    private var maximumExpandedWorkspaceWidth: CGFloat {
+        let width = windowWidth > 0 ? windowWidth : 1200
+        return min(width, max(340, width - 56))
+    }
+
+    private var minimumExpandedWorkspaceWidth: CGFloat {
+        min(340, maximumExpandedWorkspaceWidth)
+    }
+
     private var expandedWorkspaceWidth: CGFloat {
         let width = windowWidth > 0 ? windowWidth : 1200
-        return min(width, max(340, width * 0.5))
+        let defaultWidth = min(maximumExpandedWorkspaceWidth, max(minimumExpandedWorkspaceWidth, width * 0.5))
+        let preferredWidth = preferredExpandedWorkspaceWidth > 0 ? CGFloat(preferredExpandedWorkspaceWidth) : defaultWidth
+        return min(maximumExpandedWorkspaceWidth, max(minimumExpandedWorkspaceWidth, preferredWidth))
     }
 
     private var workspacePanel: some View {
@@ -144,25 +182,36 @@ struct ReaderScreen: View {
             Rectangle().fill(model.settings.theme.border).frame(width: 1)
         }
         .overlay(alignment: .leading) {
-            if model.workspace != .notes || !isDrawingExpanded {
-                Color.clear.frame(width: 7)
-                    .contentShape(Rectangle())
-                    .gesture(DragGesture()
-                        .onChanged { value in
-                            if dragStartWidth == nil {
-                                dragStartWidth = workspaceWidth
-                                reader.pinRestoreCurrentPositionOnce()
-                            }
-                            workspaceWidth = min(420, max(300, (dragStartWidth ?? 340) - value.translation.width))
-                        }
-                        .onEnded { _ in dragStartWidth = nil })
-                    .accessibilityLabel("Workspace width")
-                    .accessibilityValue("\(Int(workspaceWidth)) points")
-                    .accessibilityAdjustableAction { direction in
-                        reader.pinRestoreCurrentPositionOnce()
-                        workspaceWidth = min(420, max(300, workspaceWidth + (direction == .increment ? 20 : -20)))
+            SidebarResizeHandle(
+                onBegin: {
+                    dragStartWidth = activeWorkspaceWidth
+                    reader.pinRestoreCurrentPositionOnce()
+                },
+                onDrag: { translation in
+                    resizeWorkspace(to: (dragStartWidth ?? activeWorkspaceWidth) - translation)
+                },
+                onEnd: { dragStartWidth = nil }
+            )
+                .frame(width: 14)
+                .overlay {
+                    Capsule()
+                        .fill(model.settings.theme.accent.opacity(isResizeHandleHovered || dragStartWidth != nil ? 0.7 : 0.25))
+                        .frame(width: 3, height: 36)
+                        .allowsHitTesting(false)
+                }
+                .onHover { isResizeHandleHovered = $0 }
+                .help("Drag to resize the sidebar")
+                .accessibilityLabel("Sidebar width")
+                .accessibilityValue("\(Int(activeWorkspaceWidth)) points")
+                .accessibilityHint("Drag left or right to resize the sidebar")
+                .accessibilityAdjustableAction { direction in
+                    reader.pinRestoreCurrentPositionOnce()
+                    switch direction {
+                    case .increment: resizeWorkspace(to: activeWorkspaceWidth + 20)
+                    case .decrement: resizeWorkspace(to: activeWorkspaceWidth - 20)
+                    @unknown default: break
                     }
-            }
+                }
         }
     }
 
@@ -250,9 +299,7 @@ struct ReaderScreen: View {
             HighlightPalette(
                 onPick: { _ = model.addHighlight(color: $0) },
                 onAddNote: {
-                    if let created = model.addHighlight(color: model.nextColorForNewNote()) {
-                        openNoteEditor(created, autofocus: true)
-                    }
+                    addNote(from: selection)
                 },
                 onAskAI: { model.addSelectionToChat() },
                 onPlay: { model.startReadAloudFromSelection() },
@@ -302,7 +349,9 @@ struct ReaderScreen: View {
                             presentation: .sidebar,
                             drawingScene: model.drawingScene(for: annotation.id),
                             isDark: model.settings.theme.isDark,
-                            onSave: { model.updateNote($0, for: annotation.id) },
+                            onSave: { note, completion in
+                                model.updateNote(note, for: annotation.id, completion: completion)
+                            },
                             onSaveDrawing: { scene, elementCount, completion in
                                 model.updateDrawing(
                                     scene: scene,
@@ -360,14 +409,22 @@ struct ReaderScreen: View {
         openNoteEditor(annotation, autofocus: !annotation.hasContent)
     }
 
+    private func addNote(from selection: ReaderSelection) {
+        reader.pinRestoreOnce(to: selection.locator.start)
+        guard let created = model.addHighlight(color: model.nextColorForNewNote()) else { return }
+        DispatchQueue.main.async {
+            openNoteEditor(created, autofocus: true)
+        }
+    }
+
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
         noteEditorAutofocus = autofocus
+        editingAnnotation = annotation
         if isSidebarPlacement, !model.isShowingAnnotations {
             reader.pinRestoreOnce(to: annotation.locator.start)
             inspectorOpenedForEditor = true
             model.isShowingAnnotations = true
         }
-        editingAnnotation = annotation
     }
 
     private func finishEditing() {
@@ -621,6 +678,94 @@ private struct ProgressFooter: View {
         case 0: return "Last page in chapter"
         case 1: return "1 page left in chapter"
         default: return "\(left) pages left in chapter"
+        }
+    }
+}
+
+/// A native divider keeps mouse tracking stable while SwiftUI and the web
+/// reader relayout on either side of the pointer.
+private struct SidebarResizeHandle: NSViewRepresentable {
+    var onBegin: () -> Void
+    var onDrag: (CGFloat) -> Void
+    var onEnd: () -> Void
+
+    func makeNSView(context: Context) -> HandleView { HandleView() }
+
+    func updateNSView(_ view: HandleView, context: Context) {
+        view.onBegin = onBegin
+        view.onDrag = onDrag
+        view.onEnd = onEnd
+    }
+
+    final class HandleView: NSView {
+        var onBegin: (() -> Void)?
+        var onDrag: ((CGFloat) -> Void)?
+        var onEnd: (() -> Void)?
+        private var trackingArea: NSTrackingArea?
+        private var isInside = false
+        private var startX: CGFloat?
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            if let trackingArea {
+                removeTrackingArea(trackingArea)
+            }
+            let area = NSTrackingArea(
+                rect: bounds,
+                options: [.cursorUpdate, .mouseMoved, .mouseEnteredAndExited, .inVisibleRect, .activeInKeyWindow],
+                owner: self,
+                userInfo: nil
+            )
+            addTrackingArea(area)
+            trackingArea = area
+        }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func cursorUpdate(with event: NSEvent) {
+            NSCursor.resizeLeftRight.set()
+        }
+
+        override func mouseEntered(with event: NSEvent) {
+            isInside = true
+            NSCursor.resizeLeftRight.set()
+        }
+
+        override func mouseMoved(with event: NSEvent) {
+            guard isInside else { return }
+            NSCursor.resizeLeftRight.set()
+        }
+
+        override func mouseExited(with event: NSEvent) {
+            isInside = false
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil { isInside = false }
+            window?.invalidateCursorRects(for: self)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            startX = event.locationInWindow.x
+            onBegin?()
+            NSCursor.resizeLeftRight.set()
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let startX else { return }
+            onDrag?(event.locationInWindow.x - startX)
+            NSCursor.resizeLeftRight.set()
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            if let startX { onDrag?(event.locationInWindow.x - startX) }
+            startX = nil
+            onEnd?()
         }
     }
 }

@@ -2,6 +2,33 @@ import XCTest
 @testable import EpubKit
 
 final class NoteMarkdownTests: XCTestCase {
+    func testKodiExcerptAppendsSelectionAndSuffix() {
+        let original = "  My **own** explanation.\n"
+        let result = NoteMarkdown.appendingKodiExcerpt(
+            "\n  A useful connection.  \n",
+            to: original
+        )
+
+        XCTAssertEqual(
+            result,
+            original + "\n\nA useful connection.\n\n--- Kodi"
+        )
+    }
+
+    func testKodiExcerptAppendsToEmptyNote() {
+        XCTAssertEqual(
+            NoteMarkdown.appendingKodiExcerpt("Selected words", to: ""),
+            "Selected words\n\n--- Kodi"
+        )
+    }
+
+    func testEmptyKodiExcerptDoesNotChangeNote() {
+        XCTAssertEqual(
+            NoteMarkdown.appendingKodiExcerpt(" \n ", to: "Existing"),
+            "Existing"
+        )
+    }
+
     func testPlainPreviewStripsCommonMarkers() {
         let markdown = """
         **Bold** and *italic* with ~~strike~~, a [link](https://example.com), and `code`
@@ -338,6 +365,37 @@ final class NoteMarkdownTests: XCTestCase {
         XCTAssertTrue(annotation.hasContent)
         XCTAssertEqual(annotation.javaScriptPayload["hasNote"] as? Bool, true)
         XCTAssertNil(annotation.javaScriptPayload["note"])
+    }
+
+    func testNoteSavedAsUnderlineStillPaintsAFilledHighlight() {
+        let annotation = Annotation(
+            locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [], offset: 0)),
+            text: "quote",
+            note: "A note",
+            color: .underline
+        )
+
+        XCTAssertEqual(annotation.visibleHighlightColor, .yellow)
+        XCTAssertEqual(annotation.javaScriptPayload["style"] as? String, "fill")
+        XCTAssertEqual(
+            annotation.javaScriptPayload["color"] as? String,
+            HighlightColor.yellow.cssValue
+        )
+    }
+
+    func testPlainUnderlineRemainsAnUnderlineHighlight() {
+        let annotation = Annotation(
+            locator: Locator(spineIndex: 0, start: TextPosition(elementPath: [], offset: 0)),
+            text: "quote",
+            color: .underline
+        )
+
+        XCTAssertEqual(annotation.visibleHighlightColor, .underline)
+        XCTAssertEqual(annotation.javaScriptPayload["style"] as? String, "underline")
+        XCTAssertEqual(
+            annotation.javaScriptPayload["color"] as? String,
+            HighlightColor.underline.cssValue
+        )
     }
 
     func testExportIncludesDrawingOnlyNotes() {

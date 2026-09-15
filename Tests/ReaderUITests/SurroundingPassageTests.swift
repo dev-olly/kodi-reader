@@ -20,19 +20,7 @@ final class SurroundingPassageTests: XCTestCase {
     func testExtractSurroundingPassageIncludesNeighboringBlocks() throws {
         let (reader, _) = try loadTextChapter()
 
-        var utterances: [ReaderUtterance]?
-        reader.extractUtterances(from: nil) { utterances = $0 }
-        XCTAssertTrue(spin { utterances != nil })
-
-        let list = try XCTUnwrap(utterances)
-        XCTAssertGreaterThan(list.count, 6, "Need a mid-chapter sentence with neighbors")
-        let mid = list[list.count / 2]
-        let locator = Locator(
-            spineIndex: reader.spineIndex,
-            start: mid.start,
-            end: mid.end,
-            text: mid.text
-        )
+        let locator = try middleParagraphLocator(in: reader)
 
         var passage: ReaderSurroundingPassage?
         reader.extractSurroundingPassage(from: locator) { passage = $0 }
@@ -41,13 +29,57 @@ final class SurroundingPassageTests: XCTestCase {
         let result = try XCTUnwrap(passage)
         XCTAssertFalse(result.quote.isEmpty, "Quote should be recovered from the locator")
         XCTAssertTrue(
-            result.quote.contains(mid.text) || mid.text.contains(result.quote),
-            "Quote should match the selected utterance"
+            result.quote.contains(locator.text ?? "") || (locator.text ?? "").contains(result.quote),
+            "Quote should match the selected text"
         )
         XCTAssertFalse(result.before.isEmpty, "Expected paragraphs before a mid-chapter quote")
         XCTAssertFalse(result.after.isEmpty, "Expected paragraphs after a mid-chapter quote")
         XCTAssertFalse(result.before.contains(result.quote))
         XCTAssertFalse(result.after.contains(result.quote))
+    }
+
+    private func middleParagraphLocator(in reader: ReaderController) throws -> Locator {
+        let script = """
+        (function () {
+          var paragraphs = Array.from(document.querySelectorAll('p')).filter(function (p) {
+            return (p.textContent || '').trim().length > 80;
+          });
+          if (!paragraphs.length) return null;
+          var paragraph = paragraphs[Math.floor(paragraphs.length / 2)];
+          var walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT, null);
+          var node = walker.nextNode();
+          while (node && (node.textContent || '').trim().length < 40) node = walker.nextNode();
+          if (!node) return null;
+          function pathOfNode(target) {
+            var path = [];
+            while (target && target !== document.body) {
+              var parent = target.parentNode;
+              if (!parent) return [];
+              path.unshift(Array.prototype.indexOf.call(parent.childNodes, target));
+              target = parent;
+            }
+            return path;
+          }
+          var text = node.textContent || '';
+          var start = Math.min(5, Math.max(0, text.length - 1));
+          var end = Math.min(text.length, start + 40);
+          return JSON.stringify({
+            spineIndex: \(reader.spineIndex),
+            start: { elementPath: pathOfNode(node), offset: start },
+            end: { elementPath: pathOfNode(node), offset: end },
+            text: text.slice(start, end)
+          });
+        })()
+        """
+        var payload: String?
+        var settled = false
+        reader.evaluateForTesting(script) { value in
+            payload = value as? String
+            settled = true
+        }
+        XCTAssertTrue(spin(timeout: 5) { settled })
+        let json = try XCTUnwrap(payload, "No middle paragraph found")
+        return try JSONDecoder().decode(Locator.self, from: Data(json.utf8))
     }
 
     // MARK: - Harness

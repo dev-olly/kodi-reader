@@ -15,17 +15,6 @@ public struct ReaderSelection: Equatable, Sendable {
     public var rect: CGRect
 }
 
-/// A speakable span extracted from the current spine document.
-public struct ReaderUtterance: Equatable, Sendable {
-    public var text: String
-    public var start: TextPosition
-    public var end: TextPosition
-
-    public var locator: Locator {
-        Locator(spineIndex: 0, start: start, end: end, text: text)
-    }
-}
-
 /// Neighboring paragraphs around a locator, used to give Ask AI more context.
 public struct ReaderSurroundingPassage: Equatable, Sendable {
     public var before: String
@@ -316,17 +305,6 @@ public final class ReaderController {
         evaluate("__reader.clearSelection()")
     }
 
-    /// Sentences remaining in the current spine item, from `position` or the page.
-    public func extractUtterances(
-        from position: TextPosition?,
-        completion: @escaping ([ReaderUtterance]) -> Void
-    ) {
-        let argument = position.map { json($0) } ?? "null"
-        evaluate("__reader.extractUtterances(\(argument))") { result in
-            completion(Self.decodeUtterances(result))
-        }
-    }
-
     /// A few paragraphs around `locator`, capped so prompts stay small.
     public func extractSurroundingPassage(
         from locator: Locator,
@@ -337,35 +315,6 @@ public final class ReaderController {
         evaluate("__reader.extractSurroundingPassage(\(start), \(end))") { result in
             completion(Self.decodeSurroundingPassage(result))
         }
-    }
-
-    /// Paints a live read-aloud overlay. Pass `nil` to clear it.
-    public func setReadingRange(_ locator: Locator?, charStart: Int? = nil, charEnd: Int? = nil) {
-        guard let locator else {
-            evaluate("__reader.setReadingRange(null)")
-            return
-        }
-        var payload: [String: Any] = [
-            "start": [
-                "elementPath": locator.start.elementPath,
-                "offset": locator.start.offset,
-            ],
-            "end": [
-                "elementPath": (locator.end ?? locator.start).elementPath,
-                "offset": (locator.end ?? locator.start).offset,
-            ],
-        ]
-        if let charStart { payload["charStart"] = charStart }
-        if let charEnd { payload["charEnd"] = charEnd }
-        guard let encoded = jsonString(payload) else { return }
-        let startArg = charStart.map(String.init) ?? "null"
-        let endArg = charEnd.map(String.init) ?? "null"
-        evaluate("__reader.setReadingRange(\(encoded), \(startArg), \(endArg))")
-    }
-
-    /// Turns to the page that contains `position` without animating.
-    public func revealForReading(_ position: TextPosition) {
-        evaluate("__reader.goToPosition(\(json(position)), false)")
     }
 
     /// Re-applies a reading position after the web view was temporarily taken
@@ -394,6 +343,18 @@ public final class ReaderController {
     /// imminent width change (opening/closing the sidebar note editor) restores here.
     public func pinRestoreCurrentPositionOnce() {
         evaluate("__reader.pinRestoreCurrentOnce()")
+    }
+
+    /// Holds the leading reading passage across the complete lifetime of the
+    /// Notes / Ask AI workspace, including both its opening and closing resize.
+    public func beginWorkspaceRestore() {
+        evaluate("__reader.beginWorkspaceRestore()")
+    }
+
+    /// Releases the workspace anchor only after handing it to the closing
+    /// resize, so the original leading passage cannot drift to the next column.
+    public func endWorkspaceRestore() {
+        evaluate("__reader.endWorkspaceRestore()")
     }
 
     /// Uses a specific text position as the next resize anchor.
@@ -708,36 +669,6 @@ public final class ReaderController {
             quote: (body["quote"] as? String) ?? "",
             after: (body["after"] as? String) ?? ""
         )
-    }
-
-    private static func decodeUtterances(_ result: Any?) -> [ReaderUtterance] {
-        let rows: [[String: Any]]
-        if let string = result as? String,
-           let data = string.data(using: .utf8),
-           let parsed = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] {
-            rows = parsed
-        } else if let parsed = result as? [[String: Any]] {
-            rows = parsed
-        } else {
-            return []
-        }
-
-        return rows.compactMap { raw in
-            guard
-                let text = raw["text"] as? String,
-                let startRaw = raw["start"] as? [String: Any],
-                let endRaw = raw["end"] as? [String: Any],
-                let startPath = intPath(startRaw["elementPath"]),
-                let endPath = intPath(endRaw["elementPath"])
-            else { return nil }
-            let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { return nil }
-            return ReaderUtterance(
-                text: trimmed,
-                start: TextPosition(elementPath: startPath, offset: intValue(startRaw["offset"])),
-                end: TextPosition(elementPath: endPath, offset: intValue(endRaw["offset"]))
-            )
-        }
     }
 
     private static func intPath(_ raw: Any?) -> [Int]? {

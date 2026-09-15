@@ -56,6 +56,20 @@ public enum ReaderKeyTarget {
         return shouldSuppressPageTurns(for: view)
     }
 
+    /// Page turns belong only to the reader window and only while an actual
+    /// sidebar/editor control is the first responder. Merely being visible or
+    /// having been clicked earlier must not make AppKit handle the key.
+    static func shouldHandlePageTurn(
+        for responder: NSResponder?,
+        eventWindow: NSWindow?,
+        readerWindow: NSWindow?
+    ) -> Bool {
+        guard let eventWindow, let readerWindow, eventWindow === readerWindow else {
+            return false
+        }
+        return !shouldSuppressPageTurns(for: responder, in: eventWindow)
+    }
+
     public static func isInsideReaderPage(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let node = current {
@@ -202,10 +216,6 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
         private var mouseMonitor: Any?
         private var updateObserver: NSObjectProtocol?
         private var lastSuppress = false
-        /// Sidebar control most recently clicked. Weak storage lets removal of
-        /// the panel immediately return navigation to the reader.
-        private weak var clickedNavigationOwner: NSView?
-
         override var acceptsFirstResponder: Bool { false }
 
         override func viewDidMoveToWindow() {
@@ -252,19 +262,21 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
 
         private func handleMouseDown(_ event: NSEvent) -> NSEvent {
             guard enabled else { return event }
-            guard let content = event.window?.contentView else { return event }
+            guard let eventWindow = event.window, let window, eventWindow === window else {
+                return event
+            }
+            guard let content = eventWindow.contentView else { return event }
             let point = content.convert(event.locationInWindow, from: nil)
             guard let hit = content.hitTest(point) else { return event }
 
-            if ReaderKeyTarget.isInsideReaderPage(hit) {
-                clickedNavigationOwner = nil
-            } else if let owner = ReaderKeyTarget.navigationOwner(from: hit) {
-                clickedNavigationOwner = owner
-                ReaderKeyTarget.claimKeyFocus(from: hit, in: event.window)
-            } else {
-                // Toolbar and close buttons do not own arrow navigation. This
-                // also clears a prior editor/list click before a panel closes.
-                clickedNavigationOwner = nil
+            if !ReaderKeyTarget.isInsideReaderPage(hit),
+               ReaderKeyTarget.navigationOwner(from: hit) != nil
+            {
+                // Only the window's current first responder may keep navigation
+                // keys. Remembering a clicked scroll view is unsafe: many
+                // SwiftUI scroll views cannot become first responder, leaving
+                // the event to fall through to AppKit's alert sound.
+                ReaderKeyTarget.claimKeyFocus(from: hit, in: eventWindow)
             }
             publishSuppressIfNeeded()
             return event
@@ -276,9 +288,11 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
 
             let eventWindow = event.window ?? NSApp.keyWindow
             let responder = eventWindow?.firstResponder
-            if hasActiveNavigationOwner(in: eventWindow)
-                || ReaderKeyTarget.shouldSuppressPageTurns(for: responder, in: eventWindow)
-            {
+            guard ReaderKeyTarget.shouldHandlePageTurn(
+                for: responder,
+                eventWindow: eventWindow,
+                readerWindow: window
+            ) else {
                 return event
             }
 
@@ -311,21 +325,10 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
         private func publishSuppressIfNeeded() {
             let activeWindow = window ?? NSApp.keyWindow
             let responder = activeWindow?.firstResponder
-            if let view = responder as? NSView, ReaderKeyTarget.isInsideReaderPage(view) {
-                clickedNavigationOwner = nil
-            }
-            let next = hasActiveNavigationOwner(in: activeWindow)
-                || ReaderKeyTarget.shouldSuppressPageTurns(for: responder, in: activeWindow)
+            let next = ReaderKeyTarget.shouldSuppressPageTurns(for: responder, in: activeWindow)
             guard next != lastSuppress else { return }
             lastSuppress = next
             onSuppressChange?(next)
-        }
-
-        private func hasActiveNavigationOwner(in activeWindow: NSWindow?) -> Bool {
-            guard let owner = clickedNavigationOwner, let ownerWindow = owner.window else {
-                return false
-            }
-            return activeWindow == nil || ownerWindow === activeWindow
         }
     }
 }

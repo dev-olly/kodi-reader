@@ -161,6 +161,45 @@ final class RenderingTests: XCTestCase {
         )
     }
 
+    /// A two-column page turn is atomic: duplicate input received while the
+    /// smooth turn is settling must not queue a second viewport. Otherwise a
+    /// single gesture delivered by two input paths silently drops a full
+    /// spread of text (for example the footer jumps from 4 directly to 6).
+    func testOverlappingTwoPageTurnsAdvanceExactlyOneSpread() throws {
+        let (reader, book) = try makeReader(
+            SampleBooks.frankenstein,
+            size: CGSize(width: 1400, height: 900)
+        )
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Chapter is too short to test spread turns")
+
+        reader.evaluateForTesting("__reader.goToPage(3, false)") { _ in }
+        XCTAssertTrue(wait(timeout: 5) { reader.page == 3 })
+
+        reader.nextPage()
+        reader.nextPage()
+        XCTAssertTrue(
+            wait(timeout: 5) { reader.page != 3 },
+            "The spread did not advance"
+        )
+        XCTAssertEqual(reader.page, 4, "A single turn skipped a complete spread of text")
+
+        // Reset instantly so no animation remains pending, then exercise the
+        // symmetric backward path with the same duplicate delivery.
+        reader.evaluateForTesting("__reader.goToPage(4, false)") { _ in }
+        XCTAssertTrue(wait(timeout: 2) { reader.page == 4 })
+        reader.previousPage()
+        reader.previousPage()
+        XCTAssertTrue(wait(timeout: 5) { reader.page != 4 })
+        XCTAssertEqual(reader.page, 3, "A single backward turn skipped a complete spread")
+    }
+
     /// Edge-tap paging must use the page gutter, not the text column. A click
     /// on a paragraph near the left edge used to fall inside the old 15% zone
     /// and turn the page; it must now stay put. A click on the empty margin
@@ -649,6 +688,63 @@ final class RenderingTests: XCTestCase {
                     && isTextPositionInLeadingColumn(position, in: reader)
             },
             "Pinned expand did not keep the reading column leading (page \(reader.page), geo \(pagingGeometry(from: reader)))"
+        )
+    }
+
+    /// Opening and then closing a sidebar is one resize session. The second
+    /// resize must use the passage captured before opening; otherwise reflowed
+    /// text from the narrow layout becomes the new anchor and the spread drifts
+    /// backward by one physical column when the sidebar closes.
+    func testWorkspaceRestoreKeepsOriginalLeadingColumnAcrossRoundTrip() throws {
+        let fullSize = CGSize(width: 1400, height: 900)
+        let sidebarSize = CGSize(width: 800, height: 900)
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: fullSize)
+
+        let chapter = largestChapterIndex(in: book)
+        reader.start(
+            at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
+            annotations: []
+        )
+        XCTAssertTrue(wait { !reader.isLoading })
+        try XCTSkipUnless(reader.pageCount > 2, "Need at least three pages to stand past the start")
+
+        var settings = reader.settings
+        settings.animatePageTurns = false
+        reader.settings = settings
+        XCTAssertTrue(wait(timeout: 4) { reader.pageCount > 2 })
+
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(wait(timeout: 5) { reader.page == 1 })
+        let original = currentTextPosition(from: reader)
+        XCTAssertFalse(original.elementPath.isEmpty, "No leading text before opening workspace")
+        XCTAssertTrue(
+            isTextPositionVisible(original, in: reader)
+                && isTextPositionInLeadingColumn(original, in: reader),
+            "Current position did not resolve inside the visible leading column"
+        )
+
+        reader.beginWorkspaceRestore()
+        window?.setContentSize(sidebarSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: sidebarSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: sidebarSize.width, height: sidebarSize.height)
+        XCTAssertTrue(
+            wait(timeout: 6) { reader.spineIndex == chapter && isTextPositionVisible(original, in: reader) },
+            "Workspace opening lost the original passage"
+        )
+
+        reader.endWorkspaceRestore()
+        window?.setContentSize(fullSize)
+        window?.contentView?.frame = CGRect(origin: .zero, size: fullSize)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: fullSize.width, height: fullSize.height)
+
+        XCTAssertTrue(
+            wait(timeout: 6) {
+                reader.spineIndex == chapter
+                    && isTextPositionInLeadingColumn(original, in: reader)
+            },
+            "Workspace round trip moved the original passage out of the leading column (page \(reader.page), geo \(pagingGeometry(from: reader)))"
         )
     }
 

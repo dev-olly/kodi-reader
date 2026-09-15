@@ -24,4 +24,14 @@ final class HighlightColorTests: XCTestCase {
         XCTAssertEqual(seen, Array(HighlightColor.allCases))
         XCTAssertEqual(color.next, .yellow)
     }
+
+    func testNextFillSkipsUnderline() {
+        XCTAssertEqual(HighlightColor.purple.nextFill, .yellow)
+        XCTAssertEqual(HighlightColor.underline.nextFill, .yellow)
+        XCTAssertEqual(HighlightColor.fillCases, [.yellow, .green, .blue, .pink, .purple])
+    }
+
+    func testUnderlineHasAVisibleStrokeColor() {
+        XCTAssertNotEqual(HighlightColor.underline.cssValue, "transparent")
+    }
 }

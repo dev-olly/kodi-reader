@@ -55,7 +55,8 @@ struct ReaderScreen: View {
                         model.updateNote(note, for: annotation.id, completion: completion)
                     },
                     onChangeColor: { model.changeColor($0, for: annotation.id) },
-                    onDelete: { model.deleteAnnotation(annotation.id) },
+                    onDelete: { deleteAnnotation(annotation.id) },
+                    onAskAI: { askAIAbout(annotation) },
                     onTogglePlacement: { toggleNoteEditorPlacement() }
                 )
             }
@@ -70,6 +71,7 @@ struct ReaderScreen: View {
                 reader.pinRestoreCurrentPositionOnce()
                 if !showing, model.workspace == .closed, model.settings.noteEditorPlacement == .sidebar {
                     editingAnnotation = nil
+                    model.aiNoteTarget = nil
                     inspectorOpenedForEditor = false
                     isDrawingExpanded = false
                     reader.pinRestore(to: nil)
@@ -78,6 +80,7 @@ struct ReaderScreen: View {
             .onChange(of: windowWidth) { _, _ in reader.pinRestoreCurrentPositionOnce() }
             .onDisappear {
                 model.isNoteEditorOpen = false
+                model.aiNoteTarget = nil
             }
             .background {
                 WindowWidthReader { windowWidth = $0 }
@@ -128,7 +131,7 @@ struct ReaderScreen: View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in
-                    Button { model.workspace = tab } label: {
+                    Button { selectWorkspace(tab) } label: {
                         Label(tab == .notes ? "Notes" : "Ask AI", systemImage: tab == .notes ? "note.text" : "sparkles")
                             .font(.system(size: 12, weight: .medium))
                             .foregroundStyle(model.workspace == tab ? model.settings.theme.accent : model.settings.theme.muted)
@@ -155,7 +158,7 @@ struct ReaderScreen: View {
                     .buttonStyle(.plain)
                     .help("Collapse drawing workspace")
                 }
-                Button { model.workspace = .closed } label: {
+                Button { closeWorkspace() } label: {
                     Image(systemName: "xmark")
                         .frame(width: 36, height: 44)
                         .contentShape(Rectangle())
@@ -245,22 +248,12 @@ struct ReaderScreen: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .readerKeyboardShortcuts(
                             reader,
-                            spaceAction: {
-                                if model.readAloud.isActive {
-                                    model.readAloud.togglePause()
-                                } else {
-                                    reader.nextPage()
-                                }
-                            },
+                            spaceAction: reader.nextPage,
                             onSuppressChange: { model.isNoteEditorOpen = $0 }
                         )
                         .overlay(alignment: .topLeading) { selectionPopover }
 
-                    if model.readAloud.isActive {
-                        ReadAloudBar()
-                    } else {
-                        ProgressFooter(reader: reader)
-                    }
+                    ProgressFooter(reader: reader)
                 }
 
                 navRail(systemImage: "chevron.right") {
@@ -301,8 +294,10 @@ struct ReaderScreen: View {
                 onAddNote: {
                     addNote(from: selection)
                 },
-                onAskAI: { model.addSelectionToChat() },
-                onPlay: { model.startReadAloudFromSelection() },
+                onAskAI: {
+                    editingAnnotation = nil
+                    model.addSelectionToChat()
+                },
                 onCopy: {
                     NSPasteboard.general.clearContents()
                     NSPasteboard.general.setString(selection.text, forType: .string)
@@ -333,6 +328,9 @@ struct ReaderScreen: View {
                 // Hiding the sheet because we docked it must not clear the editor.
                 if isSidebarPlacement, newValue == nil { return }
                 editingAnnotation = newValue
+                if newValue == nil, model.workspace != .askAI {
+                    model.aiNoteTarget = nil
+                }
             }
         )
     }
@@ -361,8 +359,9 @@ struct ReaderScreen: View {
                                 )
                             },
                             onChangeColor: { model.changeColor($0, for: annotation.id) },
-                            onDelete: { model.deleteAnnotation(annotation.id) },
+                            onDelete: { deleteAnnotation(annotation.id) },
                             onClose: { finishEditing() },
+                            onAskAI: { askAIAbout(annotation) },
                             onBack: { backToNotesList() },
                             onTogglePlacement: { toggleNoteEditorPlacement() },
                             onDrawActiveChanged: { active in
@@ -380,7 +379,7 @@ struct ReaderScreen: View {
                             chapterTitles: chapterTitles,
                             onSelect: { reader.go(to: $0) },
                             onEdit: { openNoteEditor($0, autofocus: !$0.hasContent) },
-                            onDelete: { model.deleteAnnotation($0.id) },
+                            onDelete: { deleteAnnotation($0.id) },
                             onExport: {
                                 NotesExporter.presentSavePanel(
                                     bookTitle: book.title,
@@ -419,6 +418,7 @@ struct ReaderScreen: View {
 
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
         noteEditorAutofocus = autofocus
+        model.aiNoteTarget = .annotation(annotation.id)
         editingAnnotation = annotation
         if isSidebarPlacement, !model.isShowingAnnotations {
             reader.pinRestoreOnce(to: annotation.locator.start)
@@ -429,6 +429,7 @@ struct ReaderScreen: View {
 
     private func finishEditing() {
         editingAnnotation = nil
+        model.aiNoteTarget = nil
         isDrawingExpanded = false
         reader.pinRestore(to: nil)
         if inspectorOpenedForEditor {
@@ -439,10 +440,55 @@ struct ReaderScreen: View {
 
     private func backToNotesList() {
         editingAnnotation = nil
+        model.aiNoteTarget = nil
         inspectorOpenedForEditor = false
         isDrawingExpanded = false
         reader.pinRestore(to: nil)
         model.isShowingAnnotations = true
+    }
+
+    private func askAIAbout(_ annotation: Annotation) {
+        model.addAnnotationToChat(model.annotation(with: annotation.id) ?? annotation)
+        if !isSidebarPlacement {
+            // The highlight remains active while the modal editor gets out of
+            // the way of the shared Ask AI workspace.
+            editingAnnotation = nil
+        }
+    }
+
+    private func deleteAnnotation(_ id: UUID) {
+        let deletingActiveTarget: Bool
+        if case .annotation(id) = model.aiNoteTarget {
+            deletingActiveTarget = true
+        } else {
+            deletingActiveTarget = false
+        }
+        model.deleteAnnotation(id)
+        if deletingActiveTarget {
+            editingAnnotation = nil
+            isDrawingExpanded = false
+        }
+    }
+
+    private func selectWorkspace(_ workspace: AppModel.Workspace) {
+        model.workspace = workspace
+        if workspace == .notes,
+           editingAnnotation == nil,
+           case .annotation(let id) = model.aiNoteTarget,
+           let annotation = model.annotation(with: id)
+        {
+            noteEditorAutofocus = false
+            editingAnnotation = annotation
+        }
+    }
+
+    private func closeWorkspace() {
+        model.workspace = .closed
+        editingAnnotation = nil
+        model.aiNoteTarget = nil
+        inspectorOpenedForEditor = false
+        isDrawingExpanded = false
+        reader.pinRestore(to: nil)
     }
 
     private func setDrawingExpanded(_ active: Bool, annotation: Annotation) {
@@ -509,18 +555,6 @@ struct ReaderScreen: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
-            Button {
-                model.toggleReadAloud()
-            } label: {
-                Label(
-                    "Read Aloud",
-                    systemImage: model.readAloud.isPlaying
-                        ? "speaker.wave.2.fill"
-                        : "speaker.wave.2"
-                )
-            }
-            .quickHelp(model.readAloud.isActive ? "Stop reading" : "Read aloud")
-
             Button {
                 model.toggleBookmark()
             } label: {

@@ -5,6 +5,11 @@ import ReaderUI
 import SwiftUI
 import UniformTypeIdentifiers
 
+enum AINoteTarget: Equatable {
+    case annotation(UUID)
+    case selection(ReaderSelection, chapterTitle: String?)
+}
+
 /// Application state: the open book, its saved record, and the reader driving it.
 @MainActor
 @Observable
@@ -22,10 +27,16 @@ final class AppModel {
 
     var errorMessage: String?
     var isShowingContents = false
+    var aiNoteTarget: AINoteTarget?
     enum Workspace: String { case closed, notes, askAI }
     var workspace: Workspace = .closed {
         willSet {
-            if newValue != workspace { reader?.pinRestoreCurrentPositionOnce() }
+            guard newValue != workspace else { return }
+            if workspace == .closed {
+                reader?.beginWorkspaceRestore()
+            } else if newValue == .closed {
+                reader?.endWorkspaceRestore()
+            }
         }
     }
     var isShowingAnnotations: Bool {
@@ -41,7 +52,6 @@ final class AppModel {
     var isNoteEditorOpen = false
     /// Last colour applied via a swatch, a new note, or the note editor picker.
     private(set) var lastAppliedHighlightColor: HighlightColor?
-    let readAloud = ReadAloudController()
     let aiConfig: AIConfigStore
     let chat: ChatController
 
@@ -316,7 +326,6 @@ final class AppModel {
     }
 
     func closeBook() {
-        readAloud.stop()
         chat.stop()
         persistChat(chat.threads, activeID: chat.activeThreadID)
         store.flush()
@@ -325,6 +334,7 @@ final class AppModel {
         book = nil
         record = nil
         chat.detach()
+        aiNoteTarget = nil
         workspace = .closed
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
@@ -377,37 +387,6 @@ final class AppModel {
         reader.start(at: record.position, annotations: record.annotations)
     }
 
-    func toggleReadAloud() {
-        guard let reader, let book else { return }
-        if readAloud.isActive {
-            readAloud.stop()
-            return
-        }
-        readAloud.start(
-            reader: reader,
-            bookTitle: book.title,
-            author: book.author,
-            voiceID: settings.readAloudVoiceID,
-            rate: settings.readAloudRate,
-            selection: reader.selection,
-            position: record?.position?.start
-        )
-    }
-
-    /// Always starts from the current selection, even if read-aloud is already running.
-    func startReadAloudFromSelection() {
-        guard let reader, let book, reader.selection != nil else { return }
-        readAloud.start(
-            reader: reader,
-            bookTitle: book.title,
-            author: book.author,
-            voiceID: settings.readAloudVoiceID,
-            rate: settings.readAloudRate,
-            selection: reader.selection,
-            position: record?.position?.start
-        )
-    }
-
     // MARK: - Ask AI
 
     /// Pins the on-screen passage before a width change so relayout cannot
@@ -431,6 +410,7 @@ final class AppModel {
     func addSelectionToChat() {
         guard book != nil else { return }
         guard let reader, let selection = reader.selection else {
+            aiNoteTarget = nil
             pinReaderForViewportChange()
             isShowingAskAI = true
             chat.shouldFocusComposer = true
@@ -438,6 +418,7 @@ final class AppModel {
         }
         reader.pinRestoreOnce(to: selection.locator.start)
         isShowingAskAI = true
+        aiNoteTarget = .selection(selection, chapterTitle: reader.chapterTitle)
         let reference = ChatReference(
             quotedText: selection.text,
             chapterTitle: reader.chapterTitle,
@@ -447,6 +428,32 @@ final class AppModel {
         chat.addReference(reference)
         reader.clearSelection()
         reader.extractSurroundingPassage(from: locator) { [weak self] passage in
+            Task { @MainActor in
+                let before = passage.before.trimmingCharacters(in: .whitespacesAndNewlines)
+                let after = passage.after.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !before.isEmpty || !after.isEmpty else { return }
+                self?.chat.updateReference(
+                    reference.id,
+                    contextBefore: before.isEmpty ? nil : before,
+                    contextAfter: after.isEmpty ? nil : after
+                )
+            }
+        }
+    }
+
+    /// Opens Ask AI with a durable reference to an existing highlight.
+    func addAnnotationToChat(_ annotation: Annotation) {
+        guard book != nil, let reader else { return }
+        reader.pinRestoreOnce(to: annotation.locator.start)
+        isShowingAskAI = true
+        aiNoteTarget = .annotation(annotation.id)
+        let reference = ChatReference(
+            quotedText: annotation.text,
+            chapterTitle: annotation.chapterTitle,
+            spineIndex: annotation.locator.spineIndex
+        )
+        chat.addReference(reference)
+        reader.extractSurroundingPassage(from: annotation.locator) { [weak self] passage in
             Task { @MainActor in
                 let before = passage.before.trimmingCharacters(in: .whitespacesAndNewlines)
                 let after = passage.after.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -501,10 +508,10 @@ final class AppModel {
     /// Colour for a new note: the next swatch after the last applied colour.
     func nextColorForNewNote() -> HighlightColor {
         if let last = lastAppliedHighlightColor {
-            return last.next
+            return last.nextFill
         }
         if let latest = record?.annotations.max(by: { $0.createdAt < $1.createdAt }) {
-            return latest.color.next
+            return latest.color.nextFill
         }
         return .yellow
     }
@@ -524,16 +531,78 @@ final class AppModel {
         }
 
         record.annotations[index].note = note.isEmpty ? nil : note
+        if record.annotations[index].hasNote, record.annotations[index].color == .underline {
+            record.annotations[index].color = .yellow
+            lastAppliedHighlightColor = .yellow
+        }
         record.annotations[index].modifiedAt = Date()
-        self.record = record
         do {
             try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
+            self.record = record
             completion?(.success(()))
+            // Refresh the note-dot on painted highlights without a full re-resolve.
+            reader?.setAnnotations(record.annotations)
         } catch {
             completion?(.failure(error))
         }
-        // Refresh the note-dot on painted highlights without a full re-resolve.
-        reader?.setAnnotations(record.annotations)
+    }
+
+    func appendKodiExcerpt(
+        _ excerpt: String,
+        to id: UUID,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        guard let annotation = annotation(with: id) else {
+            completion(.failure(NotePersistenceError.missingAnnotation))
+            return
+        }
+        let note = NoteMarkdown.appendingKodiExcerpt(
+            excerpt,
+            to: annotation.note ?? ""
+        )
+        guard note != (annotation.note ?? "") else {
+            completion(.failure(NotePersistenceError.emptyExcerpt))
+            return
+        }
+        updateNote(note, for: id, completion: completion)
+    }
+
+    func createKodiNote(
+        from excerpt: String,
+        for selection: ReaderSelection,
+        chapterTitle: String?,
+        completion: @escaping (Result<UUID, Error>) -> Void
+    ) {
+        guard let bookID = book?.bookID, var record else {
+            completion(.failure(NotePersistenceError.missingBook))
+            return
+        }
+        let note = NoteMarkdown.appendingKodiExcerpt(excerpt, to: "")
+        guard !note.isEmpty else {
+            completion(.failure(NotePersistenceError.emptyExcerpt))
+            return
+        }
+
+        let color = nextColorForNewNote()
+        let annotation = Annotation(
+            locator: selection.locator,
+            text: selection.text,
+            note: note,
+            color: color,
+            chapterTitle: chapterTitle
+        )
+        record.annotations.append(annotation)
+
+        do {
+            try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
+            self.record = record
+            lastAppliedHighlightColor = color
+            aiNoteTarget = .annotation(annotation.id)
+            reader?.setAnnotations(record.annotations)
+            completion(.success(annotation.id))
+        } catch {
+            completion(.failure(error))
+        }
     }
 
     func drawingScene(for id: UUID) -> Data? {
@@ -563,6 +632,10 @@ final class AppModel {
                 self.mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
                     guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
                     annotations[index].hasDrawing = hasDrawing
+                    if hasDrawing, annotations[index].color == .underline {
+                        annotations[index].color = .yellow
+                        self.lastAppliedHighlightColor = .yellow
+                    }
                     annotations[index].modifiedAt = Date()
                 }
                 if let annotations = self.record?.annotations {
@@ -582,16 +655,23 @@ final class AppModel {
 
     func changeColor(_ color: HighlightColor, for id: UUID) {
         guard let bookID = book?.bookID else { return }
+        var appliedColor = color
         mutateAnnotations(bookID: bookID) { annotations in
             guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
-            annotations[index].color = color
+            // Underline remains available for plain highlights, but a note or
+            // drawing always owns a filled highlight.
+            appliedColor = annotations[index].hasContent && color == .underline ? .yellow : color
+            annotations[index].color = appliedColor
             annotations[index].modifiedAt = Date()
         }
-        lastAppliedHighlightColor = color
+        lastAppliedHighlightColor = appliedColor
     }
 
     func deleteAnnotation(_ id: UUID) {
         guard let bookID = book?.bookID else { return }
+        if case .annotation(id) = aiNoteTarget {
+            aiNoteTarget = nil
+        }
         drawingCache[id] = nil
         store.drawingStore.deleteScene(bookID: bookID, annotationID: id)
         mutateAnnotations(bookID: bookID) { $0.removeAll { $0.id == id } }
@@ -698,6 +778,7 @@ private enum DrawingPersistenceError: LocalizedError {
 private enum NotePersistenceError: LocalizedError {
     case missingBook
     case missingAnnotation
+    case emptyExcerpt
 
     var errorDescription: String? {
         switch self {
@@ -705,6 +786,8 @@ private enum NotePersistenceError: LocalizedError {
             return "Could not save the note because no book is open."
         case .missingAnnotation:
             return "Could not save the note because the highlight no longer exists."
+        case .emptyExcerpt:
+            return "Select some text from the AI answer first."
         }
     }
 }

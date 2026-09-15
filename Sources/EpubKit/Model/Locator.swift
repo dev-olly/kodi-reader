@@ -58,6 +58,10 @@ public enum HighlightColor: String, Codable, CaseIterable, Sendable {
     case purple
     case underline
 
+    /// Background-fill colours. Notes always use one of these so their quoted
+    /// passage remains visibly highlighted rather than relying on a marker dot.
+    public static let fillCases: [HighlightColor] = [.yellow, .green, .blue, .pink, .purple]
+
     public var displayName: String {
         switch self {
         case .yellow: return "Yellow"
@@ -77,7 +81,9 @@ public enum HighlightColor: String, Codable, CaseIterable, Sendable {
         case .blue: return "rgba(88, 172, 250, 0.38)"
         case .pink: return "rgba(255, 138, 178, 0.40)"
         case .purple: return "rgba(191, 143, 249, 0.40)"
-        case .underline: return "transparent"
+        // The reader stylesheet suppresses the rectangle fill for this style
+        // and uses this value for the underline itself.
+        case .underline: return "rgba(229, 165, 10, 0.95)"
         }
     }
 
@@ -86,5 +92,11 @@ public enum HighlightColor: String, Codable, CaseIterable, Sendable {
         let all = Self.allCases
         guard let index = all.firstIndex(of: self) else { return .yellow }
         return all[(index + 1) % all.count]
+    }
+
+    /// Next background-fill colour, skipping the underline-only style.
+    public var nextFill: HighlightColor {
+        guard let index = Self.fillCases.firstIndex(of: self) else { return .yellow }
+        return Self.fillCases[(index + 1) % Self.fillCases.count]
     }
 }

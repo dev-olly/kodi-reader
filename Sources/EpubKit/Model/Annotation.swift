@@ -60,6 +60,12 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     /// Markdown, a drawing, or both.
     public var hasContent: Bool { hasNote || hasDrawing }
 
+    /// Notes must always paint their quote with a background highlight. This
+    /// also repairs older notes that were saved with the underline-only style.
+    public var visibleHighlightColor: HighlightColor {
+        hasContent && color == .underline ? .yellow : color
+    }
+
     public var isOrphaned: Bool { anchorStatus == .orphaned }
 
     /// Quote used as the note title in the UI.
@@ -72,10 +78,11 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
 
     /// Shape the reader runtime expects in `__reader.setHighlights`.
     public var javaScriptPayload: [String: Any] {
+        let visibleColor = visibleHighlightColor
         var payload: [String: Any] = [
             "id": id.uuidString,
-            "color": color.cssValue,
-            "style": color == .underline ? "underline" : "fill",
+            "color": visibleColor.cssValue,
+            "style": visibleColor == .underline ? "underline" : "fill",
             "text": text,
             "start": [
                 "elementPath": locator.start.elementPath,
@@ -150,6 +157,15 @@ public enum NoteMarkdown {
         public init(label: String) {
             self.label = label
         }
+    }
+
+    /// Appends text selected from an AI answer while leaving the existing note
+    /// byte-for-byte unchanged.
+    public static func appendingKodiExcerpt(_ excerpt: String, to note: String) -> String {
+        let selection = excerpt.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !selection.isEmpty else { return note }
+        let separator = note.isEmpty ? "" : "\n\n"
+        return note + separator + selection + "\n\n--- Kodi"
     }
 
     /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.

@@ -164,10 +164,6 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     public var animatePageTurns: Bool = true
     /// Sheet keeps the current modal editor; sidebar docks it in the inspector.
     public var noteEditorPlacement: NoteEditorPlacement = .sidebar
-    /// Kokoro voice id, e.g. `af_heart`.
-    public var readAloudVoiceID: String = "af_heart"
-    /// Playback rate applied after synthesis, independent of the model.
-    public var readAloudRate: Double = 1.0
 
     public init() {}
 
@@ -183,7 +179,6 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     public static let fontSizeRange: ClosedRange<Double> = 12...32
     public static let lineHeightRange: ClosedRange<Double> = 1.2...2.4
     public static let marginRange: ClosedRange<Double> = 0.03...0.20
-    public static let readAloudRateRange: ClosedRange<Double> = 0.8...1.75
 
     /// Horizontal margin in points for a given window width, clamped so the
     /// text column stays readable at both extremes.
@@ -226,7 +221,6 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
         ]
     }
 
-    /// Voice and rate live on settings but should not relayout the page.
     func affectsPageLayout(relativeTo other: ReaderSettings) -> Bool {
         theme != other.theme
             || font != other.font
@@ -242,7 +236,7 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case theme, font, fontSize, lineHeight, marginRatio
         case justified, hyphenated, twoPageSpread, animatePageTurns
-        case noteEditorPlacement, readAloudVoiceID, readAloudRate
+        case noteEditorPlacement
     }
 
     public init(from decoder: Decoder) throws {
@@ -260,9 +254,6 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
             NoteEditorPlacement.self,
             forKey: .noteEditorPlacement
         ) ?? .sheet
-        readAloudVoiceID = try container.decodeIfPresent(String.self, forKey: .readAloudVoiceID) ?? "af_heart"
-        let rate = try container.decodeIfPresent(Double.self, forKey: .readAloudRate) ?? 1.0
-        readAloudRate = min(Self.readAloudRateRange.upperBound, max(Self.readAloudRateRange.lowerBound, rate))
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -277,7 +268,5 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
         try container.encode(twoPageSpread, forKey: .twoPageSpread)
         try container.encode(animatePageTurns, forKey: .animatePageTurns)
         try container.encode(noteEditorPlacement, forKey: .noteEditorPlacement)
-        try container.encode(readAloudVoiceID, forKey: .readAloudVoiceID)
-        try container.encode(readAloudRate, forKey: .readAloudRate)
     }
 }

@@ -45,6 +45,40 @@ final class HighlightTests: XCTestCase {
         XCTAssertGreaterThan(count, 0, "The highlight produced no rects")
     }
 
+    func testNoteAlwaysPaintsAFilledHighlightEvenIfSavedAsUnderline() throws {
+        let (reader, chapter) = try loadTextChapter()
+        let anchor = try XCTUnwrap(reportedPosition, "No position was reported")
+
+        reader.setAnnotations([
+            Annotation(
+                locator: Locator(
+                    spineIndex: chapter,
+                    start: anchor,
+                    end: TextPosition(elementPath: anchor.elementPath, offset: anchor.offset + 25)
+                ),
+                text: "highlighted passage",
+                note: "Remember this",
+                color: .underline
+            )
+        ])
+
+        let isFilled = waitForNumber(
+            reader,
+            """
+            (function () {
+              var rect = document.querySelector('.reader-highlight-rect');
+              if (!rect) return 0;
+              var background = getComputedStyle(rect).backgroundColor;
+              return rect.dataset.style === 'fill'
+                && background !== 'transparent'
+                && background !== 'rgba(0, 0, 0, 0)' ? 1 : 0;
+            })()
+            """
+        ) { $0 == 1 }
+
+        XCTAssertEqual(isFilled, 1, "A note rendered without a filled highlight")
+    }
+
     func testRemovingAnnotationClearsRects() throws {
         let (reader, chapter) = try loadTextChapter()
         let anchor = try XCTUnwrap(reportedPosition)

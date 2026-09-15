@@ -12,7 +12,6 @@ enum LegacyFolioMigration {
         "library.json",
         "Books",
         "Drawings",
-        "Kokoro",
         "ai-models.json",
     ]
 

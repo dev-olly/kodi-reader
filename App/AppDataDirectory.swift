@@ -5,8 +5,8 @@ import Foundation
 /// `FileManager.applicationSupportDirectory` follows the process: a signed,
 /// sandboxed launch writes inside the container, but an unsigned Debug build
 /// writes to `~/Library/Application Support/KodiReader` and looks like a
-/// blank library. Recents, AI configs, and Kokoro models all use this root
-/// so they cannot split across those two folders.
+/// blank library. Recents and AI configs both use this root so they cannot
+/// split across those two folders.
 enum AppDataDirectory {
     static let folderName = "KodiReader"
     static let bundleID = "com.olly.KodiReader"
@@ -37,6 +37,8 @@ enum AppDataDirectory {
         let url = root
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         LegacyFolioMigration.run(into: url)
+        // Read-aloud was removed; discard its obsolete downloaded model cache.
+        try? FileManager.default.removeItem(at: url.appendingPathComponent("Kokoro", isDirectory: true))
         return url
     }
 }

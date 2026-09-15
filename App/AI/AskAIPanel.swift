@@ -1,3 +1,4 @@
+import AppKit
 import EpubKit
 import SwiftUI
 
@@ -69,6 +70,7 @@ struct AskAIPanel: View {
                         disabled: model.chat.messages.isEmpty && model.chat.input.isEmpty
                     ) {
                         showingHistory = false
+                        model.aiNoteTarget = nil
                         model.chat.newConversation()
                     }
 
@@ -292,10 +294,9 @@ struct AskAIPanel: View {
                     ProgressView()
                         .controlSize(.small)
                 } else {
-                    NoteMarkdownPreview(text: message.text)
-                        .font(.system(size: 13))
-                        .lineSpacing(5)
-                        .textSelection(.enabled)
+                    SelectableAIAnswer(
+                        markdown: message.text
+                    )
                 }
             } else {
                 Text(message.text)
@@ -455,6 +456,260 @@ struct AskAIPanel: View {
         .padding(.vertical, 4)
         .overlay(alignment: .leading) {
             Rectangle().fill(Color.yellow.opacity(0.65)).frame(width: 3)
+        }
+    }
+}
+
+/// A single AI answer with one contextual action: select text, then add that
+/// selection to the note that opened Ask AI.
+private struct SelectableAIAnswer: View {
+    let markdown: String
+
+    @Environment(AppModel.self) private var model
+    @State private var selection: String?
+    @State private var clearSelectionToken = 0
+    @State private var isSaving = false
+    @State private var saveError: String?
+    @State private var addedConfirmation = false
+    @State private var confirmationGeneration = 0
+
+    var body: some View {
+        SelectableAIText(
+            markdown: markdown,
+            isDark: model.settings.theme.isDark,
+            clearSelectionToken: clearSelectionToken,
+            onSelectionChange: { selected in
+                selection = selected
+                saveError = nil
+                if selected != nil {
+                    addedConfirmation = false
+                }
+            }
+        )
+        .overlay(alignment: .topTrailing) {
+            if let selection, canAddToNote {
+                VStack(alignment: .trailing, spacing: 4) {
+                    Button {
+                        addToNote(selection)
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                                .controlSize(.small)
+                        } else {
+                            Label("Add to note", systemImage: "note.text.badge.plus")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(isSaving)
+
+                    if let saveError {
+                        Text(saveError)
+                            .font(.caption2)
+                            .foregroundStyle(.red)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 5)
+                            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+                    }
+                }
+                .padding(4)
+                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
+            } else if addedConfirmation {
+                Label("Added to note", systemImage: "checkmark.circle.fill")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 7))
+                    .padding(4)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
+            }
+        }
+        .animation(.easeOut(duration: 0.12), value: canAddToNote)
+        .animation(.easeOut(duration: 0.12), value: addedConfirmation)
+    }
+
+    private var canAddToNote: Bool {
+        switch model.aiNoteTarget {
+        case .annotation(let id):
+            return model.annotation(with: id) != nil
+        case .selection:
+            return true
+        case nil:
+            return false
+        }
+    }
+
+    private func addToNote(_ selection: String) {
+        guard let target = model.aiNoteTarget else { return }
+        isSaving = true
+        saveError = nil
+        switch target {
+        case .annotation(let id):
+            model.appendKodiExcerpt(selection, to: id) { result in
+                finishSaving(result.map { id })
+            }
+        case .selection(let bookSelection, let chapterTitle):
+            model.createKodiNote(
+                from: selection,
+                for: bookSelection,
+                chapterTitle: chapterTitle,
+                completion: finishSaving
+            )
+        }
+    }
+
+    private func finishSaving(_ result: Result<UUID, Error>) {
+        isSaving = false
+        switch result {
+        case .success:
+            self.selection = nil
+            clearSelectionToken += 1
+            showAddedConfirmation()
+        case .failure(let error):
+            saveError = error.localizedDescription
+        }
+    }
+
+    private func showAddedConfirmation() {
+        confirmationGeneration += 1
+        let generation = confirmationGeneration
+        addedConfirmation = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_800_000_000)
+            if generation == confirmationGeneration {
+                addedConfirmation = false
+            }
+        }
+    }
+}
+
+/// AppKit supplies the selected range that SwiftUI's Text selection API does
+/// not expose. The view remains read-only and sizes itself to its answer.
+private struct SelectableAIText: NSViewRepresentable {
+    let markdown: String
+    let isDark: Bool
+    let clearSelectionToken: Int
+    let onSelectionChange: (String?) -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    func makeNSView(context: Context) -> NSTextView {
+        let textView = NSTextView()
+        textView.delegate = context.coordinator
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.isRichText = true
+        textView.drawsBackground = false
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.isHorizontallyResizable = false
+        textView.isVerticallyResizable = true
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(
+            width: textView.bounds.width,
+            height: .greatestFiniteMagnitude
+        )
+        textView.setAccessibilityLabel("AI answer")
+
+        context.coordinator.textView = textView
+        context.coordinator.update(markdown: markdown, isDark: isDark)
+        return textView
+    }
+
+    func updateNSView(_ textView: NSTextView, context: Context) {
+        context.coordinator.parent = self
+        context.coordinator.update(markdown: markdown, isDark: isDark)
+        if context.coordinator.lastClearSelectionToken != clearSelectionToken {
+            context.coordinator.lastClearSelectionToken = clearSelectionToken
+            context.coordinator.textView?.setSelectedRange(NSRange(location: 0, length: 0))
+        }
+    }
+
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: NSTextView,
+        context: Context
+    ) -> CGSize? {
+        let width = max(1, proposal.width ?? nsView.bounds.width)
+        nsView.frame.size.width = width
+        nsView.textContainer?.containerSize = NSSize(
+            width: width,
+            height: .greatestFiniteMagnitude
+        )
+        guard let layoutManager = nsView.layoutManager,
+              let textContainer = nsView.textContainer
+        else { return nil }
+        layoutManager.ensureLayout(for: textContainer)
+        let height = ceil(layoutManager.usedRect(for: textContainer).height)
+        nsView.frame.size.height = max(18, height)
+        return CGSize(width: width, height: max(18, height))
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: SelectableAIText
+        weak var textView: NSTextView?
+        var renderedMarkdown: String?
+        var renderedIsDark: Bool?
+        var lastClearSelectionToken: Int
+
+        init(_ parent: SelectableAIText) {
+            self.parent = parent
+            lastClearSelectionToken = parent.clearSelectionToken
+        }
+
+        func update(markdown: String, isDark: Bool) {
+            guard renderedMarkdown != markdown || renderedIsDark != isDark,
+                  let textView
+            else { return }
+            renderedMarkdown = markdown
+            renderedIsDark = isDark
+            textView.textStorage?.setAttributedString(Self.render(markdown, isDark: isDark))
+        }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let textView else { return }
+            let range = textView.selectedRange()
+            let selected: String?
+            if range.length > 0 {
+                let value = (textView.string as NSString).substring(with: range)
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                selected = value.isEmpty ? nil : value
+            } else {
+                selected = nil
+            }
+            DispatchQueue.main.async { [parent] in
+                parent.onSelectionChange(selected)
+            }
+        }
+
+        private static func render(_ markdown: String, isDark: Bool) -> NSAttributedString {
+            let value = NSMutableAttributedString(
+                attributedString: RichNoteCodec.decode(markdown, dark: isDark)
+            )
+            let fullRange = NSRange(location: 0, length: value.length)
+            value.enumerateAttribute(.font, in: fullRange) { fontValue, range, _ in
+                let original = fontValue as? NSFont ?? .systemFont(ofSize: 13)
+                let traits = original.fontDescriptor.symbolicTraits
+                var font: NSFont = traits.contains(.monoSpace)
+                    ? .monospacedSystemFont(ofSize: 12.5, weight: .regular)
+                    : .systemFont(ofSize: 13)
+                if traits.contains(.bold) {
+                    font = NSFontManager.shared.convert(font, toHaveTrait: .boldFontMask)
+                }
+                if traits.contains(.italic) {
+                    font = NSFontManager.shared.convert(font, toHaveTrait: .italicFontMask)
+                }
+                value.addAttribute(.font, value: font, range: range)
+            }
+            let paragraph = NSMutableParagraphStyle()
+            paragraph.lineSpacing = 5
+            paragraph.paragraphSpacing = 8
+            value.addAttribute(.paragraphStyle, value: paragraph, range: fullRange)
+            return value
         }
     }
 }

@@ -4,8 +4,8 @@
 
 A lightweight native EPUB reader for macOS. Paginated reading, typography and
 theme controls, highlights with notes and drawings, configurable Ask AI, webpage
-reading, and fluent on-device read-aloud — without the store, the sync, or the
-library management.
+reading, and a distraction-free interface — without the store, the sync, or
+the library management.
 
 ![Kodi Reader showing a highlighted passage and note](docs/screenshots/app-overview.png)
 
@@ -39,11 +39,6 @@ Load an article or page, extract the readable content, and read it in the same p
 
 ![Open web app or website](docs/screenshots/app-web.png)
 
-### Audio reading
-On-device read-aloud using [Kokoro](https://github.com/hexgrad/kokoro), no cloud TTS.
-
-![Audio reading](docs/screenshots/app-audio.png)
-
 ## Status
 
 Source is public under MIT. Issues are welcome for bugs. **Pull requests are
@@ -51,7 +46,7 @@ not the goal right now** — this is a source-available personal project, not a
 contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
-A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). The build is ad-hoc signed; first open may need Right-click → Open. You can also build from source (Xcode 26).
+A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). The build is ad-hoc signed; first open may need Right-click → Open. You can also build from source (Xcode 16 or later).
 
 The site is at [dev-olly.github.io/kodi-reader](https://dev-olly.github.io/kodi-reader/).
 
@@ -66,15 +61,11 @@ The site is at [dev-olly.github.io/kodi-reader](https://dev-olly.github.io/kodi-
   simple explanations with references to the passages you attach.
 - Opened webpages are fetched and converted locally. There are no extra
   network calls beyond the page itself.
-- **Read-aloud** downloads the Kokoro voice model into Application Support on
-  first use (Apache-2.0 weights, a few hundred megabytes). Synthesis runs
-  locally.
 
 ## Requirements
 
 - macOS 15 or later
-- Apple Silicon for read-aloud (Kokoro / MLX)
-- Xcode 26 or later (KokoroSwift requires Swift 6.2)
+- Xcode 16 or later
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the project file
 - Node.js/npm only when changing the bundled Excalidraw drawing host
 
@@ -103,13 +94,12 @@ cd kodi-reader
 brew install xcodegen
 ```
 
-The app target needs Xcode 26 (KokoroSwift). `swift test` for EpubKit and
-ReaderUI still runs on older toolchains. Signing is ad-hoc (`CODE_SIGN_IDENTITY:
+Signing is ad-hoc (`CODE_SIGN_IDENTITY:
 "-"`) so the app runs locally; it is not a notarized distribution build. On a
-machine with multiple Xcode versions, point the shell at Xcode 26:
+machine with multiple Xcode versions, point the shell at the Xcode you want:
 
 ```sh
-export DEVELOPER_DIR=/Applications/Xcode-26.3.0.app/Contents/Developer
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
 ```
 
 Generate the Xcode project and open it:
@@ -245,7 +235,3 @@ No library shelf, DRM/LCP, sync, OPDS catalogues, bundled audiobooks, or
 fixed-layout EPUB. Books are opened with `Cmd-O` or by dropping them on the
 window; articles and websites can be opened from a URL. The welcome screen
 lists what you were reading recently.
-
-Read-aloud uses [Kokoro](https://github.com/hexgrad/kokoro) locally via
-[KokoroSwift](https://github.com/mlalma/kokoro-ios). The first listen downloads
-the voice model (a few hundred megabytes) into Application Support.

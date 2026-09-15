@@ -121,7 +121,7 @@ open "/Users/olly/Documents/Projects/epub-reader/.build/dmg/Kodi Reader.app"
 
 Use the existing dependency lockfile/install workflow if dependencies are unavailable. Do not silently update versions. Request necessary build/cache permissions through the normal tooling.
 
-The package script already embeds KokoroSwift and checks framework dependencies. Preserve these fixes. A build success is not launch verification. Quit the previous review copy before launching the new packaged app, and verify the actual running surface is the updated build.
+The package script checks framework dependencies. Preserve that verification. A build success is not launch verification. Quit the previous review copy before launching the new packaged app, and verify the actual running surface is the updated build.
 
 ## Deliverables and Completion Criteria
 

@@ -59,11 +59,8 @@ fi
 rm -rf "$STAGING" "$OUT"
 mkdir -p "$STAGING"
 ditto "$APP" "$STAGING/${APP_NAME}.app"
-# Keep the package artifact self-contained even if Xcode package embedding changes.
 FRAMEWORKS="$STAGING/${APP_NAME}.app/Contents/Frameworks"
 mkdir -p "$FRAMEWORKS"
-ditto "$DERIVED/Build/Products/Release/PackageFrameworks/KokoroSwift.framework" \
-  "$FRAMEWORKS/KokoroSwift.framework"
 
 # Fail packaging if a linked framework is missing from the distribution.
 verify_frameworks() {
@@ -78,12 +75,12 @@ verify_frameworks() {
 }
 verify_frameworks "$STAGING/${APP_NAME}.app/Contents/MacOS/$APP_NAME"
 for framework in "$FRAMEWORKS/"*.framework; do
+  [[ -d "$framework" ]] || continue
   name="$(basename "$framework" .framework)"
   verify_frameworks "$framework/$name"
 done
 
-# Ad-hoc signing has no Team ID. Release entitlements explicitly disable
-# library validation for these bundled libraries.
+# Ad-hoc sign the finished app for local distribution.
 codesign --force --deep --sign - --options runtime \
   --entitlements App/KodiReader.release.entitlements \
   "$STAGING/${APP_NAME}.app"

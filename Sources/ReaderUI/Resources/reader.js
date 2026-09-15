@@ -12,7 +12,6 @@
   "use strict";
 
   var LAYER_ID = "reader-highlight-layer";
-  var READING_LAYER_ID = "reader-reading-layer";
 
   var settings = {
     marginX: 72,
@@ -235,6 +234,10 @@
   // One-shot resize anchor: captured before an imminent width change (e.g.
   // opening the sidebar note editor) and consumed by the next relayout.
   var pinnedRestoreOnce = null;
+  // Anchor held for the lifetime of the Notes / Ask AI workspace. Reflowing
+  // into the narrower workspace can move earlier text to the leading column;
+  // closing must still return to the passage that led the original spread.
+  var workspaceRestore = null;
   // Last position observed while the viewport was stable. WKWebView can reset
   // horizontal scroll to zero before either Swift's pin call or the resize
   // event reaches this runtime, so probing only at resize time is too late.
@@ -293,9 +296,27 @@
     }
   }
 
+  function beginWorkspaceRestore() {
+    if (workspaceRestore) return;
+    pinRestoreCurrentOnce();
+    workspaceRestore = copyPosition(pinnedRestoreOnce) || copyPosition(lastViewportPosition);
+    pinnedRestoreOnce = null;
+  }
+
+  function endWorkspaceRestore() {
+    if (workspaceRestore) {
+      pinnedRestoreOnce = copyPosition(workspaceRestore);
+      workspaceRestore = null;
+    }
+  }
+
   function rememberRestore(position) {
     if (pinnedRestore) {
       pendingRestore = pinnedRestore;
+      return;
+    }
+    if (workspaceRestore) {
+      pendingRestore = workspaceRestore;
       return;
     }
     if (pinnedRestoreOnce) {
@@ -340,7 +361,6 @@
         notifyPageChanged();
       }
       renderHighlights();
-      renderReadingRange();
     }
 
     function step() {
@@ -448,8 +468,14 @@
   }
 
   function nextPage() {
+    // A smooth page turn is one atomic navigation operation. Native controls,
+    // key handling, and WebKit can occasionally deliver the same gesture down
+    // two paths before the first scroll settles. Advancing from the pending
+    // destination would skip an entire viewport (two physical columns in a
+    // spread), so treat overlapping requests as the turn already succeeding.
+    if (pendingScrollTarget != null) return true;
     remeasureBounds();
-    var current = pendingScrollTarget == null ? getScrollLeft() : pendingScrollTarget;
+    var current = getScrollLeft();
     var target = Math.min(maxScrollLeft(), current + currentStride());
     if (target <= current + 2) return false;
     scrollToOffset(target, true);
@@ -458,8 +484,11 @@
   }
 
   function previousPage() {
+    // Keep backward turns atomic for the same reason as forward turns: never
+    // derive another destination from a scroll that is still in flight.
+    if (pendingScrollTarget != null) return true;
     remeasureBounds();
-    var current = pendingScrollTarget == null ? getScrollLeft() : pendingScrollTarget;
+    var current = getScrollLeft();
     var target = Math.max(0, current - currentStride());
     if (target >= current - 2) return false;
     scrollToOffset(target, true);
@@ -563,12 +592,14 @@
   /*
    * Anchor for the start of whatever is currently on screen.
    *
-   * Probing straight down the inside edge of the first column finds the top
-   * line in reading order for both one and two column layouts. If the page
-   * opens with an image or the probes all land in gaps, fall back to walking
-   * the text nodes for the first one laid out on this page.
+   * Start from a real line rectangle in the leading column. Asking WebKit for
+   * a caret in page padding is ambiguous: it can return text from the previous
+   * physical column, which makes a sidebar round trip drift backward.
    */
   function currentPosition() {
+    var visibleLine = firstLeadingVisibleTextPosition();
+    if (visibleLine) return visibleLine;
+
     var x = settings.marginX + 4;
     var usableHeight = Math.max(1, window.innerHeight - 2 * settings.marginY);
 
@@ -579,6 +610,74 @@
     }
 
     return firstVisibleAnchor();
+  }
+
+  function firstLeadingVisibleTextPosition() {
+    var leadingEnd = window.innerWidth / Math.max(1, state.columns);
+    var layer = document.getElementById(LAYER_ID);
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.textContent || !node.textContent.trim()) return NodeFilter.FILTER_REJECT;
+        if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    var best = null;
+    var node;
+
+    while ((node = walker.nextNode())) {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rect = rects[i];
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (rect.right <= 0 || rect.left >= leadingEnd) continue;
+        if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
+        if (
+          !best ||
+          rect.top < best.rect.top - 1 ||
+          (Math.abs(rect.top - best.rect.top) <= 1 && rect.left < best.rect.left)
+        ) {
+          best = { rect: rect, node: node };
+        }
+      }
+    }
+
+    if (!best) return null;
+    var probeXs = [
+      best.rect.left + Math.min(4, best.rect.width / 2),
+      best.rect.left + best.rect.width / 2,
+      best.rect.right - Math.min(4, best.rect.width / 2),
+    ];
+    var y = clamp(best.rect.top + best.rect.height / 2, 1, window.innerHeight - 1);
+    for (var p = 0; p < probeXs.length; p++) {
+      var caret = document.caretRangeFromPoint(
+        clamp(probeXs[p], 1, Math.max(1, leadingEnd - 1)),
+        y
+      );
+      if (!caret || caret.startContainer !== best.node) continue;
+      var caretOffset = clamp(caret.startOffset, 0, Math.max(0, best.node.textContent.length - 1));
+      return { elementPath: pathOfNode(best.node), offset: caretOffset };
+    }
+
+    // Some WebKit builds return the surrounding element even when the probe
+    // is inside a glyph. Resolve the character directly from the chosen line
+    // rectangle so the locator cannot fall back to the start of a long node
+    // laid out on an earlier page.
+    for (var offset = 0; offset < best.node.textContent.length; offset++) {
+      var character = document.createRange();
+      character.setStart(best.node, offset);
+      character.setEnd(best.node, offset + 1);
+      var characterRect = character.getBoundingClientRect();
+      var sameLine =
+        characterRect.height > 0 &&
+        Math.abs(characterRect.top - best.rect.top) <= 1 &&
+        characterRect.right > 0 &&
+        characterRect.left < leadingEnd;
+      if (sameLine) return { elementPath: pathOfNode(best.node), offset: offset };
+    }
+    return null;
   }
 
   /*
@@ -592,7 +691,6 @@
     var pageEnd = pageStart + stride;
     var scrollLeft = getScrollLeft();
     var layer = document.getElementById(LAYER_ID);
-    var readingLayer = document.getElementById(READING_LAYER_ID);
 
     function isOnThisPage(rect) {
       if (rect.width === 0 && rect.height === 0) return false;
@@ -606,7 +704,6 @@
           return NodeFilter.FILTER_REJECT;
         }
         if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
-        if (readingLayer && readingLayer.contains(node)) return NodeFilter.FILTER_REJECT;
         return NodeFilter.FILTER_ACCEPT;
       },
     });
@@ -622,7 +719,7 @@
 
     var elementWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
       acceptNode: function (element) {
-        if (element.id === LAYER_ID || element.id === READING_LAYER_ID) {
+        if (element.id === LAYER_ID) {
           return NodeFilter.FILTER_REJECT;
         }
         return NodeFilter.FILTER_ACCEPT;
@@ -832,8 +929,6 @@
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
         if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
-        var readingLayer = document.getElementById(READING_LAYER_ID);
-        if (readingLayer && readingLayer.contains(node)) return NodeFilter.FILTER_REJECT;
         if (!node.textContent || !node.textContent.trim()) {
           return NodeFilter.FILTER_REJECT;
         }
@@ -969,32 +1064,17 @@
     post({ type: "highlightsResolved", results: results });
   }
 
-  // ---------------------------------------------------------- read aloud
+  // ------------------------------------------------------- passage context
 
-  var readingRange = null;
-  var MAX_UTTERANCE_CHARS = 1600;
-  var MIN_UTTERANCE_CHARS = 60;
-  var SKIP_SPEAK_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, SVG: 1, RT: 1, RP: 1 };
+  var SKIP_CONTEXT_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, SVG: 1, RT: 1, RP: 1 };
 
-  function readingLayer() {
-    var layer = document.getElementById(READING_LAYER_ID);
-    if (!layer) {
-      layer = document.createElement("div");
-      layer.id = READING_LAYER_ID;
-      document.body.appendChild(layer);
-    }
-    return layer;
-  }
-
-  function isSpeakableTextNode(node) {
+  function isReadableTextNode(node) {
     if (!node || !node.textContent) return false;
     var highlight = document.getElementById(LAYER_ID);
-    var reading = document.getElementById(READING_LAYER_ID);
     if (highlight && highlight.contains(node)) return false;
-    if (reading && reading.contains(node)) return false;
     var el = node.parentElement;
     while (el && el !== document.body) {
-      if (SKIP_SPEAK_TAGS[el.tagName]) return false;
+      if (SKIP_CONTEXT_TAGS[el.tagName]) return false;
       if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") {
         return false;
       }
@@ -1003,10 +1083,10 @@
     return true;
   }
 
-  function collectSpeakableNodes() {
+  function collectReadableNodes() {
     var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
       acceptNode: function (node) {
-        return isSpeakableTextNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        return isReadableTextNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
       },
     });
     var nodes = [];
@@ -1039,97 +1119,6 @@
       el = el.parentElement;
     }
     return el || document.body;
-  }
-
-  function isSentenceTerminator(ch, next) {
-    if (ch !== "." && ch !== "!" && ch !== "?") return false;
-    if (!next) return true;
-    return /\s/.test(next);
-  }
-
-  function flushUtterance(pieces, start, end, utterances) {
-    if (end <= start) return;
-    var raw = "";
-    var i;
-    for (i = start; i < end; i++) raw += pieces[i].ch;
-    var text = raw.replace(/\s+/g, " ").trim();
-    if (!text || text.length < 1) return;
-    if (!/[A-Za-z0-9\u00C0-\u024F]/.test(text)) return;
-
-    var first = pieces[start];
-    var last = pieces[end - 1];
-    var from = start;
-    var to = end - 1;
-    while (from < end && /\s/.test(pieces[from].ch)) from++;
-    while (to > from && /\s/.test(pieces[to].ch)) to--;
-    if (from > to) return;
-    first = pieces[from];
-    last = pieces[to];
-
-    utterances.push({
-      text: text,
-      start: { elementPath: pathOfNode(first.node), offset: first.offset },
-      end: { elementPath: pathOfNode(last.node), offset: last.offset + 1 },
-    });
-  }
-
-  function splitLongUtterances(utterances) {
-    var result = [];
-    for (var i = 0; i < utterances.length; i++) {
-      var item = utterances[i];
-      if (item.text.length <= MAX_UTTERANCE_CHARS) {
-        result.push(item);
-        continue;
-      }
-      var words = item.text.split(" ");
-      var chunk = "";
-      for (var w = 0; w < words.length; w++) {
-        var next = chunk ? chunk + " " + words[w] : words[w];
-        if (next.length > MAX_UTTERANCE_CHARS && chunk) {
-          result.push({
-            text: chunk,
-            start: item.start,
-            end: item.end,
-          });
-          chunk = words[w];
-        } else {
-          chunk = next;
-        }
-      }
-      if (chunk) {
-        result.push({
-          text: chunk,
-          start: item.start,
-          end: item.end,
-        });
-      }
-    }
-    return result;
-  }
-
-  function mergeShortUtterances(utterances) {
-    if (utterances.length < 2) return utterances;
-    var result = [];
-    var i = 0;
-    while (i < utterances.length) {
-      var current = utterances[i];
-      while (
-        current.text.length < MIN_UTTERANCE_CHARS &&
-        i + 1 < utterances.length &&
-        current.text.length + 1 + utterances[i + 1].text.length <= MAX_UTTERANCE_CHARS
-      ) {
-        var next = utterances[i + 1];
-        current = {
-          text: current.text + " " + next.text,
-          start: current.start,
-          end: next.end,
-        };
-        i++;
-      }
-      result.push(current);
-      i++;
-    }
-    return result;
   }
 
   var SURROUNDING_BLOCK_RADIUS = 2;
@@ -1183,8 +1172,8 @@
     return walker.nextNode();
   }
 
-  function groupSpeakableBlocks() {
-    var nodes = collectSpeakableNodes();
+  function groupReadableBlocks() {
+    var nodes = collectReadableNodes();
     var blocks = [];
     var current = null;
     var i;
@@ -1250,7 +1239,7 @@
 
     var startOffset = start.offset || 0;
     var endOffset = endPos.offset != null ? endPos.offset : startOffset;
-    var blocks = groupSpeakableBlocks();
+    var blocks = groupReadableBlocks();
     if (!blocks.length) return empty;
 
     var firstHit = -1;
@@ -1305,156 +1294,6 @@
       joinParagraphs(afterParts)
     );
     return { before: trimmed.before, quote: quote, after: trimmed.after };
-  }
-
-  function extractUtterances(fromPosition) {
-    var nodes = collectSpeakableNodes();
-    if (!nodes.length) return [];
-
-    var startNode = null;
-    var startOffset = 0;
-    var origin = fromPosition;
-    if (!origin || !origin.elementPath || !origin.elementPath.length) {
-      origin = currentPosition();
-    }
-    if (origin && origin.elementPath && origin.elementPath.length) {
-      startNode = nodeAtPath(origin.elementPath);
-      startOffset = origin.offset || 0;
-    }
-
-    var pieces = [];
-    var started = !startNode;
-    var i;
-    for (i = 0; i < nodes.length; i++) {
-      var node = nodes[i];
-      if (!started) {
-        if (node !== startNode) continue;
-        started = true;
-      }
-      var text = node.textContent || "";
-      var from = node === startNode ? Math.min(Math.max(startOffset, 0), text.length) : 0;
-      var o;
-      for (o = from; o < text.length; o++) {
-        pieces.push({ ch: text.charAt(o), node: node, offset: o });
-      }
-    }
-    if (!pieces.length) return [];
-
-    var utterances = [];
-    var start = 0;
-    var lastBlock = blockParent(pieces[0].node);
-    for (i = 0; i < pieces.length; i++) {
-      var piece = pieces[i];
-      var block = blockParent(piece.node);
-      if (block !== lastBlock && i > start) {
-        flushUtterance(pieces, start, i, utterances);
-        start = i;
-        lastBlock = block;
-      }
-      var nextCh = i + 1 < pieces.length ? pieces[i + 1].ch : "";
-      if (isSentenceTerminator(piece.ch, nextCh)) {
-        flushUtterance(pieces, start, i + 1, utterances);
-        start = i + 1;
-      }
-    }
-    flushUtterance(pieces, start, pieces.length, utterances);
-    return mergeShortUtterances(splitLongUtterances(utterances));
-  }
-
-  function subrangeByCharOffsets(range, charStart, charEnd) {
-    if (!range || charStart == null || charEnd == null) return range;
-    var startBound = Math.max(0, charStart);
-    var endBound = Math.max(startBound, charEnd);
-    var walker = document.createTreeWalker(
-      range.commonAncestorContainer,
-      NodeFilter.SHOW_TEXT,
-      {
-        acceptNode: function (node) {
-          if (!range.intersectsNode(node)) return NodeFilter.FILTER_REJECT;
-          return NodeFilter.FILTER_ACCEPT;
-        },
-      }
-    );
-
-    var counted = 0;
-    var startNode = null;
-    var startOff = 0;
-    var endNode = null;
-    var endOff = 0;
-    var node;
-    while ((node = walker.nextNode())) {
-      var text = node.textContent || "";
-      var nodeStart = 0;
-      var nodeEnd = text.length;
-      if (node === range.startContainer) nodeStart = range.startOffset;
-      if (node === range.endContainer) nodeEnd = range.endOffset;
-      if (nodeStart >= nodeEnd) continue;
-
-      var length = nodeEnd - nodeStart;
-      if (!startNode && counted + length > startBound) {
-        startNode = node;
-        startOff = nodeStart + (startBound - counted);
-      }
-      if (counted + length >= endBound) {
-        endNode = node;
-        endOff = nodeStart + (endBound - counted);
-        break;
-      }
-      counted += length;
-    }
-
-    if (!startNode) return range;
-    try {
-      var sliced = document.createRange();
-      sliced.setStart(startNode, startOff);
-      sliced.setEnd(endNode || startNode, endNode ? endOff : startOff + 1);
-      return sliced.collapsed ? range : sliced;
-    } catch (error) {
-      return range;
-    }
-  }
-
-  function setReadingRange(locator, charStart, charEnd) {
-    if (!locator) {
-      readingRange = null;
-      renderReadingRange();
-      return;
-    }
-    readingRange = {
-      start: locator.start,
-      end: locator.end || locator.start,
-      charStart: charStart,
-      charEnd: charEnd,
-    };
-    renderReadingRange();
-  }
-
-  function renderReadingRange() {
-    var layer = readingLayer();
-    layer.textContent = "";
-    if (!readingRange) return;
-
-    var range = rangeFromLocator(readingRange);
-    if (!range) return;
-    range = subrangeByCharOffsets(range, readingRange.charStart, readingRange.charEnd);
-    if (!range) return;
-
-    var scrollLeft = getScrollLeft();
-    var scrollTop = scrollingRoot().scrollTop;
-    var rects = range.getClientRects();
-    var fragment = document.createDocumentFragment();
-    for (var r = 0; r < rects.length; r++) {
-      var rect = rects[r];
-      if (rect.width < 1 || rect.height < 1) continue;
-      var div = document.createElement("div");
-      div.className = "reader-reading-rect";
-      div.style.left = rect.left + scrollLeft + "px";
-      div.style.top = rect.top + scrollTop + "px";
-      div.style.width = rect.width + "px";
-      div.style.height = rect.height + "px";
-      fragment.appendChild(div);
-    }
-    layer.appendChild(fragment);
   }
 
   // ----------------------------------------------------------------- theme
@@ -1528,16 +1367,15 @@
 
   function isReaderChrome(el) {
     if (!el || el.nodeType !== 1) return true;
-    if (el.id === LAYER_ID || el.id === READING_LAYER_ID) return true;
+    if (el.id === LAYER_ID) return true;
     if (
       el.classList &&
       (el.classList.contains("reader-highlight-rect") ||
-        el.classList.contains("reader-highlight-layer") ||
-        el.classList.contains("reader-reading-rect"))
+        el.classList.contains("reader-highlight-layer"))
     ) {
       return true;
     }
-    return !!(el.closest && (el.closest("#" + LAYER_ID) || el.closest("#" + READING_LAYER_ID)));
+    return !!(el.closest && el.closest("#" + LAYER_ID));
   }
 
   /*
@@ -1636,7 +1474,7 @@
     }
     // The event may arrive after WebKit has reset scrollLeft. Use the last
     // settled position instead of trusting a now-first-page caret probe.
-    if (!pinnedRestore && !pinnedRestoreOnce && lastViewportPosition) {
+    if (!pinnedRestore && !workspaceRestore && !pinnedRestoreOnce && lastViewportPosition) {
       pinnedRestoreOnce = copyPosition(lastViewportPosition);
     } else {
       pinRestoreCurrentOnce();
@@ -1644,7 +1482,7 @@
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
       // A pinned locator (Draw, or a Swift pin before a sidebar toggle) wins.
-      relayout(pinnedRestore || pinnedRestoreOnce || currentPosition());
+      relayout(pinnedRestore || workspaceRestore || pinnedRestoreOnce || currentPosition());
     }, 90);
   }
 
@@ -1716,20 +1554,14 @@
     pinRestore: pinRestore,
     pinRestoreOnce: pinRestoreOnce,
     pinRestoreCurrentOnce: pinRestoreCurrentOnce,
+    beginWorkspaceRestore: beginWorkspaceRestore,
+    endWorkspaceRestore: endWorkspaceRestore,
     goToEnd: function () {
       measure();
       goToPage(state.pageCount - 1, false);
     },
     setHighlights: setHighlights,
     clearSelection: clearSelection,
-    extractUtterances: function (fromPosition) {
-      try {
-        return JSON.stringify(extractUtterances(fromPosition));
-      } catch (error) {
-        reportError("extractUtterances", error);
-        return "[]";
-      }
-    },
     extractSurroundingPassage: function (start, end) {
       try {
         return JSON.stringify(extractSurroundingPassage(start, end));
@@ -1738,7 +1570,6 @@
         return JSON.stringify({ before: "", quote: "", after: "" });
       }
     },
-    setReadingRange: setReadingRange,
     /*
      * Re-measures and reports where we are. The app calls this once a freshly
      * loaded document has been positioned, so that opening a book emits a

@@ -20,6 +20,7 @@ struct NoteEditor: View {
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     let onClose: () -> Void
+    var onAskAI: (() -> Void)? = nil
     var onBack: (() -> Void)? = nil
     var onTogglePlacement: (() -> Void)? = nil
     var onDrawActiveChanged: ((Bool) -> Void)? = nil
@@ -120,6 +121,12 @@ struct NoteEditor: View {
         .onChange(of: isDark) { _, newValue in
             drawingController.setTheme(newValue ? "dark" : "light")
         }
+        .onChange(of: annotation.visibleHighlightColor) { _, newValue in
+            selectedColor = newValue
+        }
+        .onChange(of: annotation.note) { _, newValue in
+            applyPersistedNote(newValue ?? "")
+        }
         .onDisappear(perform: flush)
     }
 
@@ -143,6 +150,18 @@ struct NoteEditor: View {
                     .foregroundStyle(theme.uiForeground.opacity(presentation == .sheet ? 0.88 : 0.72))
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .multilineTextAlignment(presentation == .sheet ? .center : .leading)
+
+                if onAskAI != nil {
+                    Button(action: askAIAboutHighlight) {
+                        Image(systemName: "sparkles")
+                            .font(.body.weight(.medium))
+                            .frame(width: 30, height: 30)
+                    }
+                    .buttonStyle(QuietIconButtonStyle(theme: theme))
+                    .help("Ask AI about this highlight")
+                    .accessibilityLabel("Ask AI about this highlight")
+                    .disabled(mode == .draw)
+                }
 
                 noteMenu
 
@@ -234,6 +253,7 @@ struct NoteEditor: View {
                 }
                 .buttonStyle(.plain)
                 .help(color.displayName)
+                .disabled(annotation.hasContent && color == .underline)
                 .accessibilityLabel(color.displayName + " highlight")
                 .accessibilityAddTraits(selectedColor == color ? [.isSelected] : [])
             }
@@ -406,7 +426,7 @@ struct NoteEditor: View {
         text = annotation.note ?? ""
         lastSavedText = text
         sourceModeReason = sourceModeFallbackReason(for: text)
-        selectedColor = annotation.color
+        selectedColor = annotation.visibleHighlightColor
         selectedRange = NSRange(location: (text as NSString).length, length: 0)
         if sourceModeReason != nil {
             mode = .source
@@ -418,6 +438,16 @@ struct NoteEditor: View {
             handleModeChange(.draw)
         }
         didLoad = true
+    }
+
+    private func applyPersistedNote(_ value: String) {
+        guard didLoad, value != lastSavedText else { return }
+        saveWork?.cancel()
+        lastSavedText = value
+        text = value
+        sourceModeReason = sourceModeFallbackReason(for: value)
+        selectedRange = NSRange(location: (value as NSString).length, length: 0)
+        saveStatus = .saved
     }
 
     private func handleModeChange(_ newValue: EditorMode) {
@@ -445,6 +475,16 @@ struct NoteEditor: View {
         drawingWork?.cancel()
         onDrawActiveChanged?(false)
         flushDrawingBeforeClose(teardown: true)
+    }
+
+    private func askAIAboutHighlight() {
+        guard let onAskAI else { return }
+        saveWork?.cancel()
+        persistNote(text) { result in
+            if case .success = result {
+                onAskAI()
+            }
+        }
     }
 
     private func flushDrawingBeforeClose(teardown: Bool) {
@@ -486,16 +526,23 @@ struct NoteEditor: View {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
-    private func persistNote(_ value: String) {
+    private func persistNote(
+        _ value: String,
+        completion: ((Result<Void, Error>) -> Void)? = nil
+    ) {
         guard value != lastSavedText else {
             saveStatus = .saved
+            completion?(.success(()))
             return
         }
         saveRevision += 1
         let revision = saveRevision
         saveStatus = .saving
         onSave(value) { result in
-            guard revision == saveRevision else { return }
+            guard revision == saveRevision else {
+                completion?(result)
+                return
+            }
             switch result {
             case .success:
                 lastSavedText = value
@@ -503,6 +550,7 @@ struct NoteEditor: View {
             case .failure(let error):
                 saveStatus = .failed(error.localizedDescription)
             }
+            completion?(result)
         }
     }
 
@@ -565,6 +613,7 @@ struct NoteSheet: View {
     let onSave: (String, @escaping (Result<Void, Error>) -> Void) -> Void
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
+    var onAskAI: (() -> Void)? = nil
     var onTogglePlacement: (() -> Void)? = nil
 
     @Environment(\.dismiss) private var dismiss
@@ -579,6 +628,7 @@ struct NoteSheet: View {
             onChangeColor: onChangeColor,
             onDelete: onDelete,
             onClose: { dismiss() },
+            onAskAI: onAskAI,
             onTogglePlacement: onTogglePlacement
         )
         .frame(minWidth: 520, idealWidth: 580, minHeight: 560, idealHeight: 640)

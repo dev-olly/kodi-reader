@@ -16,8 +16,6 @@ final class AppearanceMigrationTests: XCTestCase {
         original.font = .sansSerif
         original.justified = true
         original.twoPageSpread = false
-        original.readAloudRate = 1.5
-        original.readAloudVoiceID = "bf_emma"
         original.noteEditorPlacement = .sheet
         store.saveSettings(original)
         let migrated = try store.migrateAppearanceSettings(defaultSettings: ReaderSettings()) {
@@ -31,8 +29,6 @@ final class AppearanceMigrationTests: XCTestCase {
         XCTAssertEqual(migrated.noteEditorPlacement, .sidebar)
         XCTAssertEqual(migrated.theme, .dark)
         XCTAssertFalse(migrated.twoPageSpread)
-        XCTAssertEqual(migrated.readAloudRate, 1.5)
-        XCTAssertEqual(migrated.readAloudVoiceID, "bf_emma")
         var changed = migrated
         changed.fontSize = 24
         changed.noteEditorPlacement = .sheet

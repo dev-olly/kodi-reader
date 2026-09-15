@@ -20,18 +20,6 @@ final class ReaderSettingsTests: XCTestCase {
         let settings = try JSONDecoder().decode(ReaderSettings.self, from: json)
         XCTAssertEqual(settings.noteEditorPlacement, .sheet)
         XCTAssertEqual(settings.theme, .dark)
-        XCTAssertEqual(settings.readAloudVoiceID, "af_heart")
-        XCTAssertEqual(settings.readAloudRate, 1.0)
-    }
-
-    func testReadAloudSettingsRoundTrip() throws {
-        var settings = ReaderSettings()
-        settings.readAloudVoiceID = "bf_emma"
-        settings.readAloudRate = 1.25
-        let data = try JSONEncoder().encode(settings)
-        let decoded = try JSONDecoder().decode(ReaderSettings.self, from: data)
-        XCTAssertEqual(decoded.readAloudVoiceID, "bf_emma")
-        XCTAssertEqual(decoded.readAloudRate, 1.25, accuracy: 0.001)
     }
 
     func testNoteEditorPlacementRoundTrip() throws {

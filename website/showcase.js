@@ -40,45 +40,6 @@ sketch.addEventListener('pointermove', event => {
 });
 ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(name => sketch.addEventListener(name, () => { drawing = false; }));
 document.getElementById('clear-sketch').addEventListener('click', () => context.clearRect(0,0,sketch.width,sketch.height));
-const play = document.getElementById('sample-play');
-const speed = document.getElementById('sample-speed');
-let rate = 1;
-let speaking = false;
-function stopSample() {
-  if ('speechSynthesis' in window) speechSynthesis.cancel();
-  speaking = false;
-  play.textContent = '▶';
-  play.setAttribute('aria-label', 'Play sample reading');
-  document.querySelector('.audio-preview').classList.remove('is-playing');
-  document.getElementById('audio-status').textContent = 'Sample reading';
-}
-play.addEventListener('click', () => {
-  if (speaking) { stopSample(); return; }
-  const voice = 'speechSynthesis' in window && speechSynthesis.getVoices().find(item => item.localService && item.lang.startsWith('en'));
-  if (!voice) {
-    document.getElementById('audio-status').textContent = 'A local English voice is unavailable in this browser.';
-    return;
-  }
-  const utterance = new SpeechSynthesisUtterance(document.querySelector('.audio-passage').textContent);
-  utterance.voice = voice;
-  utterance.rate = rate;
-  utterance.onend = stopSample;
-  utterance.onerror = stopSample;
-  speaking = true;
-  play.textContent = '■';
-  play.setAttribute('aria-label', 'Stop sample reading');
-  document.querySelector('.audio-preview').classList.add('is-playing');
-  document.getElementById('audio-status').textContent = 'Reading with your browser’s local voice';
-  speechSynthesis.speak(utterance);
-});
-speed.addEventListener('click', () => {
-  stopSample();
-  rate = rate === 1 ? 1.25 : rate === 1.25 ? 1.5 : 1;
-  speed.textContent = rate + '×';
-});
-tabs.forEach(tab => tab.addEventListener('click', stopSample));
-window.addEventListener('pagehide', stopSample);
-if ('speechSynthesis' in window) speechSynthesis.getVoices();
 const demo = document.querySelector('.reader-demo');
 document.getElementById('demo-theme').addEventListener('click', (event) => {
   const dark = demo.dataset.theme !== 'dark';

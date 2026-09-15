@@ -73,31 +73,6 @@ struct KodiReaderApp: App {
                 .disabled(model.isNoteEditorOpen)
         }
 
-        CommandMenu("Read Aloud") {
-            Button(model.readAloud.isPlaying ? "Pause" : "Play") {
-                if model.readAloud.isActive {
-                    model.readAloud.togglePause()
-                } else {
-                    model.toggleReadAloud()
-                }
-            }
-            .keyboardShortcut("r", modifiers: [.command, .shift])
-            .disabled(model.book == nil)
-
-            Button("Stop") { model.readAloud.stop() }
-            .disabled(!model.readAloud.isActive)
-
-            Divider()
-
-            Button("Skip Forward 15 Seconds") { model.readAloud.skipForward() }
-            .keyboardShortcut(.rightArrow, modifiers: [.option])
-            .disabled(!model.readAloud.isActive || model.isNoteEditorOpen)
-
-            Button("Skip Back 15 Seconds") { model.readAloud.skipBack() }
-            .keyboardShortcut(.leftArrow, modifiers: [.option])
-            .disabled(!model.readAloud.isActive || model.isNoteEditorOpen)
-        }
-
         CommandMenu("View") {
             Button("Table of Contents") { model.isShowingContents.toggle() }
                 .keyboardShortcut("t", modifiers: [.command, .shift])

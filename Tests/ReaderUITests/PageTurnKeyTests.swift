@@ -42,15 +42,51 @@ final class PageTurnKeyTests: XCTestCase {
         XCTAssertFalse(ReaderKeyTarget.shouldSuppressPageTurns(for: nil))
     }
 
-    func testDetachedSidebarControlDoesNotSuppressPageTurns() {
-        let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 300, height: 300),
-            styleMask: [.borderless],
-            backing: .buffered,
-            defer: false
+    func testVisibleButUnfocusedSidebarDoesNotTakePageTurnKeys() {
+        let window = makeWindow()
+        let sidebar = NSScrollView(frame: .zero)
+        window.contentView?.addSubview(sidebar)
+
+        XCTAssertTrue(
+            ReaderKeyTarget.shouldHandlePageTurn(
+                for: nil,
+                eventWindow: window,
+                readerWindow: window
+            ),
+            "Opening the sidebar must not send page-turn keys into AppKit's responder chain"
         )
+    }
+
+    func testFocusedSidebarEditorKeepsNavigationKeys() {
+        let window = makeWindow()
         let text = NSTextView(frame: .zero)
-        window.contentView = NSView(frame: window.contentLayoutRect)
+        window.contentView?.addSubview(text)
+
+        XCTAssertFalse(
+            ReaderKeyTarget.shouldHandlePageTurn(
+                for: text,
+                eventWindow: window,
+                readerWindow: window
+            )
+        )
+    }
+
+    func testReaderMonitorIgnoresNavigationKeysFromAnotherWindow() {
+        let readerWindow = makeWindow()
+        let otherWindow = makeWindow()
+
+        XCTAssertFalse(
+            ReaderKeyTarget.shouldHandlePageTurn(
+                for: nil,
+                eventWindow: otherWindow,
+                readerWindow: readerWindow
+            )
+        )
+    }
+
+    func testDetachedSidebarControlDoesNotSuppressPageTurns() {
+        let window = makeWindow()
+        let text = NSTextView(frame: .zero)
         window.contentView?.addSubview(text)
 
         XCTAssertTrue(ReaderKeyTarget.shouldSuppressPageTurns(for: text, in: window))
@@ -61,6 +97,17 @@ final class PageTurnKeyTests: XCTestCase {
             ReaderKeyTarget.shouldSuppressPageTurns(for: text, in: window),
             "A removed Notes or Ask AI control must return keyboard navigation to the reader"
         )
+    }
+
+    private func makeWindow() -> NSWindow {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 300),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = NSView(frame: window.contentLayoutRect)
+        return window
     }
 }
 #endif

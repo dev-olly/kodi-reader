@@ -9,7 +9,6 @@ struct HighlightPalette: View {
     let onPick: (HighlightColor) -> Void
     let onAddNote: () -> Void
     let onAskAI: () -> Void
-    let onPlay: () -> Void
     let onCopy: () -> Void
     let onDismiss: () -> Void
 
@@ -48,16 +47,6 @@ struct HighlightPalette: View {
                 }
                 .buttonStyle(.plain)
                 .help("Ask AI about this selection")
-
-                Button(action: onPlay) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "play.fill")
-                        Text("Play")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .help("Read from here")
 
                 Button(action: copyTapped) {
                     HStack(spacing: 4) {

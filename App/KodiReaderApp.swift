@@ -32,7 +32,7 @@ struct KodiReaderApp: App {
     private var readerCommands: some Commands {
         // Keep the system New Item group; append Open / Close commands.
         CommandGroup(after: .newItem) {
-            Button("Open Book…") { model.presentOpenPanel() }
+            Button("Open Document…") { model.presentOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
 
             Button("Open Webpage…") { model.presentOpenURL() }
@@ -48,7 +48,7 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("h", modifiers: [.command, .shift])
                 .disabled(!model.canGoHome)
 
-            Button(model.isBrowsing ? "Close Webpage" : "Close Book") {
+            Button(model.isBrowsing ? "Close Webpage" : "Close Document") {
                 if model.isBrowsing { model.closeBrowser() } else { model.closeBook() }
             }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
@@ -65,12 +65,16 @@ struct KodiReaderApp: App {
             Button("Previous Page") { model.reader?.previousPage() }
                 .disabled(model.reader == nil)
             Divider()
-            Button("Next Chapter") { model.reader?.goToNextChapter() }
+            Button(model.book?.kind == .pdf ? "Next Section" : "Next Chapter") {
+                model.reader?.goToNextChapter()
+            }
                 .keyboardShortcut(.rightArrow, modifiers: .command)
-                .disabled(model.isNoteEditorOpen)
-            Button("Previous Chapter") { model.reader?.goToPreviousChapter() }
+                .disabled(model.isNoteEditorOpen || model.reader?.canNavigateSections != true)
+            Button(model.book?.kind == .pdf ? "Previous Section" : "Previous Chapter") {
+                model.reader?.goToPreviousChapter()
+            }
                 .keyboardShortcut(.leftArrow, modifiers: .command)
-                .disabled(model.isNoteEditorOpen)
+                .disabled(model.isNoteEditorOpen || model.reader?.canNavigateSections != true)
         }
 
         CommandMenu("View") {
@@ -95,9 +99,21 @@ struct KodiReaderApp: App {
                 }
             }
             Divider()
-            Button("Larger Text") { model.settings.fontSize = min(32, model.settings.fontSize + 1) }
+            Button(model.book?.kind == .pdf ? "Zoom In" : "Larger Text") {
+                if model.book?.kind == .pdf {
+                    model.reader?.zoomPDFIn()
+                } else {
+                    model.settings.fontSize = min(32, model.settings.fontSize + 1)
+                }
+            }
                 .keyboardShortcut("+", modifiers: .command)
-            Button("Smaller Text") { model.settings.fontSize = max(12, model.settings.fontSize - 1) }
+            Button(model.book?.kind == .pdf ? "Zoom Out" : "Smaller Text") {
+                if model.book?.kind == .pdf {
+                    model.reader?.zoomPDFOut()
+                } else {
+                    model.settings.fontSize = max(12, model.settings.fontSize - 1)
+                }
+            }
                 .keyboardShortcut("-", modifiers: .command)
         }
 

@@ -14,7 +14,7 @@ enum AINoteTarget: Equatable {
 @MainActor
 @Observable
 final class AppModel {
-    private(set) var book: EPUBBook?
+    private(set) var book: ReaderDocument?
     private(set) var record: BookRecord?
     private(set) var reader: ReaderController?
     private(set) var recents: [BookRecord] = []
@@ -106,11 +106,11 @@ final class AppModel {
 
     func presentOpenPanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.epub]
+        panel.allowedContentTypes = [.epub, .pdf]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Open"
-        panel.message = "Choose an EPUB to read"
+        panel.message = "Choose an EPUB or PDF to read"
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         open(url: url)
@@ -197,13 +197,17 @@ final class AppModel {
                 throw EPUBError.cannotAccessFile(url)
             }
 
-            let provisional = try EPUBBook(fileURL: url)
+            let provisional = try ReaderDocument(fileURL: url)
             // Durable copy inside the container — Recents opens this forever.
-            let importedURL = try store.importBook(from: url, bookID: provisional.bookID)
+            let importedURL = try store.importBook(
+                from: url,
+                bookID: provisional.bookID,
+                kind: provisional.kind
+            )
             let readingFromImport = importedURL.resolvingSymlinksInPath().path
                 != url.resolvingSymlinksInPath().path
             let book = readingFromImport
-                ? try EPUBBook(fileURL: importedURL)
+                ? try ReaderDocument(fileURL: importedURL, knownBookID: provisional.bookID)
                 : provisional
 
             if readingFromImport, didScope {
@@ -214,12 +218,17 @@ final class AppModel {
             var record = existing ?? BookRecord(
                 id: book.bookID,
                 title: book.title,
-                author: book.author
+                author: book.author,
+                documentKind: book.kind
             )
             record.title = book.title
             record.author = book.author
+            record.documentKind = book.kind
             record.lastOpenedAt = Date()
-            record.importedRelativePath = LibraryStore.relativeImportedPath(for: book.bookID)
+            record.importedRelativePath = LibraryStore.relativeImportedPath(
+                for: book.bookID,
+                kind: book.kind
+            )
             if let sourceURL {
                 record.sourceURL = sourceURL
             }
@@ -287,11 +296,11 @@ final class AppModel {
     /// One-time re-grant for books opened before library import existed.
     private func locateAndOpen(_ record: BookRecord) {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.epub]
+        panel.allowedContentTypes = record.documentKind == .pdf ? [.pdf] : [.epub]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Locate"
-        panel.message = "Kodi Reader needs permission to open “\(record.title)” again. Choose the EPUB file."
+        panel.message = "Kodi Reader needs permission to open “\(record.title)” again. Choose the \(record.documentKind.rawValue.uppercased()) file."
 
         if let path = record.lastKnownPath {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
@@ -760,10 +769,9 @@ final class AppModel {
     }
 
     private func currentPosition(_ reader: ReaderController) -> Locator? {
-        record?.position ?? Locator(
-            spineIndex: reader.spineIndex,
-            start: TextPosition(elementPath: [], offset: 0)
-        )
+        if let position = record?.position { return position }
+        if book?.kind == .pdf { return .pdfPage(reader.spineIndex) }
+        return Locator(spineIndex: reader.spineIndex, start: TextPosition(elementPath: [], offset: 0))
     }
 }
 
@@ -771,7 +779,7 @@ private enum DrawingPersistenceError: LocalizedError {
     case missingBook
 
     var errorDescription: String? {
-        "Could not save the drawing because no book is open."
+        "Could not save the drawing because no document is open."
     }
 }
 
@@ -783,7 +791,7 @@ private enum NotePersistenceError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .missingBook:
-            return "Could not save the note because no book is open."
+            return "Could not save the note because no document is open."
         case .missingAnnotation:
             return "Could not save the note because the highlight no longer exists."
         case .emptyExcerpt:

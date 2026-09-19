@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="560" viewBox="0 0 560 560">
+  <title>Kodi Reader</title>
+  <rect width="560" height="560" rx="145" fill="#245744"/>
+  <g fill="#ffffff">
+    <!-- Serif stem, open-book arms, and a page turning toward the upper arm. -->
+    <path d="M96 80 L174 72 Q182 71 182 80 L182 374 C182 397 186 402 217 403 L217 418 L100 418 L100 403 C127 401 134 397 134 374 L134 119 C134 100 127 96 96 94 Z"/>
+    <path d="M182 288 L244 225 C260 208 250 206 234 205 L234 193 L329 193 L329 206 C294 215 266 239 182 288 Z"/>
+    <path d="M182 288 C228 324 284 374 318 393 C331 401 340 402 349 403 L349 418 L272 418 Z"/>
+    <path d="M182 288 C228 278 271 256 294 229 C291 297 251 327 182 288 Z"/>
+    <circle cx="417" cy="390" r="32"/>
+  </g>
+</svg>

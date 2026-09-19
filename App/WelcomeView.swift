@@ -2,7 +2,7 @@ import EpubKit
 import ReaderUI
 import SwiftUI
 
-/// Shown when no book is open: a way in, plus whatever you were reading last.
+/// Shown when no document is open: a way in, plus whatever you were reading last.
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
     @State private var urlText = ""
@@ -14,12 +14,14 @@ struct WelcomeView: View {
         ScrollView {
           VStack(alignment: .leading, spacing: 32) {
             HStack {
-                Label("Kodi Reader", systemImage: "book.closed")
-                    .font(.headline)
-                    .foregroundStyle(model.settings.theme.accent)
+                Image("KodiLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 40, height: 40)
+                    .accessibilityLabel("Kodi Reader")
                 Spacer()
                 Button { model.presentOpenPanel() } label: {
-                    Label("Open Book", systemImage: "plus")
+                    Label("Open Document", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
@@ -147,6 +149,14 @@ struct WelcomeView: View {
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 1)
                                 .background(.quaternary, in: .capsule)
+                        } else if record.documentKind == .pdf {
+                            Text("PDF")
+                                .font(.caption2)
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 1)
+                                .background(.quaternary, in: .capsule)
                         }
                     }
                     Text(record.author)
@@ -213,7 +223,7 @@ private struct RecentBookCover: View {
         .task(id: url) {
             guard let url else { return }
             let data = await Task.detached(priority: .utility) {
-                (try? EPUBBook(fileURL: url))?.coverImageData
+                (try? ReaderDocument(fileURL: url))?.coverImageData
             }.value
             if !Task.isCancelled { image = data.flatMap(NSImage.init(data:)) }
         }

@@ -26,7 +26,8 @@ img { display: block; max-width: 100%; height: auto; }
 .skip:focus { top: 8px; }
 .navigation { height: 92px; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: inline-flex; align-items: center; gap: 10px; font-size: 18px; font-weight: 650; white-space: nowrap; }
-.brand-mark { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 8px; color: #fff; background: var(--green); font-family: Georgia, serif; font-size: 29px; line-height: 1; padding-bottom: 4px; }
+.brand-mark { display: block; width: 34px; height: 34px; flex-shrink: 0; }
+.demo-brand-mark { display: block; width: 24px; height: 24px; flex-shrink: 0; }
 .navigation nav { display: flex; align-items: center; gap: 32px; font-size: 13px; font-weight: 550; }
 .nav-link:hover, .text-link:hover { color: #508137; }
 .button { display: inline-flex; align-items: center; justify-content: center; gap: 14px; min-height: 52px; padding: 14px 23px; border-radius: 6px; background: var(--green); color: #fff; font-size: 14px; font-weight: 600; transition: background .15s, transform .15s; }
@@ -101,7 +102,7 @@ h2 { font-size: 48px; font-weight: 500; line-height: 1.13; margin-top: 20px; }
 .feature-copy h3 { font-size: 29px; font-weight: 500; line-height: 1.18; margin-top: 18px; }
 .feature-copy p { font-size: 14px; color: var(--muted); margin-top: 18px; }
 .feature-detail { display: block; font-size: 11px; margin-top: 26px; color: var(--green); }
-.feature-panel img { width: 100%; aspect-ratio: 1024 / 664; object-fit: contain; border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 16px 36px #172e2110; background: #fafafa; }
+.feature-panel img:not(.demo-brand-mark) { width: 100%; aspect-ratio: 1024 / 664; object-fit: contain; border: 1px solid var(--line); border-radius: 7px; box-shadow: 0 16px 36px #172e2110; background: #fafafa; }
 .reading-band { background: #183b30; color: #fff; padding-block: 74px; }
 .reading-layout { display: grid; grid-template-columns: 1fr 1fr; gap: 100px; }
 .reading-band .eyebrow { color: #c4d7bc; }
@@ -139,7 +140,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
   .wrap { width: calc(100% - 40px); }
   .navigation { height: 76px; }
   .brand { font-size: 15px; gap: 8px; }
-  .brand-mark { width: 29px; height: 29px; font-size: 25px; }
+  .brand-mark { width: 29px; height: 29px; }
   .navigation nav { gap: 14px; }
   .nav-link { display: none; }
   .button-small { min-height: 36px; }

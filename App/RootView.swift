@@ -57,7 +57,7 @@ struct RootView: View {
             } else {
                 url = nil
             }
-            guard let url, url.pathExtension.lowercased() == "epub" else { return }
+            guard let url, ["epub", "pdf"].contains(url.pathExtension.lowercased()) else { return }
             DispatchQueue.main.async { model.open(url: url) }
         }
         return true

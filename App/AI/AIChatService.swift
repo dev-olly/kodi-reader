@@ -167,7 +167,7 @@ struct AIChatService {
 
     func systemPrompt(context: Context) -> String {
         var lines = [
-            "You are a reading assistant inside Kodi Reader, a native EPUB reader.",
+            "You are a reading assistant inside Kodi Reader, a native EPUB and PDF reader.",
             "The user is reading “\(context.bookTitle)” by \(context.author.isEmpty ? "an unknown author" : context.author).",
         ]
         if let chapter = context.chapterTitle, !chapter.isEmpty {

@@ -1,6 +1,7 @@
 import EpubKit
 import Foundation
 import Observation
+import PDFKit
 import WebKit
 
 #if os(macOS)
@@ -35,6 +36,7 @@ public final class ReaderController {
     // MARK: - Observable state
 
     public private(set) var book: EPUBBook?
+    public private(set) var pdfBook: PDFBook?
     public private(set) var spineIndex: Int = 0
     public private(set) var page: Int = 0
     public private(set) var pageCount: Int = 1
@@ -45,6 +47,13 @@ public final class ReaderController {
     public private(set) var selection: ReaderSelection?
     public private(set) var annotations: [Annotation] = []
     public private(set) var errorMessage: String?
+    public private(set) var visiblePageRange: ClosedRange<Int> = 0...0
+
+    public var isPDF: Bool { pdfBook != nil }
+    public var canNavigateSections: Bool {
+        guard let pdfBook else { return true }
+        return pdfBook.outline.flatMap(\.flattened).contains { $0.destination != nil }
+    }
 
     public var settings: ReaderSettings {
         didSet {
@@ -71,6 +80,10 @@ public final class ReaderController {
     // MARK: - Private
 
     @ObservationIgnored private var webView: WKWebView?
+    @ObservationIgnored private var pdfView: PDFView?
+    @ObservationIgnored private var pdfObserverTokens: [NSObjectProtocol] = []
+    @ObservationIgnored private var pdfHighlightAnnotations: [UUID: [PDFAnnotation]] = [:]
+    @ObservationIgnored private var pdfLinkProxy: PDFLinkProxy?
     @ObservationIgnored private var schemeHandler: EPUBSchemeHandler?
     @ObservationIgnored private var messageProxy: MessageProxy?
     @ObservationIgnored private var navigationProxy: NavigationProxy?
@@ -109,7 +122,9 @@ public final class ReaderController {
             #endif
             return existing
         }
+        tearDownViews()
         self.book = book
+        pdfBook = nil
         computeSpineWeights(for: book)
 
         let handler = EPUBSchemeHandler(book: book)
@@ -144,15 +159,57 @@ public final class ReaderController {
         return webView
     }
 
+    /// Builds the native PDF view, or returns the existing instance.
+    public func makePDFView(for book: PDFBook) -> PDFView {
+        if let existing = pdfView, pdfBook?.bookID == book.bookID { return existing }
+        tearDownViews()
+        pdfBook = book
+        self.book = nil
+
+        let view = PDFView(frame: .zero)
+        #if os(macOS)
+        view.identifier = ReaderKeyTarget.pageWebViewIdentifier
+        #endif
+        view.document = book.document
+        let linkProxy = PDFLinkProxy(controller: self)
+        pdfLinkProxy = linkProxy
+        view.delegate = linkProxy
+        view.displayDirection = .horizontal
+        view.displaysPageBreaks = true
+        view.displaysAsBook = true
+        view.autoScales = true
+        pdfView = view
+        installPDFObservers(on: view)
+        configurePDFLayout()
+
+        if hasStarted {
+            startPDF(at: pendingStart)
+            pendingStart = nil
+        }
+        return view
+    }
+
     public func tearDown() {
         viewportRelayoutWork?.cancel()
         viewportRelayoutWork = nil
+        tearDownViews()
+        book = nil
+        pdfBook = nil
+    }
+
+    private func tearDownViews() {
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "reader")
         webView?.navigationDelegate = nil
         webView = nil
         messageProxy = nil
         navigationProxy = nil
         schemeHandler = nil
+        pdfObserverTokens.forEach(NotificationCenter.default.removeObserver)
+        pdfObserverTokens.removeAll()
+        pdfHighlightAnnotations.removeAll()
+        pdfView?.delegate = nil
+        pdfLinkProxy = nil
+        pdfView = nil
     }
 
     /// Records the current size so margins and column widths track the window,
@@ -164,6 +221,11 @@ public final class ReaderController {
         guard widthChanged || heightChanged else { return }
         viewportWidth = width
         if height > 0 { viewportHeight = height }
+
+        if pdfView != nil {
+            configurePDFLayout()
+            return
+        }
 
         guard hasStarted, webView != nil else { return }
         scheduleViewportRelayout()
@@ -193,7 +255,11 @@ public final class ReaderController {
         guard !hasStarted else { return }
         hasStarted = true
 
-        let target = locator ?? .startOfBook()
+        let target = locator ?? (pdfBook == nil ? .startOfBook() : .pdfPage(0))
+        if pdfBook != nil {
+            startPDF(at: target)
+            return
+        }
         guard webView != nil else {
             pendingStart = target
             return
@@ -228,6 +294,12 @@ public final class ReaderController {
     // MARK: - Navigation
 
     public func nextPage() {
+        if let pdfView {
+            clearSelection()
+            pdfView.goToNextPage(nil)
+            handlePDFPageChanged()
+            return
+        }
         evaluate("__reader.nextPage()") { [weak self] result in
             guard let self, (result as? Bool) == false else { return }
             self.goToNextChapter()
@@ -235,6 +307,12 @@ public final class ReaderController {
     }
 
     public func previousPage() {
+        if let pdfView {
+            clearSelection()
+            pdfView.goToPreviousPage(nil)
+            handlePDFPageChanged()
+            return
+        }
         evaluate("__reader.previousPage()") { [weak self] result in
             guard let self, (result as? Bool) == false else { return }
             self.goToPreviousChapter()
@@ -242,6 +320,10 @@ public final class ReaderController {
     }
 
     public func goToNextChapter() {
+        if pdfBook != nil {
+            goToAdjacentPDFOutline(forward: true)
+            return
+        }
         guard let book else { return }
         let next = spineIndex + 1
         guard next < book.publication.readingOrder.count else { return }
@@ -249,6 +331,10 @@ public final class ReaderController {
     }
 
     public func goToPreviousChapter() {
+        if pdfBook != nil {
+            goToAdjacentPDFOutline(forward: false)
+            return
+        }
         let previous = spineIndex - 1
         guard previous >= 0 else { return }
         // Entering from the right should land on that chapter's last page.
@@ -264,7 +350,20 @@ public final class ReaderController {
         }
     }
 
+    public func go(to destination: DocumentDestination) {
+        switch destination {
+        case .epub(let path, let fragment):
+            go(to: TOCEntry(title: "", path: path, fragment: fragment))
+        case .pdf(let pageIndex, let x, let y):
+            goToPDFPage(pageIndex, point: x.flatMap { px in y.map { CGPoint(x: px, y: $0) } })
+        }
+    }
+
     public func go(to locator: Locator) {
+        if locator.kind == .pdf {
+            goToPDFPage(locator.spineIndex)
+            return
+        }
         if locator.spineIndex == spineIndex {
             evaluate("__reader.goToPosition(\(json(locator.start)), true)")
         } else {
@@ -274,6 +373,11 @@ public final class ReaderController {
 
     /// Jumps to a fraction of the whole book, for the progress slider.
     public func seek(toProgress target: Double) {
+        if let pdfBook {
+            let index = Int((min(max(target, 0), 1) * Double(max(0, pdfBook.pageCount - 1))).rounded())
+            goToPDFPage(index)
+            return
+        }
         guard let book else { return }
         let clamped = min(max(target, 0), 1)
         let count = book.publication.readingOrder.count
@@ -297,12 +401,20 @@ public final class ReaderController {
 
     public func setAnnotations(_ annotations: [Annotation]) {
         self.annotations = annotations
-        pushHighlights()
+        if pdfView != nil {
+            pushPDFHighlights()
+        } else {
+            pushHighlights()
+        }
     }
 
     public func clearSelection() {
         selection = nil
-        evaluate("__reader.clearSelection()")
+        if let pdfView {
+            pdfView.clearSelection()
+        } else {
+            evaluate("__reader.clearSelection()")
+        }
     }
 
     /// A few paragraphs around `locator`, capped so prompts stay small.
@@ -310,6 +422,10 @@ public final class ReaderController {
         from locator: Locator,
         completion: @escaping (ReaderSurroundingPassage) -> Void
     ) {
+        if locator.kind == .pdf {
+            completion(pdfSurroundingPassage(for: locator))
+            return
+        }
         let start = json(locator.start)
         let end = json(locator.end ?? locator.start)
         evaluate("__reader.extractSurroundingPassage(\(start), \(end))") { result in
@@ -320,6 +436,10 @@ public final class ReaderController {
     /// Re-applies a reading position after the web view was temporarily taken
     /// out of the window (in-app browser preview).
     public func restorePosition(_ locator: Locator) {
+        if locator.kind == .pdf {
+            goToPDFPage(locator.spineIndex)
+            return
+        }
         pinRestoreOnce(to: locator.start)
         if locator.spineIndex == spineIndex {
             evaluate("__reader.goToPosition(\(json(locator.start)), false)")
@@ -330,6 +450,7 @@ public final class ReaderController {
 
     /// Pins resize restore to this position so inspector expansion cannot jump to chapter start.
     public func pinRestore(to position: TextPosition?) {
+        if pdfView != nil { return }
         if let position, !position.elementPath.isEmpty {
             pinnedRestorePosition = position
             evaluate("__reader.pinRestore(\(json(position)))")
@@ -342,23 +463,27 @@ public final class ReaderController {
     /// Captures the current on-screen position as a one-shot resize anchor so an
     /// imminent width change (opening/closing the sidebar note editor) restores here.
     public func pinRestoreCurrentPositionOnce() {
+        if pdfView != nil { return }
         evaluate("__reader.pinRestoreCurrentOnce()")
     }
 
     /// Holds the leading reading passage across the complete lifetime of the
     /// Notes / Ask AI workspace, including both its opening and closing resize.
     public func beginWorkspaceRestore() {
+        if pdfView != nil { return }
         evaluate("__reader.beginWorkspaceRestore()")
     }
 
     /// Releases the workspace anchor only after handing it to the closing
     /// resize, so the original leading passage cannot drift to the next column.
     public func endWorkspaceRestore() {
+        if pdfView != nil { return }
         evaluate("__reader.endWorkspaceRestore()")
     }
 
     /// Uses a specific text position as the next resize anchor.
     public func pinRestoreOnce(to position: TextPosition) {
+        if pdfView != nil { return }
         guard !position.elementPath.isEmpty else { return }
         evaluate("__reader.pinRestoreOnce(\(json(position)))")
     }
@@ -381,6 +506,10 @@ public final class ReaderController {
     // MARK: - Settings
 
     private func applySettings() {
+        if pdfView != nil {
+            configurePDFLayout()
+            return
+        }
         applyWebViewChromeColors()
         guard let options = jsonString(settings.runtimeOptions(forWidth: viewportWidth)) else { return }
         evaluate("__reader.configure(\(options), true)")
@@ -395,6 +524,259 @@ public final class ReaderController {
         webView.wantsLayer = true
         webView.layer?.backgroundColor = color.cgColor
         #endif
+    }
+
+    public func fitPDFPage() {
+        guard let pdfView else { return }
+        pdfView.autoScales = true
+    }
+
+    public func zoomPDFIn() {
+        guard let pdfView else { return }
+        pdfView.autoScales = false
+        pdfView.zoomIn(nil)
+    }
+
+    public func zoomPDFOut() {
+        guard let pdfView else { return }
+        pdfView.autoScales = false
+        pdfView.zoomOut(nil)
+    }
+
+    // MARK: - PDFKit
+
+    private func installPDFObservers(on view: PDFView) {
+        let center = NotificationCenter.default
+        pdfObserverTokens = [
+            center.addObserver(forName: .PDFViewPageChanged, object: view, queue: .main) { [weak self] _ in
+                self?.handlePDFPageChanged()
+            },
+            center.addObserver(forName: .PDFViewSelectionChanged, object: view, queue: .main) { [weak self] _ in
+                self?.handlePDFSelectionChanged()
+            },
+            center.addObserver(forName: .PDFViewAnnotationHit, object: view, queue: .main) { [weak self] note in
+                self?.handlePDFAnnotationHit(note)
+            },
+        ]
+    }
+
+    private func startPDF(at locator: Locator?) {
+        guard let pdfBook else { return }
+        pageCount = max(1, pdfBook.pageCount)
+        goToPDFPage(locator?.spineIndex ?? 0)
+        pushPDFHighlights()
+        isLoading = false
+    }
+
+    private func configurePDFLayout() {
+        guard let view = pdfView else { return }
+        let index = currentPDFPageIndex()
+        let useSpread = settings.twoPageSpread && viewportWidth >= 1100
+        let wanted: PDFDisplayMode = useSpread ? .twoUp : .singlePage
+        if view.displayMode != wanted {
+            view.displayMode = wanted
+            view.displaysAsBook = useSpread
+            view.autoScales = true
+            goToPDFPage(index, report: false)
+        }
+        updatePDFVisibleRange()
+    }
+
+    private func currentPDFPageIndex() -> Int {
+        guard let pdfBook, let page = pdfView?.currentPage else { return spineIndex }
+        let index = pdfBook.document.index(for: page)
+        return index == NSNotFound ? spineIndex : index
+    }
+
+    private func goToPDFPage(_ requestedIndex: Int, point: CGPoint? = nil, report: Bool = true) {
+        guard let pdfBook, let view = pdfView else { return }
+        let index = min(max(0, requestedIndex), pdfBook.pageCount - 1)
+        guard let target = pdfBook.document.page(at: index) else { return }
+        if let point {
+            view.go(to: PDFDestination(page: target, at: point))
+        } else {
+            view.go(to: target)
+        }
+        if report { handlePDFPageChanged() }
+    }
+
+    private func handlePDFPageChanged() {
+        guard let pdfBook else { return }
+        updatePDFVisibleRange()
+        let index = visiblePageRange.lowerBound
+        spineIndex = index
+        page = index
+        pageCount = max(1, pdfBook.pageCount)
+        chapterTitle = pdfBook.sectionTitle(forPageIndex: index)
+        progress = pageCount <= 1 ? 0 : Double(index) / Double(pageCount - 1)
+        onPositionChanged?(.pdfPage(index, totalProgression: progress))
+    }
+
+    private func updatePDFVisibleRange() {
+        guard let pdfBook, let view = pdfView else { return }
+        let visible = view.visiblePages.compactMap { page -> Int? in
+            let index = pdfBook.document.index(for: page)
+            return index == NSNotFound ? nil : index
+        }
+        let lower = visible.min() ?? currentPDFPageIndex()
+        let upper = visible.max() ?? lower
+        visiblePageRange = lower...upper
+    }
+
+    private func goToAdjacentPDFOutline(forward: Bool) {
+        guard let pdfBook else { return }
+        let pages = pdfBook.outline.flatMap(\.flattened).compactMap { entry -> Int? in
+            guard case .pdf(let page, _, _) = entry.destination else { return nil }
+            return page
+        }
+        let unique = Array(Set(pages)).sorted()
+        let target = forward
+            ? unique.first(where: { $0 > spineIndex })
+            : unique.last(where: { $0 < spineIndex })
+        if let target { goToPDFPage(target) }
+    }
+
+    private func handlePDFSelectionChanged() {
+        guard let pdfBook, let view = pdfView, pdfBook.allowsTextExtraction,
+              let pdfSelection = view.currentSelection,
+              let text = pdfSelection.string?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !text.isEmpty
+        else {
+            selection = nil
+            return
+        }
+
+        var ranges: [PDFTextRange] = []
+        var viewRect = CGRect.null
+        for selectedPage in pdfSelection.pages {
+            let pageIndex = pdfBook.document.index(for: selectedPage)
+            guard pageIndex != NSNotFound else { continue }
+            for index in 0..<pdfSelection.numberOfTextRanges(on: selectedPage) {
+                let range = pdfSelection.range(at: index, on: selectedPage)
+                guard range.location != NSNotFound, range.length > 0 else { continue }
+                ranges.append(PDFTextRange(pageIndex: pageIndex, location: range.location, length: range.length))
+            }
+            viewRect = viewRect.union(pdfOverlayRect(
+                view.convert(pdfSelection.bounds(for: selectedPage), from: selectedPage),
+                in: view
+            ))
+        }
+        guard let first = ranges.first else { selection = nil; return }
+        selection = ReaderSelection(
+            text: text,
+            locator: .pdfPage(first.pageIndex, ranges: ranges, text: text),
+            rect: viewRect.isNull ? .zero : viewRect
+        )
+    }
+
+    private func pushPDFHighlights() {
+        guard let pdfBook else { return }
+        for existing in pdfHighlightAnnotations.values.flatMap({ $0 }) {
+            existing.page?.removeAnnotation(existing)
+        }
+        pdfHighlightAnnotations.removeAll()
+
+        var resolutions: [AnchorResolution] = []
+        for annotation in annotations where annotation.locator.kind == .pdf {
+            let result = resolvePDFLocator(annotation.locator, quote: annotation.text)
+            guard let locator = result.locator else {
+                resolutions.append(AnchorResolution(id: annotation.id, status: .orphaned))
+                continue
+            }
+            var rendered: [PDFAnnotation] = []
+            for storedRange in locator.pdfRanges ?? [] {
+                guard let page = pdfBook.document.page(at: storedRange.pageIndex),
+                      let selected = page.selection(for: NSRange(location: storedRange.location, length: storedRange.length))
+                else { continue }
+                for line in selected.selectionsByLine() {
+                    let bounds = line.bounds(for: page)
+                    guard !bounds.isEmpty else { continue }
+                    let subtype: PDFAnnotationSubtype = annotation.visibleHighlightColor == .underline
+                        ? .underline
+                        : .highlight
+                    let highlight = PDFAnnotation(bounds: bounds, forType: subtype, withProperties: nil)
+                    highlight.color = annotation.visibleHighlightColor.nsColor
+                    highlight.userName = "kodi:\(annotation.id.uuidString)"
+                    page.addAnnotation(highlight)
+                    rendered.append(highlight)
+                }
+            }
+            pdfHighlightAnnotations[annotation.id] = rendered
+            let status: AnchorStatus = result.repaired ? .repaired : .resolved
+            resolutions.append(AnchorResolution(id: annotation.id, status: status, locator: result.repaired ? locator : nil))
+        }
+        if !resolutions.isEmpty { onAnchorsResolved?(resolutions) }
+    }
+
+    private func resolvePDFLocator(_ locator: Locator, quote: String) -> (locator: Locator?, repaired: Bool) {
+        guard let pdfBook, let ranges = locator.pdfRanges, !ranges.isEmpty else { return (nil, false) }
+        let extracted = ranges.compactMap { item -> String? in
+            guard let page = pdfBook.document.page(at: item.pageIndex) else { return nil }
+            return page.selection(for: NSRange(location: item.location, length: item.length))?.string
+        }.joined(separator: "\n")
+        if normalizedPDFText(extracted) == normalizedPDFText(quote) { return (locator, false) }
+
+        guard let page = pdfBook.document.page(at: locator.spineIndex),
+              let pageText = page.string,
+              let found = pageText.range(of: quote, options: [.caseInsensitive, .diacriticInsensitive])
+        else { return (nil, false) }
+        let nsRange = NSRange(found, in: pageText)
+        return (.pdfPage(locator.spineIndex, ranges: [PDFTextRange(
+            pageIndex: locator.spineIndex,
+            location: nsRange.location,
+            length: nsRange.length
+        )], totalProgression: locator.totalProgression, text: quote), true)
+    }
+
+    private func normalizedPDFText(_ value: String) -> String {
+        value.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func handlePDFAnnotationHit(_ notification: Notification) {
+        let hit = notification.userInfo?["PDFAnnotationHit"] as? PDFAnnotation
+        guard let marker = hit?.userName, marker.hasPrefix("kodi:"),
+              let id = UUID(uuidString: String(marker.dropFirst(5))),
+              let view = pdfView, let page = hit?.page
+        else { return }
+        let rect = pdfOverlayRect(view.convert(hit?.bounds ?? .zero, from: page), in: view)
+        onHighlightActivated?(id, rect)
+    }
+
+    fileprivate func handlePDFLink(_ url: URL) {
+        if let onExternalLink {
+            onExternalLink(url)
+        } else {
+            #if os(macOS)
+            NSWorkspace.shared.open(url)
+            #endif
+        }
+    }
+
+    private func pdfOverlayRect(_ rect: CGRect, in view: PDFView) -> CGRect {
+        guard !view.isFlipped else { return rect }
+        return CGRect(
+            x: rect.minX,
+            y: view.bounds.height - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
+
+    private func pdfSurroundingPassage(for locator: Locator) -> ReaderSurroundingPassage {
+        guard let pdfBook, let first = locator.pdfRanges?.first,
+              let page = pdfBook.document.page(at: first.pageIndex), let pageText = page.string
+        else { return ReaderSurroundingPassage(quote: locator.text ?? "") }
+        let start = min(max(0, first.location), pageText.utf16.count)
+        let end = min(pageText.utf16.count, start + max(0, first.length))
+        let beforeStart = max(0, start - 1200)
+        let afterEnd = min(pageText.utf16.count, end + 1200)
+        let ns = pageText as NSString
+        return ReaderSurroundingPassage(
+            before: ns.substring(with: NSRange(location: beforeStart, length: start - beforeStart)),
+            quote: locator.text ?? ns.substring(with: NSRange(location: start, length: end - start)),
+            after: ns.substring(with: NSRange(location: end, length: afterEnd - end))
+        )
     }
 
     // MARK: - Message handling
@@ -768,3 +1150,30 @@ private final class NavigationProxy: NSObject, WKNavigationDelegate {
         controller?.reportLoadFailure("The rendering process stopped unexpectedly.")
     }
 }
+
+private final class PDFLinkProxy: NSObject, PDFViewDelegate {
+    weak var controller: ReaderController?
+
+    init(controller: ReaderController) {
+        self.controller = controller
+    }
+
+    func pdfViewWillClick(onLink sender: PDFView, with url: URL) {
+        controller?.handlePDFLink(url)
+    }
+}
+
+#if os(macOS)
+private extension HighlightColor {
+    var nsColor: NSColor {
+        switch self {
+        case .yellow: return NSColor(calibratedRed: 1, green: 0.80, blue: 0.18, alpha: 0.48)
+        case .green: return NSColor(calibratedRed: 0.42, green: 0.82, blue: 0.30, alpha: 0.44)
+        case .blue: return NSColor(calibratedRed: 0.24, green: 0.62, blue: 0.96, alpha: 0.44)
+        case .pink: return NSColor(calibratedRed: 1, green: 0.42, blue: 0.64, alpha: 0.44)
+        case .purple: return NSColor(calibratedRed: 0.67, green: 0.43, blue: 0.94, alpha: 0.44)
+        case .underline: return NSColor(calibratedRed: 0.90, green: 0.55, blue: 0.05, alpha: 0.85)
+        }
+    }
+}
+#endif

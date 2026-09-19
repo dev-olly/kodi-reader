@@ -1,8 +1,10 @@
+<img src="website/assets/kodi-logo.svg" width="80" height="80" alt="Kodi Reader logo">
+
 # Kodi Reader
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-A lightweight native EPUB reader for macOS. Paginated reading, typography and
+A lightweight native EPUB and PDF reader for macOS. Paginated reading, typography and
 theme controls, highlights with notes and drawings, configurable Ask AI, webpage
 reading, and a distraction-free interface — without the store, the sync, or
 the library management.
@@ -14,8 +16,8 @@ or the XBMC Foundation.
 
 ## Features
 
-### Book reading
-Paginated EPUB rendering with typography, margin, and theme controls, plus position and progress that survive layout changes.
+### Book and document reading
+Paginated EPUB rendering with typography, margin, and theme controls, plus native PDF reading with fit-to-page zoom and adaptive two-page spreads. Position and progress survive layout changes and app relaunches.
 
 ![Book reading](docs/screenshots/app-reading.png)
 
@@ -46,14 +48,15 @@ not the goal right now** — this is a source-available personal project, not a
 contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
-A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). The build is ad-hoc signed; first open may need Right-click → Open. You can also build from source (Xcode 16 or later).
+A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). Release builds are signed with Developer ID and notarized by Apple. You can also build from source (Xcode 16 or later).
 
 The site is at [dev-olly.github.io/kodi-reader](https://dev-olly.github.io/kodi-reader/).
 
 ## Privacy
 
-- Books, highlights, notes, and drawings stay on this Mac (sandbox Application
-  Support). Nothing is extracted from the EPUB to a temp folder for reading.
+- Books, PDFs, highlights, notes, and drawings stay on this Mac (sandbox
+  Application Support). EPUBs are read directly from their archives and PDFs
+  remain byte-for-byte unchanged; Kodi annotations are stored separately.
 - There is no analytics or telemetry.
 - **Ask AI** is opt-in. Quoted passages and chat are sent to the hosted Kodi AI
   proxy, which forwards requests to OpenAI. The OpenAI API key lives only on the
@@ -81,8 +84,9 @@ Download `KodiReader.dmg` from
 [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest),
 open it, and drag `Kodi Reader.app` into Applications.
 
-The build is ad-hoc signed, not notarized. On first launch, macOS may require
-Right-click → Open.
+Current releases are signed with Developer ID and notarized by Apple. macOS
+will still show its normal confirmation the first time an Internet-downloaded
+app is opened.
 
 ### Build from source
 
@@ -94,9 +98,9 @@ cd kodi-reader
 brew install xcodegen
 ```
 
-Signing is ad-hoc (`CODE_SIGN_IDENTITY:
-"-"`) so the app runs locally; it is not a notarized distribution build. On a
-machine with multiple Xcode versions, point the shell at the Xcode you want:
+Debug builds use ad-hoc signing so they run locally without distribution
+credentials. Release builds require the project's Developer ID certificate.
+On a machine with multiple Xcode versions, point the shell at the Xcode you want:
 
 ```sh
 export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
@@ -129,15 +133,51 @@ regenerate it after pulling changes that touch the project layout.
 The bundle identifier is `com.olly.KodiReader`. Product name lives in
 `project.yml` as `PRODUCT_NAME: Kodi Reader`.
 
-### Package a DMG
+### Brand assets
+
+The shared logo master is [`website/assets/kodi-logo.svg`](website/assets/kodi-logo.svg).
+It uses solid forest green (`#245744`) and a white k with an upward-turning page.
+To regenerate the macOS app icon, welcome-screen image, website PNGs, and favicons
+after editing the master, run on macOS:
 
 ```sh
-./Scripts/package-dmg.sh 0.1.0
+swift Scripts/generate-brand-assets.swift
 ```
 
-The package script regenerates the Xcode project, builds a Release app for
-Apple Silicon, checks required embedded frameworks, signs ad-hoc, and writes
-`KodiReader.dmg` in the repository root.
+Generated assets are committed, so normal builds do not need this step.
+
+### Package a DMG
+
+The release script expects this signing identity, including its private key, in
+the login keychain:
+
+```text
+Developer ID Application: Emmanuel Onyebueke (3FJF74RW5L)
+```
+
+Before the first notarized release, save notarization credentials in the login
+keychain. Use an app-specific password rather than an Apple Account password:
+
+```sh
+xcrun notarytool store-credentials "KodiReaderNotary" \
+  --apple-id "YOUR_APPLE_ACCOUNT_EMAIL" \
+  --team-id "3FJF74RW5L" \
+  --password "YOUR_APP_SPECIFIC_PASSWORD"
+```
+
+Create a publishable release with:
+
+```sh
+./Scripts/package-dmg.sh 0.2.0 --notarize
+```
+
+The script regenerates the Xcode project, builds a Developer ID-signed Release
+app for Apple Silicon, checks its embedded frameworks and Hardened Runtime,
+creates and signs `KodiReader.dmg`, submits it to Apple's notary service, staples
+the ticket, and verifies Gatekeeper acceptance. Running without `--notarize`
+creates a signed diagnostic DMG but prints a warning because it is not safe to
+publish. `KODI_SIGNING_IDENTITY`, `KODI_TEAM_ID`, and `KODI_NOTARY_PROFILE` can
+override the release defaults.
 
 ## Testing
 
@@ -171,8 +211,8 @@ passed every functional test before the snapshots exposed it.
 ## How it works
 
 ```
-EpubKit    parsing and persistence, no UI, portable to iOS
-ReaderUI   the rendering engine: scheme handler, reader.js, reader.css
+EpubKit    EPUB/PDF models, parsing, and persistence, no app UI
+ReaderUI   the EPUB web renderer and native PDFKit reading surface
 App        the SwiftUI macOS app
 ```
 
@@ -209,6 +249,11 @@ with `multiply` on light themes and `screen` on dark ones so the glyphs stay
 readable. Drawing them on top rather than behind is what lets a click land on a
 highlight and open its note.
 
+**PDFs** use Apple's PDFKit in a native paged view. Kodi stores page-local text
+ranges for highlights and rebuilds transient PDF annotations when a document
+opens, so neither the original PDF nor the imported library copy is modified.
+Scanned pages remain viewable but need embedded text for selection and Ask AI.
+
 **Storage** is a single JSON file in Application Support holding reading
 positions, annotations, bookmarks, and settings. Opened books are copied into
 the app’s sandbox library so Recents can reopen them without asking again.
@@ -231,7 +276,7 @@ those generated files so the app builds without Node.
 
 ## Not included
 
-No library shelf, DRM/LCP, sync, OPDS catalogues, bundled audiobooks, or
-fixed-layout EPUB. Books are opened with `Cmd-O` or by dropping them on the
-window; articles and websites can be opened from a URL. The welcome screen
-lists what you were reading recently.
+No library shelf, DRM/LCP, OCR, password-protected PDF support, sync, OPDS
+catalogues, bundled audiobooks, or fixed-layout EPUB. EPUBs and PDFs are opened
+with `Cmd-O` or by dropping them on the window; articles and websites can be
+opened from a URL. The welcome screen lists what you were reading recently.

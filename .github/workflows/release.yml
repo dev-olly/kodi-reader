@@ -1,47 +1,36 @@
-name: Release
+name: Verify Release
 
+# Release packages are built and notarized on the signing Mac.
+# CI verifies the published package without replacing it with an unsigned build.
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: Published release tag to verify (for example v0.2.0)
+        required: true
+        type: string
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  dmg:
+  verify:
     runs-on: macos-26
     steps:
-      - uses: actions/checkout@v4
-
-      - name: Install XcodeGen
-        run: brew install xcodegen
-
-      - name: Package DMG
-        run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            ./Scripts/package-dmg.sh "${GITHUB_REF_NAME}"
-          else
-            ./Scripts/package-dmg.sh
-          fi
-
-      - name: Upload DMG
-        uses: actions/upload-artifact@v4
-        with:
-          name: KodiReader.dmg
-          path: KodiReader.dmg
-
-      - name: Create GitHub Release
-        if: github.ref_type == 'tag'
+      - name: Download published DMG
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
+        run: gh release download "$RELEASE_TAG" --pattern KodiReader.dmg
+
+      - name: Verify signature and Apple notarization
         run: |
-          notes="Unsigned Apple Silicon build. First open: Right-click the app and choose Open."
-          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release upload "${GITHUB_REF_NAME}" KodiReader.dmg --clobber
-          else
-            gh release create "${GITHUB_REF_NAME}" KodiReader.dmg \
-              --title "Kodi Reader ${GITHUB_REF_NAME}" \
-              --notes "$notes"
-          fi
+          codesign --verify --verbose=2 KodiReader.dmg
+          details="$(codesign --display --verbose=4 KodiReader.dmg 2>&1)"
+          printf '%s\n' "$details"
+          printf '%s\n' "$details" | grep -F 'Authority=Developer ID Application: Emmanuel Onyebueke (3FJF74RW5L)'
+          xcrun stapler validate KodiReader.dmg
+          spctl --assess --type open --context context:primary-signature --verbose=4 KodiReader.dmg

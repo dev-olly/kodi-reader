@@ -3,7 +3,7 @@ import ReaderUI
 import SwiftUI
 
 struct TableOfContentsView: View {
-    let book: EPUBBook
+    let document: ReaderDocument
     let reader: ReaderController
     /// Called after the user jumps to an entry so the host can dismiss a popover.
     var onSelect: (() -> Void)? = nil
@@ -12,11 +12,11 @@ struct TableOfContentsView: View {
 
     var body: some View {
         Group {
-            if book.publication.toc.isEmpty {
+            if document.outline.isEmpty {
                 ContentUnavailableView(
                     "No Contents",
                     systemImage: "list.bullet.indent",
-                    description: Text("This book does not include a table of contents.")
+                    description: Text("This document does not include a table of contents.")
                 )
             } else {
                 List {
@@ -39,7 +39,7 @@ struct TableOfContentsView: View {
     private var outline: some View {
         // A flat search result list is easier to scan than a filtered tree.
         if query.isEmpty {
-            ForEach(book.publication.toc) { entry in
+            ForEach(document.outline) { entry in
                 TOCRow(entry: entry, reader: reader, onSelect: jump)
             }
         } else {
@@ -52,24 +52,24 @@ struct TableOfContentsView: View {
         }
     }
 
-    private func jump(_ entry: TOCEntry) {
-        guard !entry.path.isEmpty else { return }
-        reader.go(to: entry)
+    private func jump(_ entry: DocumentOutlineEntry) {
+        guard let destination = entry.destination else { return }
+        reader.go(to: destination)
         onSelect?()
     }
 
-    private var filtered: [TOCEntry] {
-        guard !query.isEmpty else { return book.publication.toc }
-        return book.publication.toc
+    private var filtered: [DocumentOutlineEntry] {
+        guard !query.isEmpty else { return document.outline }
+        return document.outline
             .flatMap(\.flattened)
             .filter { $0.title.localizedCaseInsensitiveContains(query) }
     }
 }
 
 private struct TOCRow: View {
-    let entry: TOCEntry
+    let entry: DocumentOutlineEntry
     let reader: ReaderController
-    let onSelect: (TOCEntry) -> Void
+    let onSelect: (DocumentOutlineEntry) -> Void
 
     var body: some View {
         if entry.children.isEmpty {
@@ -95,7 +95,7 @@ private struct TOCRow: View {
                 .contentShape(.rect)
         }
         .buttonStyle(.plain)
-        .foregroundStyle(entry.path.isEmpty ? .secondary : .primary)
-        .disabled(entry.path.isEmpty)
+        .foregroundStyle(entry.destination == nil ? .secondary : .primary)
+        .disabled(entry.destination == nil)
     }
 }

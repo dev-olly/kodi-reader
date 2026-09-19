@@ -5,7 +5,7 @@ import SwiftUI
 
 /// The reading surface: page content, chrome over the page, and the notes inspector.
 struct ReaderScreen: View {
-    let book: EPUBBook
+    let book: ReaderDocument
     let reader: ReaderController
 
     @Environment(AppModel.self) private var model
@@ -244,7 +244,7 @@ struct ReaderScreen: View {
                 }
 
                 VStack(spacing: 0) {
-                    ReaderWebView(controller: reader, book: book)
+                    readerSurface
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .readerKeyboardShortcuts(
                             reader,
@@ -272,6 +272,16 @@ struct ReaderScreen: View {
             }
         }
         .animation(.easeInOut(duration: 0.18), value: reader.isLoading)
+    }
+
+    @ViewBuilder
+    private var readerSurface: some View {
+        switch book {
+        case .epub(let epub):
+            ReaderWebView(controller: reader, book: epub)
+        case .pdf(let pdf):
+            ReaderPDFView(controller: reader, book: pdf)
+        }
     }
 
     /// Dedicated side column for a page-turn control — never overlaps text.
@@ -570,7 +580,11 @@ struct ReaderScreen: View {
             }
             .quickHelp("Text and appearance")
             .popover(isPresented: $isShowingTypography, arrowEdge: .bottom) {
-                TypographyPopover()
+                if reader.isPDF {
+                    PDFAppearancePopover(reader: reader)
+                } else {
+                    TypographyPopover()
+                }
             }
 
             Button { model.isShowingContents.toggle() } label: {
@@ -584,7 +598,7 @@ struct ReaderScreen: View {
                 ),
                 arrowEdge: .bottom
             ) {
-                TableOfContentsView(book: book, reader: reader) {
+                TableOfContentsView(document: book, reader: reader) {
                     model.isShowingContents = false
                 }
                 .frame(width: 320, height: 480)
@@ -701,18 +715,60 @@ private struct ProgressFooter: View {
     }
 
     private var pageLabel: String {
+        if reader.isPDF {
+            let range = reader.visiblePageRange
+            return range.lowerBound == range.upperBound
+                ? "\(range.lowerBound + 1) of \(max(1, reader.pageCount))"
+                : "\(range.lowerBound + 1)–\(range.upperBound + 1) of \(max(1, reader.pageCount))"
+        }
         let current = max(1, reader.page + 1)
         let total = max(1, reader.pageCount)
         return "\(current) of \(total)"
     }
 
     private var pagesRemaining: String {
+        if reader.isPDF {
+            let left = max(0, reader.pageCount - reader.visiblePageRange.upperBound - 1)
+            switch left {
+            case 0: return "Last page"
+            case 1: return "1 page left"
+            default: return "\(left) pages left"
+            }
+        }
         let left = max(0, reader.pageCount - reader.page - 1)
         switch left {
         case 0: return "Last page in chapter"
         case 1: return "1 page left in chapter"
         default: return "\(left) pages left in chapter"
         }
+    }
+}
+
+private struct PDFAppearancePopover: View {
+    let reader: ReaderController
+    @Environment(AppModel.self) private var model
+
+    var body: some View {
+        @Bindable var model = model
+        VStack(alignment: .leading, spacing: 14) {
+            Text("PDF appearance").font(.headline)
+            HStack {
+                Button("Zoom Out") { reader.zoomPDFOut() }
+                Button("Fit Page") { reader.fitPDFPage() }
+                Button("Zoom In") { reader.zoomPDFIn() }
+            }
+            Toggle("Two-page spread", isOn: $model.settings.twoPageSpread)
+            Picker("Theme", selection: $model.settings.theme) {
+                ForEach(ReaderTheme.allCases) { theme in
+                    Text(theme.displayName).tag(theme)
+                }
+            }
+            Text("Theme changes the reader chrome; PDF page colors are preserved.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .frame(width: 340)
     }
 }
 

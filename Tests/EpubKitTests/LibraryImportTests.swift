@@ -49,6 +49,7 @@ final class LibraryImportTests: XCTestCase {
         XCTAssertNil(record.importedRelativePath)
         XCTAssertNil(record.chatMessages)
         XCTAssertNil(record.sourceURL)
+        XCTAssertEqual(record.documentKind, .epub)
         XCTAssertFalse(record.isWebDocument)
         XCTAssertEqual(record.conversation, [])
     }
@@ -76,7 +77,7 @@ final class LibraryImportTests: XCTestCase {
         XCTAssertEqual(decoded.annotations.count, 1)
     }
 
-    func testLibraryStoreMigratesToV3() throws {
+    func testLibraryStoreMigratesToCurrentVersion() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("kodi-lib-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
@@ -90,7 +91,7 @@ final class LibraryImportTests: XCTestCase {
 
         let store = LibraryStore(fileURL: libraryURL)
         XCTAssertEqual(store.schemaVersion, LibraryStore.currentVersion)
-        XCTAssertEqual(LibraryStore.currentVersion, 3)
+        XCTAssertEqual(LibraryStore.currentVersion, 4)
     }
 
     func testBookRecordRoundTripsChatMessages() throws {

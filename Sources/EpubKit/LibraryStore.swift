@@ -8,8 +8,8 @@ import Foundation
 public final class LibraryStore: @unchecked Sendable {
     /// Current on-disk schema. v1 notes decode as-is; missing `anchorStatus`
     /// defaults to `.unknown` on the Annotation type. v3 adds optional
-    /// `sourceURL` on BookRecord for frozen webpages.
-    public static let currentVersion = 3
+    /// `sourceURL` on BookRecord for frozen webpages; v4 adds PDF documents.
+    public static let currentVersion = 4
 
     private struct Payload: Codable {
         var version: Int = LibraryStore.currentVersion
@@ -33,7 +33,7 @@ public final class LibraryStore: @unchecked Sendable {
         fileURL.deletingLastPathComponent()
     }
 
-    /// Durable copies of opened EPUBs live here so Recents never needs sandbox re-grants.
+    /// Durable copies of opened documents live here so Recents never needs sandbox re-grants.
     public var booksDirectory: URL {
         rootDirectory.appendingPathComponent("Books", isDirectory: true)
     }
@@ -66,8 +66,11 @@ public final class LibraryStore: @unchecked Sendable {
     // MARK: - Imported book files
 
     /// Relative path stored on `BookRecord.importedRelativePath`.
-    public static func relativeImportedPath(for bookID: String) -> String {
-        "Books/\(sanitizedFileName(for: bookID)).epub"
+    public static func relativeImportedPath(
+        for bookID: String,
+        kind: DocumentKind = .epub
+    ) -> String {
+        "Books/\(sanitizedFileName(for: bookID)).\(kind.rawValue)"
     }
 
     public static func sanitizedFileName(for bookID: String) -> String {
@@ -77,9 +80,9 @@ public final class LibraryStore: @unchecked Sendable {
         return name.isEmpty ? "book" : String(name.prefix(120))
     }
 
-    public func importedURL(for bookID: String) -> URL {
+    public func importedURL(for bookID: String, kind: DocumentKind = .epub) -> URL {
         booksDirectory.appendingPathComponent(
-            Self.sanitizedFileName(for: bookID) + ".epub",
+            Self.sanitizedFileName(for: bookID) + ".\(kind.rawValue)",
             isDirectory: false
         )
     }
@@ -90,7 +93,7 @@ public final class LibraryStore: @unchecked Sendable {
             let url = rootDirectory.appendingPathComponent(relative)
             if FileManager.default.fileExists(atPath: url.path) { return url }
         }
-        let fallback = importedURL(for: record.id)
+        let fallback = importedURL(for: record.id, kind: record.documentKind)
         return FileManager.default.fileExists(atPath: fallback.path) ? fallback : nil
     }
 
@@ -102,9 +105,13 @@ public final class LibraryStore: @unchecked Sendable {
 
     /// Copies `source` into `Books/` unless it is already the imported file.
     @discardableResult
-    public func importBook(from source: URL, bookID: String) throws -> URL {
+    public func importBook(
+        from source: URL,
+        bookID: String,
+        kind: DocumentKind = .epub
+    ) throws -> URL {
         try FileManager.default.createDirectory(at: booksDirectory, withIntermediateDirectories: true)
-        let destination = importedURL(for: bookID)
+        let destination = importedURL(for: bookID, kind: kind)
         let sourcePath = source.resolvingSymlinksInPath().path
         let destPath = destination.resolvingSymlinksInPath().path
         if sourcePath == destPath {
@@ -117,8 +124,8 @@ public final class LibraryStore: @unchecked Sendable {
         return destination
     }
 
-    public func removeImportedBook(bookID: String) {
-        let url = importedURL(for: bookID)
+    public func removeImportedBook(bookID: String, kind: DocumentKind = .epub) {
+        let url = importedURL(for: bookID, kind: kind)
         try? FileManager.default.removeItem(at: url)
     }
 
@@ -127,7 +134,7 @@ public final class LibraryStore: @unchecked Sendable {
         guard var payload = try? JSONDecoder().decode(Payload.self, from: data) else {
             return nil
         }
-        // v1 → v3 is a no-op body migration: new Annotation/BookRecord fields
+        // v1 → current is a no-op body migration: new Annotation/BookRecord fields
         // are optional on decode. Bumping the version stamps the current schema.
         if payload.version < currentVersion {
             payload.version = currentVersion
@@ -179,9 +186,13 @@ public final class LibraryStore: @unchecked Sendable {
 
     public func remove(bookID: String) {
         lock.lock()
-        payload.books.removeValue(forKey: bookID)
+        let removed = payload.books.removeValue(forKey: bookID)
         lock.unlock()
-        removeImportedBook(bookID: bookID)
+        if let relative = removed?.importedRelativePath {
+            try? FileManager.default.removeItem(at: rootDirectory.appendingPathComponent(relative))
+        } else {
+            removeImportedBook(bookID: bookID, kind: removed?.documentKind ?? .epub)
+        }
         drawingStore.deleteAllScenes(bookID: bookID)
         scheduleSave()
     }

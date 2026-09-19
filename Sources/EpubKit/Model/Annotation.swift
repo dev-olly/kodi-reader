@@ -644,11 +644,12 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var id: String
     public var title: String
     public var author: String
+    public var documentKind: DocumentKind
     /// Security-scoped bookmark for the original user-selected file (best-effort).
     public var fileBookmark: Data?
     /// Original path the user opened from (display / Locate hint only).
     public var lastKnownPath: String?
-    /// Copy inside Application Support, e.g. `Books/<id>.epub` — primary reopen source.
+    /// Copy inside Application Support, e.g. `Books/<id>.epub` or `.pdf`.
     public var importedRelativePath: String?
     public var lastOpenedAt: Date
     public var position: Locator?
@@ -662,13 +663,14 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var chats: [ChatThread]?
     /// Thread shown when the book is reopened.
     public var activeChatID: UUID?
-    /// Original webpage this EPUB was frozen from. Nil for ordinary books.
+    /// Original webpage this EPUB was frozen from. Nil for local documents.
     public var sourceURL: URL?
 
     public init(
         id: String,
         title: String,
         author: String,
+        documentKind: DocumentKind = .epub,
         fileBookmark: Data? = nil,
         lastKnownPath: String? = nil,
         importedRelativePath: String? = nil,
@@ -685,6 +687,7 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         self.id = id
         self.title = title
         self.author = author
+        self.documentKind = documentKind
         self.fileBookmark = fileBookmark
         self.lastKnownPath = lastKnownPath
         self.importedRelativePath = importedRelativePath
@@ -700,6 +703,32 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     }
 
     public var isWebDocument: Bool { sourceURL != nil }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, title, author, documentKind, fileBookmark, lastKnownPath
+        case importedRelativePath, lastOpenedAt, position, progress, annotations
+        case bookmarks, chatMessages, chats, activeChatID, sourceURL
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decode(String.self, forKey: .id)
+        title = try container.decode(String.self, forKey: .title)
+        author = try container.decode(String.self, forKey: .author)
+        documentKind = try container.decodeIfPresent(DocumentKind.self, forKey: .documentKind) ?? .epub
+        fileBookmark = try container.decodeIfPresent(Data.self, forKey: .fileBookmark)
+        lastKnownPath = try container.decodeIfPresent(String.self, forKey: .lastKnownPath)
+        importedRelativePath = try container.decodeIfPresent(String.self, forKey: .importedRelativePath)
+        lastOpenedAt = try container.decode(Date.self, forKey: .lastOpenedAt)
+        position = try container.decodeIfPresent(Locator.self, forKey: .position)
+        progress = try container.decodeIfPresent(Double.self, forKey: .progress) ?? 0
+        annotations = try container.decodeIfPresent([Annotation].self, forKey: .annotations) ?? []
+        bookmarks = try container.decodeIfPresent([Bookmark].self, forKey: .bookmarks) ?? []
+        chatMessages = try container.decodeIfPresent([ChatMessage].self, forKey: .chatMessages)
+        chats = try container.decodeIfPresent([ChatThread].self, forKey: .chats)
+        activeChatID = try container.decodeIfPresent(UUID.self, forKey: .activeChatID)
+        sourceURL = try container.decodeIfPresent(URL.self, forKey: .sourceURL)
+    }
 
     /// Non-optional view of the active conversation.
     public var conversation: [ChatMessage] {

@@ -50,7 +50,7 @@ contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 
 A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). Release builds are signed with Developer ID and notarized by Apple. You can also build from source (Xcode 16 or later).
 
-The site is deployed on Vercel.
+The site is deployed on Vercel at [kodi-reader-devollys-projects.vercel.app](https://kodi-reader-devollys-projects.vercel.app/).
 
 ## Privacy
 

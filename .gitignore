@@ -32,3 +32,6 @@ Snapshots/
 Tools/excalidraw-host/node_modules/
 Tools/excalidraw-host/dist/
 node_modules/
+
+# Per-developer public Supabase configuration (never put server secrets here).
+Config/Auth.local.xcconfig

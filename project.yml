@@ -11,8 +11,15 @@ options:
   projectFormat: xcode15_3
 
 packages:
+  Supabase:
+    url: https://github.com/supabase/supabase-swift.git
+    exactVersion: 2.55.2
   EpubReaderCore:
     path: .
+
+configFiles:
+  Debug: Config/Auth.xcconfig
+  Release: Config/Auth.xcconfig
 
 settings:
   base:
@@ -36,6 +43,8 @@ targets:
     sources:
       - path: App
     dependencies:
+      - package: Supabase
+        product: Auth
       - package: EpubReaderCore
         product: EpubKit
       - package: EpubReaderCore

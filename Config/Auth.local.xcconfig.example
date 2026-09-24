@@ -1,0 +1,5 @@
+// Copy to Auth.local.xcconfig. These two values are PUBLIC app configuration.
+// The empty expansion prevents xcconfig from treating // as a comment.
+SUPABASE_URL = https:/$()/YOUR_PROJECT.supabase.co
+SUPABASE_PUBLISHABLE_KEY = sb_publishable_YOUR_PUBLIC_KEY
+// Never put sb_secret_, service_role, SMTP, or OpenAI keys in this file.

@@ -1,0 +1,4 @@
+// Blank configuration keeps the reader usable and Ask AI sign-in unavailable.
+SUPABASE_URL =
+SUPABASE_PUBLISHABLE_KEY =
+#include? "Auth.local.xcconfig"

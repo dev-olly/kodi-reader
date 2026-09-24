@@ -5,6 +5,7 @@ import SwiftUI
 /// Shown when no document is open: a way in, plus whatever you were reading last.
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
+    @EnvironmentObject private var updater: AppUpdater
     @State private var urlText = ""
     @State private var urlError: String?
     @State private var isFieldHovered = false
@@ -42,6 +43,15 @@ struct WelcomeView: View {
                 ContentUnavailableView("Room for a good book", systemImage: "books.vertical")
                     .frame(maxWidth: .infinity)
             }
+            HStack {
+                Text("Kodi Reader \(Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "")")
+                    .foregroundStyle(model.settings.theme.muted)
+                Spacer()
+                Button("Check for Updates…", action: updater.checkForUpdates)
+                    .buttonStyle(.link)
+                    .disabled(!updater.canCheckForUpdates)
+            }
+            .font(.caption)
           }
           .padding(40)
           .frame(maxWidth: 1000, alignment: .leading)

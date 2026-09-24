@@ -6,6 +6,7 @@ import SwiftUI
 struct KodiReaderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var model = AppModel()
+    @StateObject private var updater = AppUpdater()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
@@ -14,6 +15,8 @@ struct KodiReaderApp: App {
         Window("Kodi Reader", id: "main") {
             RootView()
                 .environment(model)
+                .environmentObject(updater)
+                .task { updater.beforeInstall = { model.flush() } }
                 .frame(minWidth: 640, minHeight: 480)
                 // Opening a book from Finder or `open` arrives here, and the
                 // grant that comes with it is what lets the sandbox read it.
@@ -26,10 +29,18 @@ struct KodiReaderApp: App {
             if phase != .active { model.flush() }
         }
         .commands { readerCommands }
+
+        Settings {
+            UpdateSettingsView(updater: updater)
+        }
     }
 
     @CommandsBuilder
     private var readerCommands: some Commands {
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…", action: updater.checkForUpdates)
+                .disabled(!updater.canCheckForUpdates)
+        }
         // Keep the system New Item group; append Open / Close commands.
         CommandGroup(after: .newItem) {
             Button("Open Document…") { model.presentOpenPanel() }

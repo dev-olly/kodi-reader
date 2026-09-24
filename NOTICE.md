@@ -10,6 +10,12 @@ shipped with each dependency.
 - License: MIT
 - Used by EpubKit to read EPUB ZIP containers.
 
+## Sparkle
+
+- Source: https://github.com/sparkle-project/Sparkle (2.10.0)
+- License: MIT, with bundled third-party notices in Sparkle's LICENSE file.
+- Provides signed in-app updates, installation, and relaunch on macOS.
+
 ## Excalidraw, React, and React DOM
 
 - Source: https://github.com/excalidraw/excalidraw (`@excalidraw/excalidraw` 0.18.0)

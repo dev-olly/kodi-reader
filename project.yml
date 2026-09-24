@@ -11,6 +11,9 @@ options:
   projectFormat: xcode15_3
 
 packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
   Supabase:
     url: https://github.com/supabase/supabase-swift.git
     exactVersion: 2.55.2
@@ -24,15 +27,18 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.3.0"
-    CURRENT_PROJECT_VERSION: "3"
+    MARKETING_VERSION: "0.3.1"
+    CURRENT_PROJECT_VERSION: "4"
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
   configs:
     Debug:
+      SPARKLE_INSTALLER_LAUNCHER: "true"
       # Keep local development builds independent of distribution credentials.
       CODE_SIGN_IDENTITY: "-"
+    Release:
+      SPARKLE_INSTALLER_LAUNCHER: "false"
 
 targets:
   # Deliberately not "Books", which would collide with Apple's own app in
@@ -43,6 +49,8 @@ targets:
     sources:
       - path: App
     dependencies:
+      - package: Sparkle
+        product: Sparkle
       - package: Supabase
         product: Auth
       - package: EpubReaderCore

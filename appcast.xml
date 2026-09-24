@@ -1,0 +1,42 @@
+<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
+--><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Kodi Reader</title>
+        <item>
+            <title>0.3.1</title>
+            <pubDate>Thu, 24 Sep 2026 11:36:55 +0200</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>4</sparkle:version>
+            <sparkle:shortVersionString>0.3.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.3.1
+
+Kodi Reader can now find and install updates from inside the app.
+
+- Automatic daily update checks notify you when a new version is available.
+- Choose **Kodi Reader → Check for Updates…**, or use the button on the home screen.
+- The update window downloads, verifies, and installs the update, then relaunches Kodi Reader.
+- **Settings → Updates** lets you control automatic checks and optionally enable
+  automatic downloading and installation.
+- Your books, notes, conversations, and reading progress stay on your Mac.
+
+Updates and the update feed are signed. The app is signed with Developer ID and
+notarized by Apple.
+
+## Install this first update
+
+Versions 0.3.0 and earlier do not include the updater. Download `KodiReader.dmg`,
+quit Kodi Reader, and drag the app into Applications, choosing Replace. This is
+the last manual install needed to enable future in-app updates.
+
+Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.3.1/KodiReader.dmg" length="7253787" type="application/octet-stream" sparkle:edSignature="i9UE6e0O7ZmhauZMC5WEDzxJp6KUGpjoausL1CKj57CUSsE3X7rZeGm3GJ2zHruMFE+RqD7tf3aiga5Qqx1dBQ=="></enclosure>
+        </item>
+    </channel>
+</rss><!-- sparkle-signatures:
+edSignature: s8bwUqqVywp49oikZtyMKFHJ/iMGioIZn8qMCqVWRz15sIKTPhmW8FNbFJG6hfSU+CjMZh1S3LpalLYz27zwBQ==
+length: 2206
+-->

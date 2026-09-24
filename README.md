@@ -177,7 +177,7 @@ xcrun notarytool store-credentials "KodiReaderNotary" \
 Create a publishable release with:
 
 ```sh
-./Scripts/package-dmg.sh 0.2.0 --notarize
+./Scripts/package-dmg.sh --notarize
 ```
 
 The script regenerates the Xcode project, builds a Developer ID-signed Release

@@ -82,7 +82,9 @@ build_app() {
 }
 
 if [[ -n "$VERSION" ]]; then
-  build_app MARKETING_VERSION="$VERSION" CURRENT_PROJECT_VERSION="$VERSION"
+  # Build numbers must keep increasing for Sparkle, independently of the
+  # user-visible version. CURRENT_PROJECT_VERSION comes from project.yml.
+  build_app MARKETING_VERSION="$VERSION"
 else
   build_app
 fi
@@ -90,6 +92,21 @@ fi
 if [[ ! -d "$APP" ]]; then
   echo "expected app at $APP" >&2
   exit 1
+fi
+
+# A build (unlike archive/export) does not re-sign Sparkle's nested helpers.
+# Sign from the inside out so every executable has our Developer ID and timestamp.
+SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
+if [[ -d "$SPARKLE" ]]; then
+  for helper in XPCServices/Installer.xpc Autoupdate Updater.app; do
+    codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" \
+      "$SPARKLE/Versions/B/$helper"
+  done
+  codesign --force --timestamp --options runtime --preserve-metadata=entitlements \
+    --sign "$SIGNING_IDENTITY" "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"
+  codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$SPARKLE"
+  codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" \
+    --entitlements App/KodiReader.release.entitlements "$APP"
 fi
 
 rm -rf "$STAGING" "$OUT"

@@ -48,7 +48,7 @@ not the goal right now** — this is a source-available personal project, not a
 contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
-A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). Release builds are signed with Developer ID and notarized by Apple. You can also build from source (Xcode 16 or later).
+A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). Release builds are signed with Developer ID and notarized by Apple. You can also build from source (Xcode 16.3 or later).
 
 The site is deployed on Vercel at [www.kodi-reader.app](https://www.kodi-reader.app/).
 
@@ -62,13 +62,19 @@ The site is deployed on Vercel at [www.kodi-reader.app](https://www.kodi-reader.
   proxy, which forwards requests to OpenAI. The OpenAI API key lives only on the
   server, never in the Mac app. Kodi AI uses a stronger default model tuned for
   simple explanations with references to the passages you attach.
+- Ask AI requires email-code sign-in through Supabase. Supabase stores the account
+  email and authentication records; the configured email provider delivers login codes.
+  Session tokens stay in macOS Keychain. The AI proxy validates the session and applies
+  temporary per-account/IP request limits; it does not log tokens or book passages.
+  Sign out or delete the account from the Ask AI account menu. Local books, notes, and
+  conversations remain on this Mac after either action.
 - Opened webpages are fetched and converted locally. There are no extra
   network calls beyond the page itself.
 
 ## Requirements
 
 - macOS 15 or later
-- Xcode 16 or later
+- Xcode 16.3 or later (Swift 6.1 is required by the authentication SDK)
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) to generate the project file
 - Node.js/npm only when changing the bundled Excalidraw drawing host
 
@@ -77,6 +83,9 @@ brew install xcodegen
 ```
 
 ## Setup
+
+For hosted Ask AI, follow [the email authentication setup guide](docs/ask-ai-auth-setup.md).
+Without Supabase configuration the reader works normally, but AI sign-in is unavailable.
 
 ### Install the app
 

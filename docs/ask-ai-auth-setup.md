@@ -1,0 +1,128 @@
+# Ask AI email sign-in setup
+
+The app uses the Auth product of the official Supabase Swift SDK (pinned to 2.55.2).
+The existing Fly proxy validates each request with Supabase `getUser(token)`.
+Reading, notes, and local conversation history work without an account or network.
+This phase does not grant, charge, or display credits and does not include payments.
+
+## Current setup status (2026-09-24)
+
+- Supabase project: `Kodi Reader`, reference `hftfeybmgpousanpawgw`, Frankfurt.
+- Email signup and confirmation are enabled; anonymous and other providers are disabled.
+- Email codes are configured as 6 digits with a 600-second expiry.
+- Site URL: `https://www.kodi-reader.app`.
+- The ignored `Config/Auth.local.xcconfig` contains this project's public URL and
+  publishable key. The configured Developer ID Release build and signature check passed.
+- Purelymail SMTP saved: `smtp.purelymail.com`, port 465, sender/username
+  `olly@kodi-reader.app`, sender name `Kodi Reader`, 60-second per-user interval.
+  No SMTP password is stored in this repository. Both Confirm sign up and Magic link
+  or OTP templates send codes with no sign-in link.
+- Real signed-app checks passed: new-user email delivery and verification, draft
+  preservation without automatically sending, session restoration after quit/relaunch,
+  sign-out, returning-user email delivery, rejection of a wrong code, and successful
+  verification with the correct code. Tests used `olly@kodi-reader.app`.
+- Fly's `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and server-only
+  `SUPABASE_SECRET_KEY` are stored in Fly's encrypted secrets and staged for the next
+  deployment. The admin key was saved with user approval on September 24; Fly
+  confirmed the save. It is not in the Mac app or repository. The existing live
+  backend has not been redeployed.
+- Backend enforcement, live account deletion, and public app release remain pending.
+
+## 1. Create Supabase and configure email
+
+1. Create a Supabase project. Save its project URL and **publishable key** for the app.
+2. Enable email sign-in and new-user signup. Require email confirmation. Leave anonymous,
+   phone, and social sign-in disabled. The same email-code flow handles signup and login.
+3. Set the email OTP length to **6**, expiry to **600 seconds**, and sending cooldown to
+   **60 seconds**. Keep verification and email sending rate limits enabled. Review delivery
+   quotas with the chosen SMTP provider before a public launch.
+4. In both the Confirm sign up and Magic link or OTP email templates, use
+   `{{ .Token }}` instead of a confirmation URL:
+
+   ```html
+   <h2>Sign in to Kodi Reader</h2>
+   <p>Your sign-in code is <strong>{{ .Token }}</strong>.</p>
+   <p>Enter this code in Ask AI. It expires in 10 minutes.</p>
+   <p>If you did not request this code, you can ignore this email.</p>
+   ```
+
+5. Set up custom SMTP with a verified sender on a domain you own (for example,
+   `login@your-domain.com`). Add the DNS records supplied by the email provider.
+   A paid inbox is not needed just for sending codes. Configure sender name and SMTP
+   credentials in Supabase, never in the Mac app or repository.
+6. Test delivery to an address outside your Supabase project team. The built-in email
+   sender is restricted to approved team addresses and is not the production delivery path.
+
+No redirect URL, custom URL scheme, or login website is used by the app's code flow.
+If Supabase asks for a project Site URL, it is not a callback for this native flow.
+
+References: [email codes](https://supabase.com/docs/guides/auth/auth-email-passwordless),
+[custom SMTP](https://supabase.com/docs/guides/auth/auth-smtp).
+
+## 2. Configure and build the Mac app
+
+Copy `Config/Auth.local.xcconfig.example` to `Config/Auth.local.xcconfig` and replace the
+two placeholders. The local file is ignored by Git and read by Debug and Release builds.
+Keep the `https:/$()/` syntax: xcconfig treats an unescaped `//` as a comment.
+
+Only the URL and publishable key belong in the app. Never embed a Supabase secret key,
+legacy `service_role` key, SMTP password, or AI provider key. The public values are
+intentionally visible in the built app's Info.plist. CI can instead supply
+`SUPABASE_URL` and `SUPABASE_PUBLISHABLE_KEY` as Xcode build settings.
+
+```sh
+xcodegen generate
+xcodebuild -project KodiReader.xcodeproj -scheme KodiReader \
+  -configuration Debug -destination 'platform=macOS' CODE_SIGNING_ALLOWED=NO test
+```
+
+The SDK uses macOS Keychain under service `com.olly.KodiReader.auth`, scoped to the
+Supabase project host. Tokens are not written to library JSON or UserDefaults.
+For manual persistence checks use a consistently signed build; changing signing
+identities or sandbox settings can affect Keychain access.
+
+## 3. Configure the existing Fly backend
+
+Backend repository: `../kodi-reader-ai`. Use Node 22 or newer and run `npm ci`, then
+`npm test`. Set these through Fly's secret management UI or secure CLI input:
+
+- `SUPABASE_URL`: same project as the app.
+- `SUPABASE_PUBLISHABLE_KEY`: same public key as the app.
+- `SUPABASE_SECRET_KEY`: server-only key allowing Supabase admin account deletion.
+- `OPENAI_API_KEY`: existing server-only provider key.
+
+`USER_RATE_LIMIT_REQUESTS` defaults to 60 per hour. Existing IP limits remain 60 per
+hour, and both are in-memory and reset with the process. They are not a credit ledger
+and are not shared across Fly machines. Use a limited rollout until paid usage is built.
+
+No database migrations or application profile table are needed for this phase.
+Later credit accounts should reference the verified Supabase user UUID, never the email.
+
+## 4. Release and manual acceptance
+
+1. Configure Supabase and verify real email delivery before distributing the app.
+2. On a signed Mac build, verify first signup, returning sign-in, wrong/expired codes,
+   resend cooldown, closing the sign-in sheet, relaunch, token refresh, and offline reading.
+3. Confirm the draft and passage references survive sign-in and failures. Successful
+   sign-in returns to the draft; it never sends the question automatically.
+4. Verify sign-out cancels streaming and clears the session. Delete a disposable test
+   account; confirm it disappears from Supabase while local books and notes remain.
+   If deletion fails, the app keeps the session and displays an error.
+5. Release the configured Mac app **before** deploying the authenticated proxy. Then
+   deploy the backend promptly: older app versions will receive a sign-in error and must
+   update. Do not add a permanent anonymous fallback or auth-disable environment switch.
+6. Check `/health`, send a request without a token (expect `401 auth_required`), then
+   verify a signed-in streamed reply. Monitor auth failures, 503 errors, SMTP delivery,
+   and AI spending without logging tokens, codes, emails, or book content.
+
+The backend returns `503 auth_unavailable` for missing configuration or auth-service
+outages. These must not sign the user out or permit anonymous requests. AI provider
+authentication failures return 502, not a user-session 401.
+
+Account deletion uses `DELETE /v1/account` with the user's bearer token and deletes only
+the user ID returned by Supabase. Signing out affects this Mac's session; already-issued
+access tokens expire according to Supabase's session policy. Deleting an account is
+checked on every subsequent request through `getUser`, rather than trusting JWT claims alone.
+
+Live Supabase setup, email delivery, and signed-build end-to-end checks require the
+project and sender domain to exist; mocked tests do not certify those external services.

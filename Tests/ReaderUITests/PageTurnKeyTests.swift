@@ -109,5 +109,83 @@ final class PageTurnKeyTests: XCTestCase {
         window.contentView = NSView(frame: window.contentLayoutRect)
         return window
     }
+
+    func testNavigationKeysAreConsumedBeforeReachingAppKit() throws {
+        let (window, monitor) = makeMonitoredWindow()
+        defer { monitor.tearDown() }
+        var spaceActions = 0
+        monitor.spaceAction = { spaceActions += 1 }
+
+        for keyCode: UInt16 in [123, 124, 125, 126, 116, 121, 49] {
+            for modifiers: NSEvent.ModifierFlags in [[], .shift] {
+                for isRepeat in [false, true] {
+                    let event = try keyEvent(keyCode, in: window, modifiers: modifiers, isRepeat: isRepeat)
+                    XCTAssertNil(monitor.keyEventHandler(event),
+                                 "Handled navigation keys must not reach AppKit and trigger an alert or a second scroll")
+                }
+            }
+        }
+
+        XCTAssertEqual(spaceActions, 2, "Each space press or repeat should navigate exactly once")
+    }
+
+    func testUnhandledKeysAndDisabledMonitorPassEventsThrough() throws {
+        let (window, monitor) = makeMonitoredWindow()
+        defer { monitor.tearDown() }
+
+        let letter = try keyEvent(0, in: window) // A
+        XCTAssertTrue(monitor.keyEventHandler(letter) === letter)
+        for modifier: NSEvent.ModifierFlags in [.command, .option, .control] {
+            let shortcut = try keyEvent(124, in: window, modifiers: modifier)
+            XCTAssertTrue(monitor.keyEventHandler(shortcut) === shortcut)
+        }
+        monitor.enabled = false
+        let arrow = try keyEvent(125, in: window)
+        XCTAssertTrue(monitor.keyEventHandler(arrow) === arrow)
+    }
+
+    func testMonitorPreservesEditorAndOtherWindowNavigation() throws {
+        let (window, monitor) = makeMonitoredWindow()
+        defer { monitor.tearDown() }
+        let editor = NSTextView(frame: window.contentLayoutRect)
+        window.contentView?.addSubview(editor)
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        let editorArrow = try keyEvent(123, in: window)
+        XCTAssertTrue(monitor.keyEventHandler(editorArrow) === editorArrow)
+
+        let otherWindow = NSWindow(
+            contentRect: window.frame, styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        let otherArrow = try keyEvent(124, in: otherWindow)
+        XCTAssertTrue(monitor.keyEventHandler(otherArrow) === otherArrow)
+    }
+
+    private func makeMonitoredWindow() -> (NSWindow, PageTurnKeyMonitor.MonitorView) {
+        _ = NSApplication.shared
+        let window = NSWindow(
+            contentRect: NSRect(x: -10_000, y: -10_000, width: 300, height: 300),
+            styleMask: [.borderless], backing: .buffered, defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let monitor = PageTurnKeyMonitor.MonitorView()
+        monitor.controller = ReaderController()
+        window.contentView?.addSubview(monitor)
+        return (window, monitor)
+    }
+
+    private func keyEvent(
+        _ keyCode: UInt16,
+        in window: NSWindow,
+        modifiers: NSEvent.ModifierFlags = [],
+        isRepeat: Bool = false
+    ) throws -> NSEvent {
+        try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: modifiers,
+            timestamp: 0, windowNumber: window.windowNumber, context: nil,
+            characters: keyCode == 49 ? " " : "", charactersIgnoringModifiers: "",
+            isARepeat: isRepeat, keyCode: keyCode
+        ))
+    }
 }
+
 #endif

@@ -180,7 +180,7 @@ public extension View {
 }
 
 /// Invisible AppKit view that owns the local key monitor.
-private struct PageTurnKeyMonitor: NSViewRepresentable {
+struct PageTurnKeyMonitor: NSViewRepresentable {
     var controller: ReaderController
     var enabled: Bool
     var spaceAction: (() -> Void)?
@@ -218,6 +218,13 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
         private var lastSuppress = false
         override var acceptsFirstResponder: Bool { false }
 
+        lazy var keyEventHandler: (NSEvent) -> NSEvent? = { [weak self] event in
+            guard let self else { return event }
+            // nil means the key was consumed. Falling back to the event
+            // would send it to AppKit again, causing an alert or extra scroll.
+            return self.handleKey(event)
+        }
+
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             if window != nil {
@@ -244,9 +251,7 @@ private struct PageTurnKeyMonitor: NSViewRepresentable {
 
         private func install() {
             tearDown()
-            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-                self?.handleKey(event) ?? event
-            }
+            keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown, handler: keyEventHandler)
             mouseMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
                 self?.handleMouseDown(event) ?? event
             }

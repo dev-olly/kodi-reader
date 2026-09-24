@@ -22,11 +22,16 @@ This phase does not grant, charge, or display credits and does not include payme
   sign-out, returning-user email delivery, rejection of a wrong code, and successful
   verification with the correct code. Tests used `olly@kodi-reader.app`.
 - Fly's `SUPABASE_URL`, `SUPABASE_PUBLISHABLE_KEY`, and server-only
-  `SUPABASE_SECRET_KEY` are stored in Fly's encrypted secrets and staged for the next
-  deployment. The admin key was saved with user approval on September 24; Fly
-  confirmed the save. It is not in the Mac app or repository. The existing live
-  backend has not been redeployed.
-- Backend enforcement, live account deletion, and public app release remain pending.
+  `SUPABASE_SECRET_KEY` are deployed from Fly's encrypted secrets. The admin key was
+  saved with user approval on September 24. It is not in the Mac app or repository.
+- [Kodi Reader v0.3.0](https://github.com/dev-olly/kodi-reader/releases/tag/v0.3.0)
+  was published with a clean Developer ID build, Apple notarization, and a stapled
+  ticket before the authenticated backend was deployed. Both Fly machines are healthy.
+- Release validation passed: 145 Swift package tests, 15 app authentication tests,
+  and 14 API tests. Live checks confirmed public health, rejection of unauthenticated
+  chat and deletion requests, an authenticated streamed AI reply, deletion of a newly
+  created disposable account, its removal from Supabase, and rejection of its old token.
+  No existing account was deleted.
 
 ## 1. Create Supabase and configure email
 

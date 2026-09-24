@@ -89,6 +89,12 @@ Without Supabase configuration the reader works normally, but AI sign-in is unav
 
 ### Install the app
 
+Starting with v0.3.1, Kodi Reader checks for updates daily and presents an in-app
+download/install prompt. Choose **Kodi Reader → Check for Updates…** to check now,
+or use the home-screen button. **Settings → Updates** controls automatic checks
+and optional automatic downloads/installations. Updating keeps local reading data.
+Users on v0.3.0 or earlier need to install v0.3.1 manually once to get the updater.
+
 Download `KodiReader.dmg` from
 [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest),
 open it, and drag `Kodi Reader.app` into Applications.
@@ -187,6 +193,31 @@ the ticket, and verifies Gatekeeper acceptance. Running without `--notarize`
 creates a signed diagnostic DMG but prints a warning because it is not safe to
 publish. `KODI_SIGNING_IDENTITY`, `KODI_TEAM_ID`, and `KODI_NOTARY_PROFILE` can
 override the release defaults.
+
+### Publish in-app updates
+
+The app uses [Sparkle](https://sparkle-project.org/documentation/) with a signed
+`appcast.xml` served from this repository's `main` branch. Sparkle 2.10.0 is pinned
+in `project.yml`; update archives and the feed both require Ed25519 signatures.
+The private signing key stays in the release Mac's login Keychain under account
+`com.olly.KodiReader`. Only `SUPublicEDKey` is committed. Preserve this Keychain
+key when moving release machines; never commit or publish the private key.
+
+For each release:
+
+1. Increase **both** `MARKETING_VERSION` and the integer `CURRENT_PROJECT_VERSION`
+   in `project.yml`, and write `docs/releases/<version>.md`.
+2. Run `./Scripts/package-dmg.sh --notarize`.
+3. Run `./Scripts/generate-appcast.sh` to generate and sign the feed using Sparkle.
+   The tool embeds release notes and checks the signing key and notarization ticket.
+4. Publish `KodiReader.dmg` to the matching GitHub release (`v<version>`).
+5. Commit and push `appcast.xml` **after** the download is public. Installed apps
+   can then discover the update. Do not edit the signed feed by hand.
+
+The DMG script signs Sparkle's nested helpers before signing the outer app.
+Debug builds enable Sparkle's sandbox installer service; Release builds are
+unsandboxed and use the normal installer. Development-only library-validation
+exceptions are kept out of Release entitlements.
 
 ## Testing
 

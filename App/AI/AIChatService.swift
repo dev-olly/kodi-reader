@@ -8,6 +8,7 @@ enum AIChatError: LocalizedError {
     case http(Int, String)
     case emptyResponse
     case cancelled
+    case authRequired
 
     var errorDescription: String? {
         switch self {
@@ -25,12 +26,15 @@ enum AIChatError: LocalizedError {
             return "The model returned an empty reply."
         case .cancelled:
             return nil
+        case .authRequired:
+            return "Please sign in again to use Ask AI."
         }
     }
 }
 
 /// Streams chat completions from any OpenAI-compatible `/chat/completions` endpoint.
 struct AIChatService {
+    var session: URLSession = .shared
     struct Context {
         var bookTitle: String
         var author: String
@@ -39,6 +43,7 @@ struct AIChatService {
 
     func stream(
         config: AIModelConfig,
+        accessToken: String,
         context: Context,
         history: [ChatMessage],
         userText: String,
@@ -49,6 +54,7 @@ struct AIChatService {
                 do {
                     try await run(
                         config: config,
+                        accessToken: accessToken,
                         context: context,
                         history: history,
                         userText: userText,
@@ -70,6 +76,7 @@ struct AIChatService {
 
     private func run(
         config: AIModelConfig,
+        accessToken: String,
         context: Context,
         history: [ChatMessage],
         userText: String,
@@ -85,6 +92,7 @@ struct AIChatService {
         request.timeoutInterval = 120
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
         request.setValue("Kodi Reader", forHTTPHeaderField: "X-Title")
         request.setValue("https://github.com/dev-olly/kodi-reader", forHTTPHeaderField: "HTTP-Referer")
 
@@ -100,13 +108,14 @@ struct AIChatService {
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
+        let (bytes, response) = try await session.bytes(for: request)
         if Task.isCancelled { throw CancellationError() }
 
         guard let http = response as? HTTPURLResponse else {
             throw AIChatError.http(-1, "No HTTP response")
         }
         guard (200...299).contains(http.statusCode) else {
+            if http.statusCode == 401 { throw AIChatError.authRequired }
             var body = ""
             for try await line in bytes.lines {
                 body.append(line)

@@ -26,15 +26,20 @@ final class ChatController {
     }
 
     @ObservationIgnored let configStore: AIConfigStore
-    @ObservationIgnored private let service = AIChatService()
+    @ObservationIgnored private let auth: AIAuthController
+    @ObservationIgnored private let service: AIChatService
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var operationID: UUID?
 
-    init(configStore: AIConfigStore) {
+    init(configStore: AIConfigStore, auth: AIAuthController, service: AIChatService = AIChatService()) {
         self.configStore = configStore
+        self.auth = auth
+        self.service = service
     }
 
     var canSend: Bool {
         !isStreaming
+            && !auth.isChangingAccount
             && !input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && configStore.selectedConfig != nil
     }
@@ -71,40 +76,45 @@ final class ChatController {
 
     func send() {
         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !isStreaming else { return }
+        guard !text.isEmpty, !isStreaming, !auth.isChangingAccount else { return }
+        guard auth.isSignedIn else {
+            auth.showingSignIn = true
+            return
+        }
         guard let config = configStore.selectedConfig else {
             errorMessage = AIChatError.noModel.localizedDescription
             return
         }
 
         let references = pendingReferences
-        input = ""
-        pendingReferences = []
         errorMessage = nil
-
         let history = messages
         let userMessage = ChatMessage(role: .user, text: text, references: references)
-        messages.append(userMessage)
-        persist()
-
         let assistant = ChatMessage(role: .assistant, text: "")
-        messages.append(assistant)
         isStreaming = true
         let context = contextProvider()
-
-        streamTask?.cancel()
+        let operation = UUID()
+        operationID = operation
         streamTask = Task { [weak self] in
             guard let self else { return }
             do {
+                let token = try await self.auth.accessToken()
+                guard self.operationID == operation, !Task.isCancelled else { return }
+                if self.input.trimmingCharacters(in: .whitespacesAndNewlines) == text { self.input = "" }
+                self.pendingReferences.removeAll { ref in references.contains { $0.id == ref.id } }
+                self.messages.append(userMessage)
+                self.messages.append(assistant)
+                self.persist()
                 let stream = self.service.stream(
                     config: config,
+                    accessToken: token,
                     context: context,
                     history: history,
                     userText: text,
                     references: references
                 )
                 for try await token in stream {
-                    if Task.isCancelled { break }
+                    guard self.operationID == operation, !Task.isCancelled else { return }
                     if let index = self.messages.lastIndex(where: { $0.id == assistant.id }) {
                         self.messages[index].text += token
                     }
@@ -114,19 +124,29 @@ final class ChatController {
             } catch AIChatError.cancelled {
                 // Stop is intentional.
             } catch {
+                guard self.operationID == operation else { return }
+                if case AIChatError.authRequired = error { self.auth.showingSignIn = true }
                 self.errorMessage = error.localizedDescription
                 if let index = self.messages.lastIndex(where: { $0.id == assistant.id }),
                    self.messages[index].text.isEmpty {
-                    self.messages.remove(at: index)
+                    self.messages.removeAll { $0.id == assistant.id || $0.id == userMessage.id }
+                    // Restore an unsent question without overwriting a newer draft.
+                    if self.input.isEmpty { self.input = text }
+                    for reference in references where !self.pendingReferences.contains(where: { $0.id == reference.id }) {
+                        self.pendingReferences.append(reference)
+                    }
                 }
             }
+            guard self.operationID == operation else { return }
             self.isStreaming = false
             self.streamTask = nil
+            self.operationID = nil
             self.persist()
         }
     }
 
     func stop() {
+        operationID = nil
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
@@ -182,6 +202,7 @@ final class ChatController {
 
     /// Restore a book's threads without writing back.
     func load(threads stored: [ChatThread], activeID: UUID?) {
+        operationID = nil
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
@@ -204,6 +225,7 @@ final class ChatController {
 
     /// Clear in-memory state without persisting — used when closing a book.
     func detach() {
+        operationID = nil
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false

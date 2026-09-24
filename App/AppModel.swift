@@ -68,6 +68,7 @@ final class AppModel {
     /// Last colour applied via a swatch, a new note, or the note editor picker.
     private(set) var lastAppliedHighlightColor: HighlightColor?
     let aiConfig: AIConfigStore
+    let aiAuth: AIAuthController
     let chat: ChatController
 
     var notesInSidebar: Bool {
@@ -103,8 +104,11 @@ final class AppModel {
 
         let aiConfig = AIConfigStore(directory: root)
         self.aiConfig = aiConfig
-        let chat = ChatController(configStore: aiConfig)
+        let aiAuth = AIAuthController()
+        self.aiAuth = aiAuth
+        let chat = ChatController(configStore: aiConfig, auth: aiAuth)
         self.chat = chat
+        aiAuth.onWillSignOut = { [weak chat] in chat?.stop() }
         chat.onPersist = { [weak self] threads, activeID in
             self?.persistChat(threads, activeID: activeID)
         }

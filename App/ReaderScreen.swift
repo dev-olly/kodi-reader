@@ -129,46 +129,56 @@ struct ReaderScreen: View {
 
     private var workspacePanel: some View {
         VStack(spacing: 0) {
-            HStack(spacing: 0) {
-                ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in
-                    Button { selectWorkspace(tab) } label: {
-                        Label(tab == .notes ? "Notes" : "Ask AI", systemImage: tab == .notes ? "note.text" : "sparkles")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(model.workspace == tab ? model.settings.theme.accent : model.settings.theme.muted)
-                            .frame(maxWidth: .infinity, minHeight: 44)
-                            .contentShape(Rectangle())
-                            .overlay(alignment: .bottom) {
-                                if model.workspace == tab {
-                                    Rectangle().fill(model.settings.theme.accent).frame(height: 2)
+            HStack(spacing: 12) {
+                HStack(spacing: 3) {
+                    ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in
+                        Button { selectWorkspace(tab) } label: {
+                            Label(tab == .notes ? "Notes" : "Ask AI", systemImage: tab == .notes ? "note.text" : "sparkles")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(model.workspace == tab ? model.settings.theme.uiForeground : model.settings.theme.muted)
+                                .frame(maxWidth: .infinity, minHeight: 30)
+                                .background {
+                                    if model.workspace == tab {
+                                        RoundedRectangle(cornerRadius: 7)
+                                            .fill(model.settings.theme.accent.opacity(0.12))
+                                    }
                                 }
-                            }
+                                .contentShape(.rect)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(tab == .notes ? "Notes" : "Ask AI")
+                        .accessibilityAddTraits(model.workspace == tab ? .isSelected : [])
                     }
-                    .buttonStyle(.plain)
-                    .frame(maxWidth: .infinity)
-                    .contentShape(Rectangle())
-                    .accessibilityLabel(tab == .notes ? "Notes" : "Ask AI")
-                    .accessibilityAddTraits(model.workspace == tab ? .isSelected : [])
                 }
+                .padding(3)
+                .frame(maxWidth: 240)
+                .background(model.settings.theme.uiBackground.opacity(0.55), in: .rect(cornerRadius: 10))
+
+                Spacer(minLength: 0)
+
                 if model.workspace == .notes && isDrawingExpanded {
                     Button { isDrawingExpanded = false } label: {
                         Image(systemName: "arrow.down.right.and.arrow.up.left")
-                            .frame(width: 36, height: 44)
-                            .contentShape(Rectangle())
+                            .frame(width: 28, height: 28)
+                            .contentShape(.rect)
                     }
                     .buttonStyle(.plain)
                     .help("Collapse drawing workspace")
                 }
                 Button { closeWorkspace() } label: {
                     Image(systemName: "xmark")
-                        .frame(width: 36, height: 44)
-                        .contentShape(Rectangle())
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(model.settings.theme.muted)
+                        .frame(width: 28, height: 28)
+                        .contentShape(.rect)
                 }
                 .buttonStyle(.plain)
                 .help("Close workspace")
                 .accessibilityLabel("Close workspace")
             }
             .padding(.horizontal, 16)
-            Divider()
+            .padding(.vertical, 12)
+            Rectangle().fill(model.settings.theme.border.opacity(0.65)).frame(height: 1)
             ZStack {
                 inspectorContent
                     .opacity(model.workspace == .notes ? 1 : 0)
@@ -198,7 +208,7 @@ struct ReaderScreen: View {
                 .frame(width: 14)
                 .overlay {
                     Capsule()
-                        .fill(model.settings.theme.accent.opacity(isResizeHandleHovered || dragStartWidth != nil ? 0.7 : 0.25))
+                        .fill(model.settings.theme.accent.opacity(isResizeHandleHovered || dragStartWidth != nil ? 0.7 : 0))
                         .frame(width: 3, height: 36)
                         .allowsHitTesting(false)
                 }

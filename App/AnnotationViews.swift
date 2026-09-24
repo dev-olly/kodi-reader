@@ -270,69 +270,140 @@ struct AnnotationsInspector: View {
     @State private var filter: NotesFilter = .all
     @State private var chapterFilter: String = ""
 
-    var body: some View {
-        NavigationStack {
-            Group {
-                if annotations.isEmpty && bookmarks.isEmpty {
-                    ContentUnavailableView(
-                        "No Notes Yet",
-                        systemImage: "highlighter",
-                        description: Text("Select text while reading to highlight it and add a note.")
-                    )
-                } else {
-                    VStack(spacing: 0) {
-                        controls
-                        List {
-                            if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
-                                Section("Bookmarks") {
-                                    ForEach(bookmarks) { bookmark in
-                                        Button { onSelect(bookmark.locator) } label: {
-                                            Label(
-                                                bookmark.chapterTitle ?? "Bookmark",
-                                                systemImage: "bookmark.fill"
-                                            )
-                                            .frame(maxWidth: .infinity, alignment: .leading)
-                                            .contentShape(.rect)
-                                        }
-                                        .buttonStyle(.plain)
-                                    }
-                                }
-                            }
+    private var isEmpty: Bool { annotations.isEmpty && bookmarks.isEmpty }
 
-                            Section("Notes") {
-                                if filteredAnnotations.isEmpty {
-                                    Text("No matches")
-                                        .foregroundStyle(.secondary)
-                                } else {
-                                    ForEach(filteredAnnotations) { annotation in
-                                        row(for: annotation)
-                                    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if isEmpty {
+                emptyState
+            } else {
+                libraryHeader
+                controls
+                List {
+                    if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
+                        Section("Bookmarks") {
+                            ForEach(bookmarks) { bookmark in
+                                Button { onSelect(bookmark.locator) } label: {
+                                    Label(
+                                        bookmark.chapterTitle ?? "Bookmark",
+                                        systemImage: "bookmark.fill"
+                                    )
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(.rect)
                                 }
+                                .buttonStyle(.plain)
                             }
                         }
-                        .listStyle(.inset)
-                        .scrollContentBackground(.hidden)
+                    }
+
+                    Section("Highlights & notes") {
+                        if filteredAnnotations.isEmpty {
+                            Text("No matches")
+                                .foregroundStyle(model.settings.theme.muted)
+                        } else {
+                            ForEach(filteredAnnotations) { annotation in
+                                row(for: annotation)
+                            }
+                        }
                     }
                 }
-            }
-            .background(model.settings.theme.uiBackground)
-            .safeAreaInset(edge: .top, spacing: 0) {
-                HStack {
-                    Text("Your margin")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(model.settings.theme.muted)
-                    Spacer()
-                    Button(action: onExport) {
-                        Label("Export", systemImage: "square.and.arrow.up")
-                            .labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(.plain)
-                    .quickHelp("Export notes as Markdown")
-                    .disabled(annotations.filter(\.hasContent).isEmpty)
-                }
-                .padding(14)
+                .listStyle(.inset)
+                .scrollContentBackground(.hidden)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .foregroundStyle(model.settings.theme.uiForeground)
+        .background(model.settings.theme.surface)
+    }
+
+    private var emptyState: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 0) {
+                Image(systemName: "highlighter")
+                    .font(.system(size: 22, weight: .light))
+                    .foregroundStyle(model.settings.theme.accent)
+                    .frame(width: 48, height: 48)
+                    .background(model.settings.theme.accent.opacity(0.08), in: .rect(cornerRadius: 14))
+                    .padding(.bottom, 22)
+
+                Text("Keep a little of\nwhat you read.")
+                    .font(.system(size: 25, weight: .regular, design: .serif))
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.bottom, 12)
+
+                Text("Your highlights, notes, and bookmarks will collect here as you read.")
+                    .font(.system(size: 13))
+                    .foregroundStyle(model.settings.theme.muted)
+                    .lineSpacing(5)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                Rectangle()
+                    .fill(model.settings.theme.border.opacity(0.7))
+                    .frame(height: 1)
+                    .padding(.vertical, 24)
+
+                Text("START WITH A PASSAGE")
+                    .font(.system(size: 10, weight: .semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(model.settings.theme.muted)
+                    .padding(.bottom, 16)
+
+                emptyStateHint("cursorarrow", title: "Select a few words", detail: "Drag across a passage in the book.")
+                    .padding(.bottom, 18)
+                emptyStateHint("square.and.pencil", title: "Make it yours", detail: "Choose a highlight color or add a note.")
+            }
+            .frame(maxWidth: 300, alignment: .leading)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 28)
+            .padding(.top, 36)
+            .padding(.bottom, 28)
+        }
+    }
+
+    private func emptyStateHint(_ icon: String, title: String, detail: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 14, weight: .regular))
+                .foregroundStyle(model.settings.theme.accent)
+                .frame(width: 20, height: 20)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                Text(detail)
+                    .font(.system(size: 12))
+                    .foregroundStyle(model.settings.theme.muted)
+                    .lineSpacing(3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+
+    private var libraryHeader: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Your collection")
+                    .font(.system(size: 20, design: .serif))
+                Text("\(annotations.count) \(annotations.count == 1 ? "highlight" : "highlights") · \(bookmarks.count) \(bookmarks.count == 1 ? "bookmark" : "bookmarks")")
+                    .font(.system(size: 11))
+                    .foregroundStyle(model.settings.theme.muted)
+            }
+            Spacer(minLength: 8)
+            if annotations.contains(where: \.hasContent) {
+                Button(action: onExport) {
+                    Image(systemName: "square.and.arrow.up")
+                        .frame(width: 28, height: 28)
+                        .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(model.settings.theme.muted)
+                .accessibilityLabel("Export notes")
+                .quickHelp("Export notes as Markdown")
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 22)
+        .padding(.bottom, 8)
     }
 
     private var controls: some View {

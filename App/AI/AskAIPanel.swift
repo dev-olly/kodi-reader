@@ -8,6 +8,7 @@ struct AskAIPanel: View {
     @FocusState private var composerFocused: Bool
     @State private var bottomID = UUID()
     @State private var showingHistory = false
+    @State private var confirmingDeleteAccount = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,6 +20,20 @@ struct AskAIPanel: View {
             composer
         }
         .background(model.settings.theme.uiBackground)
+        .sheet(isPresented: Binding(get: { model.aiAuth.showingSignIn }, set: { model.aiAuth.showingSignIn = $0 })) {
+            AISignInSheet(auth: model.aiAuth)
+        }
+        .alert("Delete your Ask AI account?", isPresented: $confirmingDeleteAccount) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete account", role: .destructive) { Task { await model.aiAuth.deleteAccount() } }
+        } message: {
+            Text("This permanently deletes your sign-in account. Your books, notes, and conversations on this Mac will remain.")
+        }
+        .alert("Account", isPresented: Binding(get: { model.aiAuth.accountError != nil }, set: { if !$0 { model.aiAuth.accountError = nil } })) {
+            Button("OK") { model.aiAuth.accountError = nil }
+        } message: {
+            Text(model.aiAuth.accountError ?? "")
+        }
         .onChange(of: model.chat.shouldFocusComposer) { _, should in
             if should {
                 composerFocused = true
@@ -91,9 +106,20 @@ struct AskAIPanel: View {
                     .font(.system(size: 12, weight: .medium))
                     .lineLimit(1)
                 Spacer(minLength: 0)
-                Text("OpenAI")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(model.settings.theme.muted)
+                if let email = model.aiAuth.email {
+                    Menu {
+                        Text(email)
+                        Button("Sign out") { Task { await model.aiAuth.signOut() } }
+                        Button("Delete account…", role: .destructive) { confirmingDeleteAccount = true }
+                    } label: {
+                        Text(email).font(.caption).lineLimit(1).truncationMode(.middle)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .disabled(model.aiAuth.isChangingAccount)
+                } else {
+                    Button("Sign in") { model.aiAuth.showingSignIn = true }
+                        .font(.caption)
+                }
             }
             .padding(.horizontal, 12)
             .frame(maxWidth: .infinity, minHeight: 36)

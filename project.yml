@@ -65,3 +65,33 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           CODE_SIGN_ENTITLEMENTS: App/KodiReader.release.entitlements
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  KodiReaderAuthTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: Tests/AuthTests
+      - path: App/AI/AIAuthController.swift
+      - path: App/AI/AIChatService.swift
+      - path: App/AI/AIModelConfig.swift
+      - path: App/AI/AIConfigStore.swift
+      - path: App/AI/ChatController.swift
+      - path: App/AppDataDirectory.swift
+      - path: App/LegacyFolioMigration.swift
+    dependencies:
+      - package: EpubReaderCore
+        product: EpubKit
+      - package: Supabase
+        product: Auth
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  KodiReader:
+    build:
+      targets:
+        KodiReader: all
+    test:
+      targets:
+        - KodiReaderAuthTests

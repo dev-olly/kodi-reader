@@ -51,6 +51,11 @@ contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). Release builds are signed with Developer ID and notarized by Apple. You can also build from source (Xcode 16.3 or later).
 
 The site is deployed on Vercel at [www.kodi-reader.app](https://www.kodi-reader.app/).
+The linked Vercel project's **Root Directory must be `website`**, with the Other
+framework preset. Git deployments then use `website/vercel.json` and serve only
+the static site. Deploying the repository root puts the homepage under `/website/`
+and leaves `/` returning 404. After production deployments, verify the homepage,
+its assets, and the download link on both the apex and `www` domains.
 
 ## Privacy
 

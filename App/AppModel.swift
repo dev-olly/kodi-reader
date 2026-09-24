@@ -29,13 +29,28 @@ final class AppModel {
     var isShowingContents = false
     var aiNoteTarget: AINoteTarget?
     enum Workspace: String { case closed, notes, askAI }
-    var workspace: Workspace = .closed {
-        willSet {
-            guard newValue != workspace else { return }
-            if workspace == .closed {
-                reader?.beginWorkspaceRestore()
-            } else if newValue == .closed {
-                reader?.endWorkspaceRestore()
+    private var visibleWorkspace: Workspace = .closed
+    @ObservationIgnored private var workspaceTransition = 0
+    @ObservationIgnored private var requestedWorkspace: Workspace = .closed
+    var workspace: Workspace {
+        get { visibleWorkspace }
+        set {
+            let previousRequest = requestedWorkspace
+            requestedWorkspace = newValue
+            workspaceTransition += 1
+            let transition = workspaceTransition
+            guard newValue != visibleWorkspace || newValue != previousRequest else { return }
+            let commit = { [weak self] in
+                guard let self, self.workspaceTransition == transition else { return }
+                self.visibleWorkspace = newValue
+            }
+            guard let reader else { commit(); return }
+            if newValue == .closed {
+                reader.endWorkspaceRestore(completion: commit)
+            } else if visibleWorkspace == .closed || previousRequest == .closed {
+                reader.beginWorkspaceRestore(completion: commit)
+            } else {
+                commit()
             }
         }
     }

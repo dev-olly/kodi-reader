@@ -48,6 +48,9 @@ public final class ReaderController {
     public private(set) var annotations: [Annotation] = []
     public private(set) var errorMessage: String?
     public private(set) var visiblePageRange: ClosedRange<Int> = 0...0
+    /// Space needed to retain the current text columns while a workspace is open.
+    public private(set) var workspaceMinimumWidth: Double = 0
+    @ObservationIgnored private var workspaceLayout: [String: Any]?
 
     public var isPDF: Bool { pdfBook != nil }
     public var canNavigateSections: Bool {
@@ -192,6 +195,8 @@ public final class ReaderController {
     public func tearDown() {
         viewportRelayoutWork?.cancel()
         viewportRelayoutWork = nil
+        workspaceLayout = nil
+        workspaceMinimumWidth = 0
         tearDownViews()
         book = nil
         pdfBook = nil
@@ -467,18 +472,28 @@ public final class ReaderController {
         evaluate("__reader.pinRestoreCurrentOnce()")
     }
 
-    /// Holds the leading reading passage across the complete lifetime of the
-    /// Notes / Ask AI workspace, including both its opening and closing resize.
-    public func beginWorkspaceRestore() {
-        if pdfView != nil { return }
-        evaluate("__reader.beginWorkspaceRestore()")
+    /// Captures column geometry before SwiftUI changes the reader's width.
+    public func beginWorkspaceRestore(completion: @escaping () -> Void = {}) {
+        if pdfView != nil { completion(); return }
+        evaluate("__reader.beginWorkspaceRestore()") { [weak self] result in
+            if let self, let layout = result as? [String: Any] {
+                self.workspaceLayout = layout
+                let columns = (layout["columns"] as? NSNumber)?.doubleValue ?? 1
+                let width = (layout["columnWidth"] as? NSNumber)?.doubleValue ?? 0
+                self.workspaceMinimumWidth = columns * (width + 32)
+            }
+            completion()
+        }
     }
 
-    /// Releases the workspace anchor only after handing it to the closing
-    /// resize, so the original leading passage cannot drift to the next column.
-    public func endWorkspaceRestore() {
-        if pdfView != nil { return }
-        evaluate("__reader.endWorkspaceRestore()")
+    /// Hands the current spread to the closing resize before widening the view.
+    public func endWorkspaceRestore(completion: @escaping () -> Void = {}) {
+        if pdfView != nil { completion(); return }
+        evaluate("__reader.endWorkspaceRestore()") { [weak self] _ in
+            // Match WebKit's command order when open/close requests overlap.
+            self?.workspaceLayout = nil
+            completion()
+        }
     }
 
     /// Uses a specific text position as the next resize anchor.
@@ -822,6 +837,7 @@ public final class ReaderController {
     private func startRuntime() {
         var options = settings.runtimeOptions(forWidth: viewportWidth)
         options["spineIndex"] = spineIndex
+        if let workspaceLayout { options["workspaceLayout"] = workspaceLayout }
         guard let encoded = jsonString(options) else { return }
         evaluate("__reader.start(\(encoded))")
     }

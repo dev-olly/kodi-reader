@@ -38,7 +38,9 @@ struct ReaderScreen: View {
                     .shadow(color: .black.opacity(usesWorkspaceOverlay ? 0.12 : 0), radius: 16, x: -6)
             }
         }
-        .animation(reduceMotion ? nil : .easeInOut(duration: 0.18), value: model.workspace)
+        // A sidebar transition must not animate the web view through a series
+        // of intermediate widths and briefly expose reflowed text.
+        .animation(nil, value: model.workspace)
             .toolbar { toolbarContent }
             .task { model.startReading() }
             .onAppear {
@@ -87,12 +89,18 @@ struct ReaderScreen: View {
             }
     }
 
-    private var usesWorkspaceOverlay: Bool { windowWidth < 900 || (model.workspace == .notes && isDrawingExpanded) }
+    private var usesWorkspaceOverlay: Bool {
+        let remainingWidth = windowWidth - workspaceWidth - 2 * Self.navRailWidth
+        return windowWidth < 900
+            || (reader.workspaceMinimumWidth > 0 && remainingWidth < reader.workspaceMinimumWidth)
+            || (model.workspace == .notes && isDrawingExpanded)
+    }
 
     private var maximumWorkspaceWidth: CGFloat {
         let width = windowWidth > 0 ? windowWidth : 1200
         // Keep room for the book, or a visible strip beside an overlay.
-        return max(300, min(800, width - (windowWidth < 900 ? 56 : 400)))
+        let readingWidth = max(400, reader.workspaceMinimumWidth + 2 * Self.navRailWidth)
+        return max(300, min(800, width - (windowWidth < 900 ? 56 : readingWidth)))
     }
 
     private var workspaceWidth: CGFloat {

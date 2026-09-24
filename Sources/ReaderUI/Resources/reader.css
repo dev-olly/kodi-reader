@@ -64,7 +64,7 @@ body {
   column-width: var(--column-width) !important;
   column-gap: var(--column-gap) !important;
   column-fill: auto !important;
-  column-count: auto !important;
+  column-count: var(--column-count, auto) !important;
 
   font-family: var(--font-family) !important;
   font-size: var(--font-size) !important;

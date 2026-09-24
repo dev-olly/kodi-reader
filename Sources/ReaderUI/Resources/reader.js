@@ -53,6 +53,7 @@
   // ---------------------------------------------------------------- layout
 
   function columnCount() {
+    if (workspaceLayout) return workspaceLayout.columns;
     if (!settings.twoPageSpread) return 1;
     return window.innerWidth >= settings.twoPageMinWidth ? 2 : 1;
   }
@@ -65,15 +66,27 @@
   function applyLayout() {
     var root = document.documentElement;
     var viewport = window.innerWidth;
-    var margin = settings.marginX;
-    var gap = margin * 2;
     var columns = columnCount();
+    // Make room in the gutters, not in the text. Keeping the physical column
+    // width preserves every line break and the vertical position of a passage.
+    var margin = workspaceLayout
+      ? Math.max(0, (viewport / columns - workspaceLayout.columnWidth) / 2)
+      : settings.marginX;
+    var gap = margin * 2;
     var columnWidth = (viewport - 2 * margin - (columns - 1) * gap) / columns;
 
-    root.style.setProperty("--page-margin-x", margin + "px");
-    root.style.setProperty("--page-margin-y", settings.marginY + "px");
-    root.style.setProperty("--column-gap", gap + "px");
+    // Responsive gutters preserve column widths even before WebKit delivers
+    // its resize event. Fixed pixel gutters briefly let CSS stretch/reflow
+    // the columns as soon as the native view changes size.
+    root.style.setProperty("--page-margin-x", workspaceLayout
+      ? "max(0px, calc(" + (50 / columns) + "vw - " + (workspaceLayout.columnWidth / 2) + "px))"
+      : margin + "px");
+    root.style.setProperty("--page-margin-y", (workspaceLayout ? workspaceLayout.marginY : settings.marginY) + "px");
+    root.style.setProperty("--column-gap", workspaceLayout
+      ? "max(0px, calc(" + (100 / columns) + "vw - " + workspaceLayout.columnWidth + "px))"
+      : gap + "px");
     root.style.setProperty("--column-width", Math.max(120, columnWidth) + "px");
+    root.style.setProperty("--column-count", columns);
 
     state.columns = columns;
     state.stride = viewport;
@@ -234,10 +247,12 @@
   // One-shot resize anchor: captured before an imminent width change (e.g.
   // opening the sidebar note editor) and consumed by the next relayout.
   var pinnedRestoreOnce = null;
-  // Anchor held for the lifetime of the Notes / Ask AI workspace. Reflowing
-  // into the narrower workspace can move earlier text to the leading column;
-  // closing must still return to the passage that led the original spread.
-  var workspaceRestore = null;
+  // A workspace preserves the layout of the whole spread, including its
+  // physical column offset. A text locator alone loses the left/right side
+  // and the selected line's height when CSS columns are repaginated.
+  var workspaceLayout = null;
+  var workspaceClosing = false;
+  var workspaceReleaseTimer = null;
   // Last position observed while the viewport was stable. WKWebView can reset
   // horizontal scroll to zero before either Swift's pin call or the resize
   // event reaches this runtime, so probing only at resize time is too late.
@@ -275,6 +290,7 @@
   }
 
   function pinRestoreCurrentOnce() {
+    if (workspaceLayout) return;
     if (pinnedRestoreOnce) return;
     var p = currentPosition();
     // A width change can zero scrollLeft while currentPage still describes the
@@ -291,23 +307,61 @@
   }
 
   function pinRestoreOnce(position) {
+    if (workspaceLayout) return;
     if (position && position.elementPath && position.elementPath.length > 0) {
       pinnedRestoreOnce = position;
     }
   }
 
   function beginWorkspaceRestore() {
-    if (workspaceRestore) return;
-    pinRestoreCurrentOnce();
-    workspaceRestore = copyPosition(pinnedRestoreOnce) || copyPosition(lastViewportPosition);
+    if (workspaceReleaseTimer) clearTimeout(workspaceReleaseTimer);
+    workspaceReleaseTimer = null;
+    workspaceClosing = false;
+    if (!workspaceLayout) {
+      // Finish an in-flight page turn before capturing its spread.
+      if (pendingScrollTarget != null) scrollToOffset(pendingScrollTarget, false);
+      workspaceLayout = {
+        columns: state.columns,
+        columnWidth: parsePx(getComputedStyle(document.body).columnWidth),
+        marginY: settings.marginY,
+        originalWidth: window.innerWidth,
+        renderedWidth: window.innerWidth,
+        columnOffset: getScrollLeft() / (currentStride() / state.columns),
+      };
+    }
     pinnedRestoreOnce = null;
+    pendingRestore = null;
+    applyLayout();
+    return workspaceLayout;
   }
 
   function endWorkspaceRestore() {
-    if (workspaceRestore) {
-      pinnedRestoreOnce = copyPosition(workspaceRestore);
-      workspaceRestore = null;
+    // Keep the same geometry through the closing resize. The offset follows
+    // deliberate navigation, so closing never returns to an older passage.
+    workspaceClosing = true;
+    pinnedRestoreOnce = null;
+    pendingRestore = null;
+    // Overlay panels and cancelled opens never changed the reader's width.
+    // There will be no resize event to finish those sessions.
+    if (workspaceLayout && Math.abs(window.innerWidth - workspaceLayout.originalWidth) < 2) {
+      workspaceLayout = null;
+      workspaceClosing = false;
+    } else {
+      scheduleWorkspaceRelease();
     }
+  }
+
+  function scheduleWorkspaceRelease() {
+    if (workspaceReleaseTimer) clearTimeout(workspaceReleaseTimer);
+    if (!workspaceClosing) return;
+    // If the window itself changed size during the session, its original
+    // width will never return. Release after the closing resize/configure
+    // burst settles, without introducing another visible reflow.
+    workspaceReleaseTimer = setTimeout(function () {
+      workspaceReleaseTimer = null;
+      workspaceLayout = null;
+      workspaceClosing = false;
+    }, 300);
   }
 
   function rememberRestore(position) {
@@ -315,10 +369,7 @@
       pendingRestore = pinnedRestore;
       return;
     }
-    if (workspaceRestore) {
-      pendingRestore = workspaceRestore;
-      return;
-    }
+    if (workspaceLayout) return;
     if (pinnedRestoreOnce) {
       pendingRestore = pinnedRestoreOnce;
       pinnedRestoreOnce = null;
@@ -355,7 +406,17 @@
       pendingPageTarget = null;
       pendingScrollTarget = null;
       viewportResizePending = false;
-      if (restore) {
+      if (workspaceLayout) {
+        // Restore the spread, not the selected column at the left edge.
+        scrollToOffset(workspaceLayout.columnOffset * currentStride() / workspaceLayout.columns, false);
+        notifyPageChanged();
+        if (workspaceClosing && Math.abs(window.innerWidth - workspaceLayout.originalWidth) < 2) {
+          workspaceLayout = null;
+          workspaceClosing = false;
+        } else if (workspaceClosing) {
+          scheduleWorkspaceRelease();
+        }
+      } else if (restore) {
         goToPosition(restore, false);
       } else {
         notifyPageChanged();
@@ -530,6 +591,9 @@
     var position = currentPosition();
     if (!viewportResizePending && pendingPageTarget == null) {
       rememberViewportPosition(position);
+      if (workspaceLayout) {
+        workspaceLayout.columnOffset = getScrollLeft() / (currentStride() / workspaceLayout.columns);
+      }
     }
     post({
       type: "pageChanged",
@@ -1467,14 +1531,24 @@
 
   var resizeTimer = null;
   function onResize() {
+    if (workspaceClosing) scheduleWorkspaceRelease();
     viewportResizePending = true;
+    if (workspaceLayout) {
+      // Resize events run before the next paint. Update the gutters and
+      // scroll offset now, rather than exposing 90 ms of temporary reflow
+      // while the ordinary resize debounce waits to settle.
+      applyLayout();
+      scrollToOffset(workspaceLayout.columnOffset * currentStride() / workspaceLayout.columns, false);
+      workspaceLayout.renderedWidth = window.innerWidth;
+      renderHighlights();
+    }
     if (viewportCaptureTimer) {
       clearTimeout(viewportCaptureTimer);
       viewportCaptureTimer = null;
     }
     // The event may arrive after WebKit has reset scrollLeft. Use the last
     // settled position instead of trusting a now-first-page caret probe.
-    if (!pinnedRestore && !workspaceRestore && !pinnedRestoreOnce && lastViewportPosition) {
+    if (!pinnedRestore && !workspaceLayout && !pinnedRestoreOnce && lastViewportPosition) {
       pinnedRestoreOnce = copyPosition(lastViewportPosition);
     } else {
       pinRestoreCurrentOnce();
@@ -1482,7 +1556,7 @@
     if (resizeTimer) clearTimeout(resizeTimer);
     resizeTimer = setTimeout(function () {
       // A pinned locator (Draw, or a Swift pin before a sidebar toggle) wins.
-      relayout(pinnedRestore || workspaceRestore || pinnedRestoreOnce || currentPosition());
+      relayout(pinnedRestore || pinnedRestoreOnce || currentPosition());
     }, 90);
   }
 
@@ -1522,12 +1596,25 @@
         remapAuthorSurfaces();
       }
 
+      if (options && options.workspaceLayout) {
+        workspaceLayout = Object.assign({}, options.workspaceLayout, { columnOffset: 0 });
+      }
       applyLayout();
       measure();
 
       document.addEventListener("selectionchange", handleSelectionChange);
       document.addEventListener("click", onClick, true);
       window.addEventListener("resize", onResize);
+      // WebKit can deliver the window resize event after its layout phase.
+      // Observe the viewport itself as well, so horizontal compensation is
+      // committed before paint even when a later spread is scrolled into view.
+      if (typeof ResizeObserver === "function") {
+        new ResizeObserver(function () {
+          if (workspaceLayout && Math.abs(window.innerWidth - workspaceLayout.renderedWidth) > 1) {
+            onResize();
+          }
+        }).observe(document.documentElement);
+      }
       window.addEventListener("scroll", onScroll, { passive: true });
       window.addEventListener("wheel", onWheel, { passive: false });
 
@@ -1588,6 +1675,7 @@
         spineIndex: state.spineIndex,
         page: state.currentPage,
         pageCount: state.pageCount,
+        columns: state.columns,
         position: currentPosition(),
       };
     },

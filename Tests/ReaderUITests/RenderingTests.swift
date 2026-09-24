@@ -748,6 +748,295 @@ final class RenderingTests: XCTestCase {
         )
     }
 
+    /// The selected line must keep its page side and vertical coordinate,
+    /// including when the narrowed viewport would normally become one column.
+    func testWorkspaceKeepsSelectedLineOnSameSideAndAtSameHeight() throws {
+        let fullSize = CGSize(width: 1400, height: 900)
+        let narrowSize = CGSize(width: 900, height: 900)
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: fullSize)
+        let chapter = largestChapterIndex(in: book)
+        reader.start(at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(wait { reader.page == 1 })
+
+        for side in [0, 1] {
+            for height in [0.25, 0.72] {
+                let position = try viewportTextPosition(in: reader, side: side, height: height)
+                let before = textGeometry(position, in: reader)
+                XCTAssertEqual(before["side"], Double(side))
+                if side == 1 && height == 0.72 { try captureWorkspaceSnapshot("before") }
+                reader.pinRestoreOnce(to: position) // Add Note / Ask AI's selection pin.
+                var captured = false
+                reader.beginWorkspaceRestore { captured = true }
+                XCTAssertTrue(wait { captured })
+                resizeReader(reader, to: narrowSize)
+                XCTAssertTrue(wait(timeout: 6) {
+                    let after = self.textGeometry(position, in: reader)
+                    return after["width"] == narrowSize.width
+                        && after["side"] == Double(side)
+                        && abs((after["y"] ?? -1000) - (before["y"] ?? 0)) <= 2
+                        && abs((after["columnWidth"] ?? 0) - (before["columnWidth"] ?? 0)) <= 1
+                }, "Opening moved the selected line: before \(before), after \(textGeometry(position, in: reader))")
+
+                if side == 1 && height == 0.72 { try captureWorkspaceSnapshot("open") }
+
+                // Simulate a sidebar drag as part of the same workspace session.
+                resizeReader(reader, to: CGSize(width: 1000, height: 900))
+                XCTAssertTrue(wait(timeout: 6) {
+                    let after = self.textGeometry(position, in: reader)
+                    return after["width"] == 1000 && after["side"] == Double(side)
+                        && abs((after["y"] ?? -1000) - (before["y"] ?? 0)) <= 2
+                })
+
+                var released = false
+                reader.endWorkspaceRestore { released = true }
+                XCTAssertTrue(wait { released })
+                resizeReader(reader, to: fullSize)
+                XCTAssertTrue(wait(timeout: 6) {
+                    let after = self.textGeometry(position, in: reader)
+                    return after["width"] == fullSize.width
+                        && abs((after["x"] ?? -1000) - (before["x"] ?? 0)) <= 2
+                        && abs((after["y"] ?? -1000) - (before["y"] ?? 0)) <= 2
+                }, "Closing did not restore the selected line: before \(before), after \(textGeometry(position, in: reader))")
+                if side == 1 && height == 0.72 { try captureWorkspaceSnapshot("closed") }
+            }
+        }
+    }
+
+    func testClosingWorkspaceKeepsDeliberatePageNavigation() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        let chapter = largestChapterIndex(in: book)
+        reader.start(at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        var captured = false
+        reader.beginWorkspaceRestore { captured = true }
+        XCTAssertTrue(wait { captured })
+        resizeReader(reader, to: CGSize(width: 900, height: 900))
+        XCTAssertTrue(wait { self.pagingGeometry(from: reader)["innerWidth"] == 900 })
+        // Wait for both WebKit and the controller's coalesced resize to settle.
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        reader.nextPage()
+        XCTAssertTrue(wait { reader.page == 1 })
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let position = try viewportTextPosition(in: reader, side: 1, height: 0.5)
+        let before = textGeometry(position, in: reader)
+        var released = false
+        reader.endWorkspaceRestore { released = true }
+        XCTAssertTrue(wait { released })
+        resizeReader(reader, to: CGSize(width: 1400, height: 900))
+        XCTAssertTrue(wait(timeout: 6) {
+            let after = self.textGeometry(position, in: reader)
+            return after["width"] == 1400 && after["side"] == 1
+                && abs((after["y"] ?? -1000) - (before["y"] ?? 0)) <= 2
+        }, "Closing returned to the pre-workspace spread")
+        XCTAssertEqual(reader.page, 1)
+        reader.previousPage()
+        XCTAssertTrue(wait { reader.page == 0 }, "Page navigation stopped working after closing")
+    }
+
+    func testWorkspaceGeometrySurvivesChapterNavigation() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: nil, annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        var captured = false
+        reader.beginWorkspaceRestore { captured = true }
+        XCTAssertTrue(wait { captured })
+        let requiredWidth = reader.workspaceMinimumWidth
+        XCTAssertGreaterThan(requiredWidth, 0)
+        resizeReader(reader, to: CGSize(width: 900, height: 900))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let chapter = largestChapterIndex(in: book)
+        reader.go(to: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)))
+        XCTAssertTrue(wait { !reader.isLoading && reader.spineIndex == chapter })
+        let position = try viewportTextPosition(in: reader, side: 1, height: 0.5)
+        let before = textGeometry(position, in: reader)
+        XCTAssertEqual(before["columnWidth"] ?? 0, requiredWidth / 2 - 32, accuracy: 1)
+        var released = false
+        reader.endWorkspaceRestore { released = true }
+        XCTAssertTrue(wait { released })
+        resizeReader(reader, to: CGSize(width: 1400, height: 900))
+        XCTAssertTrue(wait(timeout: 6) {
+            let after = self.textGeometry(position, in: reader)
+            return after["width"] == 1400 && after["side"] == 1
+                && abs((after["y"] ?? -1000) - (before["y"] ?? 0)) <= 2
+        })
+    }
+
+    func testWorkspaceCancelledBeforeResizeReleasesColumnLock() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: Locator(spineIndex: largestChapterIndex(in: book), start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        var captured = false
+        reader.beginWorkspaceRestore { captured = true }
+        XCTAssertTrue(wait { captured })
+        var released = false
+        reader.endWorkspaceRestore { released = true }
+        XCTAssertTrue(wait { released })
+        resizeReader(reader, to: CGSize(width: 900, height: 900))
+        var columns = 0
+        XCTAssertTrue(wait(timeout: 6) {
+            reader.evaluateForTesting("__reader.state().columns") { columns = ($0 as? NSNumber)?.intValue ?? 0 }
+            return columns == 1
+        }, "A cancelled/overlay workspace must not leave the reader locked to two columns")
+    }
+
+    func testWorkspaceDoesNotShowIntermediateReflow() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: Locator(spineIndex: largestChapterIndex(in: book), start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        reader.evaluateForTesting("__reader.goToPage(1, false)") { _ in }
+        XCTAssertTrue(wait { reader.page == 1 })
+        let position = try viewportTextPosition(in: reader, side: 1, height: 0.72)
+        let encoded = jsonString(["elementPath": position.elementPath, "offset": position.offset])!
+        let expectedY = textGeometry(position, in: reader)["y"]!
+        var captured = false
+        reader.beginWorkspaceRestore { captured = true }
+        XCTAssertTrue(wait { captured })
+        var probing = false
+        reader.evaluateForTesting("""
+            (() => {
+                let node = document.body;
+                for (const index of \(encoded).elementPath) node = node.childNodes[index];
+                const range = document.createRange();
+                range.setStart(node, \(position.offset));
+                range.setEnd(node, \(position.offset + 1));
+                window.workspaceFrames = [];
+                function sampleFrame() {
+                    const rect = range.getBoundingClientRect();
+                    window.workspaceFrames.push({ y: rect.y, side: Math.floor(rect.x / (window.innerWidth / 2)) });
+                }
+                // Observe the pre-paint layout phase; covered WKWebViews
+                // suppress animation frames, and timers can run before layout.
+                window.workspaceProbe = new ResizeObserver(sampleFrame);
+                window.workspaceProbe.observe(document.documentElement);
+            })()
+            """) { _ in probing = true }
+        XCTAssertTrue(wait { probing })
+        resizeReader(reader, to: CGSize(width: 900, height: 900))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+        var released = false
+        reader.endWorkspaceRestore { released = true }
+        XCTAssertTrue(wait { released })
+        resizeReader(reader, to: CGSize(width: 1400, height: 900))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+        var frames: [[String: Double]]?
+        reader.evaluateForTesting("window.workspaceProbe.disconnect(); window.workspaceFrames") { raw in
+            frames = (raw as? [[String: NSNumber]])?.map { $0.mapValues(\.doubleValue) }
+        }
+        XCTAssertTrue(wait { frames != nil })
+        XCTAssertGreaterThanOrEqual(frames?.count ?? 0, 2)
+        for frame in frames ?? [] {
+            XCTAssertEqual(frame["side"], 1, "A transition briefly moved the right-page passage")
+            XCTAssertEqual(frame["y"] ?? -1000, expectedY, accuracy: 2, "A transition briefly reflowed the selected line")
+        }
+    }
+
+    func testWorkspaceLockReleasesAfterWindowSizeChanges() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: Locator(spineIndex: largestChapterIndex(in: book), start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        var captured = false
+        reader.beginWorkspaceRestore { captured = true }
+        XCTAssertTrue(wait { captured })
+        resizeReader(reader, to: CGSize(width: 900, height: 900))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        var released = false
+        reader.endWorkspaceRestore { released = true }
+        XCTAssertTrue(wait { released })
+        // The user also resized the window; closing will not return to 1400.
+        resizeReader(reader, to: CGSize(width: 1500, height: 900))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.6))
+        resizeReader(reader, to: CGSize(width: 800, height: 900))
+        var columns = 0
+        XCTAssertTrue(wait(timeout: 6) {
+            reader.evaluateForTesting("__reader.state().columns") { columns = ($0 as? NSNumber)?.intValue ?? 0 }
+            return columns == 1
+        }, "A completed workspace must not disable subsequent responsive window resizing")
+    }
+
+    func testRapidWorkspaceCancellationDoesNotLeakGeometryIntoNextChapter() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: nil, annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        reader.beginWorkspaceRestore()
+        var released = false
+        reader.endWorkspaceRestore { released = true }
+        XCTAssertTrue(wait { released })
+        resizeReader(reader, to: CGSize(width: 900, height: 900))
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        let chapter = largestChapterIndex(in: book)
+        reader.go(to: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)))
+        XCTAssertTrue(wait { !reader.isLoading && reader.spineIndex == chapter })
+        var columns = 0
+        reader.evaluateForTesting("__reader.state().columns") { columns = ($0 as? NSNumber)?.intValue ?? 0 }
+        XCTAssertTrue(wait { columns == 1 }, "A cancelled opening leaked its saved geometry into a new chapter")
+    }
+
+    /// Optional real WebKit renders for visually inspecting the geometry test.
+    private func captureWorkspaceSnapshot(_ name: String) throws {
+        guard let directory = ProcessInfo.processInfo.environment["KODI_WORKSPACE_SNAPSHOTS"],
+              let webView = window?.contentView as? WKWebView else { return }
+        var image: NSImage?
+        webView.takeSnapshot(with: nil) { snapshot, _ in image = snapshot }
+        XCTAssertTrue(wait { image != nil })
+        let tiff = try XCTUnwrap(image?.tiffRepresentation)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiff))
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        let folder = URL(fileURLWithPath: directory)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try png.write(to: folder.appendingPathComponent("workspace-\(name).png"))
+    }
+
+    private func resizeReader(_ reader: ReaderController, to size: CGSize) {
+        window?.setContentSize(size)
+        window?.contentView?.frame = CGRect(origin: .zero, size: size)
+        window?.contentView?.layoutSubtreeIfNeeded()
+        reader.updateViewport(width: size.width, height: size.height)
+    }
+
+    private func viewportTextPosition(in reader: ReaderController, side: Int, height: Double) throws -> TextPosition {
+        var position: TextPosition?
+        reader.evaluateForTesting("""
+            (() => {
+                const range = document.caretRangeFromPoint(window.innerWidth * (\(side) + 0.5) / 2, window.innerHeight * \(height));
+                if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) return null;
+                let node = range.startContainer, path = [];
+                while (node && node !== document.body) {
+                    path.unshift(Array.prototype.indexOf.call(node.parentNode.childNodes, node));
+                    node = node.parentNode;
+                }
+                return { elementPath: path, offset: Math.min(range.startOffset, range.startContainer.length - 1) };
+            })()
+            """) { raw in
+            guard let value = raw as? [String: Any], let path = value["elementPath"] as? [Int] else { return }
+            position = TextPosition(elementPath: path, offset: value["offset"] as? Int ?? 0)
+        }
+        XCTAssertTrue(wait { position != nil })
+        return try XCTUnwrap(position)
+    }
+
+    private func textGeometry(_ position: TextPosition, in reader: ReaderController) -> [String: Double] {
+        let encoded = jsonString(["elementPath": position.elementPath, "offset": position.offset])!
+        var result: [String: Double]?
+        reader.evaluateForTesting("""
+            ((position) => {
+                let node = document.body;
+                for (const index of position.elementPath) node = node.childNodes[index];
+                const range = document.createRange();
+                range.setStart(node, position.offset);
+                range.setEnd(node, Math.min(position.offset + 1, node.length));
+                const rect = range.getBoundingClientRect();
+                const columnWidth = parseFloat(getComputedStyle(document.body).columnWidth);
+                return { x: rect.x, y: rect.y, side: Math.floor(rect.x / (window.innerWidth / 2)), width: window.innerWidth, columnWidth };
+            })(\(encoded))
+            """) { raw in
+            result = (raw as? [String: Any])?.compactMapValues { ($0 as? NSNumber)?.doubleValue }
+        }
+        _ = wait(timeout: 2) { result != nil }
+        return result ?? [:]
+    }
+
     /// SwiftUI can widen the WKWebView before an asynchronously enqueued pin
     /// executes. Model that ordering by resetting the DOM scroll first: the
     /// reader must use its last settled text anchor, not the new page-zero probe.

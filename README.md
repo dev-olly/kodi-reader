@@ -48,6 +48,8 @@ not the goal right now** — this is a source-available personal project, not a
 contributor funnel. See [NOTICE.md](NOTICE.md) for third-party licenses and
 [SECURITY.md](SECURITY.md) to report vulnerabilities privately.
 
+For implementation details, see [How Kodi Reader works](docs/how-it-works.md).
+
 A macOS disk image is published on [GitHub Releases](https://github.com/dev-olly/kodi-reader/releases/latest). Release builds are signed with Developer ID and notarized by Apple. You can also build from source (Xcode 16.3 or later).
 
 The site is deployed on Vercel at [www.kodi-reader.app](https://www.kodi-reader.app/).
@@ -167,39 +169,6 @@ swift Scripts/generate-brand-assets.swift
 
 Generated assets are committed, so normal builds do not need this step.
 
-### Package a DMG
-
-The release script expects this signing identity, including its private key, in
-the login keychain:
-
-```text
-Developer ID Application: Emmanuel Onyebueke (3FJF74RW5L)
-```
-
-Before the first notarized release, save notarization credentials in the login
-keychain. Use an app-specific password rather than an Apple Account password:
-
-```sh
-xcrun notarytool store-credentials "KodiReaderNotary" \
-  --apple-id "YOUR_APPLE_ACCOUNT_EMAIL" \
-  --team-id "3FJF74RW5L" \
-  --password "YOUR_APP_SPECIFIC_PASSWORD"
-```
-
-Create a publishable release with:
-
-```sh
-./Scripts/package-dmg.sh --notarize
-```
-
-The script regenerates the Xcode project, builds a Developer ID-signed Release
-app for Apple Silicon, checks its embedded frameworks and Hardened Runtime,
-creates and signs `KodiReader.dmg`, submits it to Apple's notary service, staples
-the ticket, and verifies Gatekeeper acceptance. Running without `--notarize`
-creates a signed diagnostic DMG but prints a warning because it is not safe to
-publish. `KODI_SIGNING_IDENTITY`, `KODI_TEAM_ID`, and `KODI_NOTARY_PROFILE` can
-override the release defaults.
-
 ### Publish in-app updates
 
 The app uses [Sparkle](https://sparkle-project.org/documentation/) with a signed
@@ -253,58 +222,6 @@ the reader actually draws rather than whatever is on the display.
 It is worth doing after any change to `reader.css`. Assertions cannot tell you
 that a page is *ugly*, and a theme bug that made dark mode black-on-black
 passed every functional test before the snapshots exposed it.
-
-## How it works
-
-```
-EpubKit    EPUB/PDF models, parsing, and persistence, no app UI
-ReaderUI   the EPUB web renderer and native PDFKit reading surface
-App        the SwiftUI macOS app
-```
-
-**Why a custom engine.** The obvious choice would be the
-[Readium Swift toolkit](https://github.com/readium/swift-toolkit), but it is
-UIKit-only and the maintainers have
-[no short-term plans for macOS](https://github.com/readium/swift-toolkit/issues/783).
-`WKWebView` has the same API on macOS and iOS, so building a thin engine on top
-of it keeps the door open for an iOS port. The only third-party dependency is
-ZIPFoundation.
-
-**Serving the book.** A `WKURLSchemeHandler` answers `epubreader://` requests
-straight from the ZIP. Nothing is extracted to disk, no local HTTP server is
-involved, and the whole book shares one origin so relative links between
-chapters resolve on their own. Spine documents get the reader stylesheet and
-runtime injected into their `<head>` on the way through.
-
-**Pagination.** The body is a CSS multi-column box one viewport tall. Content
-overflows sideways into further columns and a page turn scrolls the document by
-one viewport width. That stride only holds if the column gap is exactly twice
-the horizontal margin, which is the invariant `reader.js` maintains when it
-computes the layout — it is what lets one-column and two-column spreads share
-the same paging code.
-
-**Anchoring.** Reading positions and highlight endpoints are stored as a chain
-of `childNode` indices from `<body>` plus a character offset, which is a
-simplified EPUB CFI. Because the book's markup never changes, the anchor stays
-valid across font size, margin, theme, and window size changes, none of which a
-scroll offset would survive. Pages with no text at all, like a cover, fall back
-to anchoring on an element.
-
-**Highlights** are painted as absolutely positioned rects over the text, blended
-with `multiply` on light themes and `screen` on dark ones so the glyphs stay
-readable. Drawing them on top rather than behind is what lets a click land on a
-highlight and open its note.
-
-**PDFs** use Apple's PDFKit in a native paged view. Kodi stores page-local text
-ranges for highlights and rebuilds transient PDF annotations when a document
-opens, so neither the original PDF nor the imported library copy is modified.
-Scanned pages remain viewable but need embedded text for selection and Ask AI.
-
-**Storage** is a single JSON file in Application Support holding reading
-positions, annotations, bookmarks, and settings. Opened books are copied into
-the app’s sandbox library so Recents can reopen them without asking again.
-Excalidraw scenes live as sidecar files next to that JSON
-(`Drawings/<bookID>/<annotationID>.excalidraw.json`) so the library stays small.
 
 ## Rebuilding the Excalidraw host
 

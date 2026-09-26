@@ -407,7 +407,7 @@ struct AnnotationsInspector: View {
                 .quickHelp("Export notes as Markdown")
             }
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.top, 22)
         .padding(.bottom, 8)
     }

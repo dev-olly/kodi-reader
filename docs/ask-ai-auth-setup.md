@@ -190,3 +190,15 @@ session and nonisolated callback handler as Google. Do not add the native
    successful sign-in, cancellation, Hide My Email, and session persistence.
    Keep the flag off until configuration is ready. No Apple private key or
    OAuth client secret belongs in xcconfig or Info.plist.
+
+Apple OAuth client secrets expire after at most six months. Rotate the secret
+in Supabase before expiry; retain the private key securely for this purpose.
+The owner completed the App ID, Services ID, key, and Supabase configuration on
+2026-09-26. Supabase's public settings confirmed Apple, Google, and email are
+enabled. `APPLE_SIGN_IN_ENABLED = YES` is set in the ignored local xcconfig.
+Real Apple sign-in, Hide My Email, cancellation, and signed-app session
+persistence remain pending verification. All 25 authentication tests passed;
+mocked tests cover the PKCE callback exchange and storage for both providers.
+
+References: [Apple web setup](https://developer.apple.com/help/account/capabilities/configure-sign-in-with-apple-for-the-web/),
+[Supabase Apple provider](https://supabase.com/docs/guides/auth/social-login/auth-apple).

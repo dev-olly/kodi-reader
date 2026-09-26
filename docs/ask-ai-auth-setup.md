@@ -131,3 +131,11 @@ checked on every subsequent request through `getUser`, rather than trusting JWT 
 
 Live Supabase setup, email delivery, and signed-build end-to-end checks require the
 project and sender domain to exist; mocked tests do not certify those external services.
+
+## Google sign-in setup (2026-09-26)
+
+The Google Cloud web OAuth client `Kodi Reader Supabase` has been created. The
+owner configured its client ID and secret in Supabase and added
+`com.olly.KodiReader://auth/callback` to the redirect allowlist. A read of
+Supabase's public auth settings confirmed Google and email are enabled; Apple
+is still disabled.

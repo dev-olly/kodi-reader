@@ -538,9 +538,10 @@ struct AnnotationsInspector: View {
                         }
                         if annotation.hasNote {
                             Text(annotation.plainNotePreview)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(2)
+                                .font(.system(size: 12))
+                                .foregroundStyle(model.settings.theme.uiForeground.opacity(0.85))
+                                .lineSpacing(5)
+                                .lineLimit(4)
                         } else if annotation.hasDrawing {
                             Text("Visual note")
                                 .font(.caption)

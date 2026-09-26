@@ -520,7 +520,7 @@ struct AnnotationsInspector: View {
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 6) {
                             Text(annotation.title)
-                                .font(.system(size: 16, design: .serif))
+                                .font(.system(size: 20, weight: .regular, design: .serif))
                                 .lineSpacing(4)
                                 .lineLimit(3)
                             if annotation.isOrphaned {

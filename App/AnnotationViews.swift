@@ -279,36 +279,41 @@ struct AnnotationsInspector: View {
             } else {
                 libraryHeader
                 controls
-                List {
-                    if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
-                        Section("Bookmarks") {
-                            ForEach(bookmarks) { bookmark in
-                                Button { onSelect(bookmark.locator) } label: {
-                                    Label(
-                                        bookmark.chapterTitle ?? "Bookmark",
-                                        systemImage: "bookmark.fill"
-                                    )
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .contentShape(.rect)
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 24) {
+                        if !bookmarks.isEmpty && query.isEmpty && filter == .all && chapterFilter.isEmpty {
+                            VStack(alignment: .leading, spacing: 16) {
+                                marginLabel("BOOKMARKS")
+                                ForEach(bookmarks) { bookmark in
+                                    Button { onSelect(bookmark.locator) } label: {
+                                        Label(
+                                            bookmark.chapterTitle ?? "Bookmark",
+                                            systemImage: "bookmark.fill"
+                                        )
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(.rect)
+                                    }
+                                    .buttonStyle(.plain)
                                 }
-                                .buttonStyle(.plain)
                             }
                         }
-                    }
 
-                    Section("Highlights & notes") {
-                        if filteredAnnotations.isEmpty {
-                            Text("No matches")
-                                .foregroundStyle(model.settings.theme.muted)
-                        } else {
-                            ForEach(filteredAnnotations) { annotation in
-                                row(for: annotation)
+                        LazyVStack(alignment: .leading, spacing: 24) {
+                            marginLabel("A THOUGHT TO KEEP")
+                            if filteredAnnotations.isEmpty {
+                                Text("No matches")
+                                    .foregroundStyle(model.settings.theme.muted)
+                            } else {
+                                ForEach(filteredAnnotations) { annotation in
+                                    row(for: annotation)
+                                }
                             }
                         }
                     }
+                    .padding(.horizontal, 24)
+                    .padding(.top, 24)
+                    .padding(.bottom, 28)
                 }
-                .listStyle(.inset)
-                .scrollContentBackground(.hidden)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -404,6 +409,13 @@ struct AnnotationsInspector: View {
         .padding(.horizontal, 20)
         .padding(.top, 22)
         .padding(.bottom, 8)
+    }
+
+    private func marginLabel(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 9, weight: .medium))
+            .tracking(1)
+            .foregroundStyle(model.settings.theme.muted)
     }
 
     private var controls: some View {

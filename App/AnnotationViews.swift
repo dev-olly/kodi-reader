@@ -442,17 +442,43 @@ struct AnnotationsInspector: View {
                 Rectangle().fill(model.settings.theme.border.opacity(0.6)).frame(height: 1)
             }
 
-            if !chapterTitles.isEmpty {
-                Picker("Chapter", selection: $chapterFilter) {
-                    Text("All chapters").tag("")
-                    ForEach(chapterTitles, id: \.self) { title in
-                        Text(title).tag(title)
+            HStack(spacing: 16) {
+                Menu {
+                    Picker("Filter", selection: $filter) {
+                        ForEach(NotesFilter.allCases) { item in
+                            Text(item.label).tag(item)
+                        }
                     }
+                    .pickerStyle(.inline)
+                } label: {
+                    Text(filter == .all ? "All entries" : filter.label)
+                        .lineLimit(1)
                 }
-                .labelsHidden()
+                .accessibilityLabel("Filter notes and highlights")
+                if !chapterTitles.isEmpty {
+                    Menu {
+                        Picker("Chapter", selection: $chapterFilter) {
+                            Text("All chapters").tag("")
+                            ForEach(chapterTitles, id: \.self) { title in
+                                Text(title).tag(title)
+                            }
+                        }
+                        .pickerStyle(.inline)
+                    } label: {
+                        Text(chapterFilter.isEmpty ? "All chapters" : chapterFilter)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                    }
+                    .accessibilityLabel("Filter by chapter")
+                }
             }
+            .menuStyle(.borderlessButton)
+            .font(.system(size: 11))
+            .foregroundStyle(model.settings.theme.muted)
         }
-        .padding(12)
+        .padding(.horizontal, 24)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
     }
 
     private var filteredAnnotations: [Annotation] {

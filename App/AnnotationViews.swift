@@ -420,17 +420,27 @@ struct AnnotationsInspector: View {
     }
 
     private var controls: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            TextField("Search notes", text: $query)
-                .textFieldStyle(.roundedBorder)
-
-            Picker("Filter", selection: $filter) {
-                ForEach(NotesFilter.allCases) { item in
-                    Text(item.label).tag(item)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 11))
+                    .foregroundStyle(model.settings.theme.muted)
+                TextField("Search your margin", text: $query)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: 12))
+                    .accessibilityLabel("Search notes")
+                if !query.isEmpty {
+                    Button { query = "" } label: {
+                        Image(systemName: "xmark").font(.system(size: 10))
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear search")
                 }
             }
-            .pickerStyle(.segmented)
-            .labelsHidden()
+            .padding(.vertical, 9)
+            .overlay(alignment: .bottom) {
+                Rectangle().fill(model.settings.theme.border.opacity(0.6)).frame(height: 1)
+            }
 
             if !chapterTitles.isEmpty {
                 Picker("Chapter", selection: $chapterFilter) {

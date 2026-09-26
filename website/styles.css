@@ -192,3 +192,6 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
 .demo-filters { display: flex; gap: 12px; margin-top: 10px; }
 .demo-filters select { width: 50%; min-width: 0; border: 0; background: transparent; color: var(--demo-muted); font: inherit; font-size: 10px; cursor: pointer; }
 .demo-filters option { background: var(--side); color: var(--demo-ink); }
+.demo-search:focus-within { border-color: var(--demo-muted); }
+.demo-search input:focus-visible { outline: none; }
+.demo-filters select:focus-visible { outline: 1px solid var(--demo-muted); outline-offset: 4px; }

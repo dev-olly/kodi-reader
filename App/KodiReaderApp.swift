@@ -50,6 +50,7 @@ struct KodiReaderApp: App {
 
             Button("Open Webpage…") { model.presentOpenURL() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])
+                .disabled(!authWelcomeSeen && !model.aiAuth.isSignedIn)
 
             Button("Save Webpage to Library") { model.saveCurrentWebPage() }
                 .keyboardShortcut("s", modifiers: [.command, .shift])

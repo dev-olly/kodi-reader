@@ -380,7 +380,7 @@ struct AskAIPanel: View {
                     } label: {
                         Image(systemName: "arrow.up")
                             .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(model.settings.theme.uiBackground)
+                            .foregroundStyle(model.settings.theme.surface)
                             .frame(width: 26, height: 26)
                             .background(
                                 Circle()

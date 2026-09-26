@@ -40,6 +40,20 @@ final class AIAuthenticationTests: XCTestCase {
         XCTAssertEqual(result, expected)
     }
 
+    func testOAuthCancellationCanCompleteOnBackgroundQueue() async {
+        do {
+            let _: URL = try await withCheckedThrowingContinuation { continuation in
+                let completion = OAuthCallback.handler(for: continuation)
+                DispatchQueue.global().async {
+                    completion(nil, ASWebAuthenticationSessionError(.canceledLogin))
+                }
+            }
+            XCTFail("Cancellation must not complete sign-in")
+        } catch {
+            XCTAssertEqual((error as? ASWebAuthenticationSessionError)?.code, .canceledLogin)
+        }
+    }
+
     private func session(expired: Bool = false) -> Session {
         Session(accessToken: "access-token", tokenType: "bearer", expiresIn: 3600,
                 expiresAt: Date().timeIntervalSince1970 + (expired ? -100 : 3600), refreshToken: "refresh-token",

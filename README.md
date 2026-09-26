@@ -94,9 +94,10 @@ Without Supabase configuration the reader works normally, but AI sign-in is unav
 
 ### Install the app
 
-Starting with v0.3.1, Kodi Reader checks for updates daily and presents an in-app
-download/install prompt. Choose **Kodi Reader → Check for Updates…** to check now,
-or use the home-screen button. **Settings → Updates** controls automatic checks
+Kodi Reader checks for updates quietly on launch and daily. An **Update available**
+button appears in the home header and reading/browser toolbar only when a new version
+is available. Click it to download, then **Restart to update** when ready. Choose
+**Kodi Reader → Check for Updates…** to check manually. **Settings → Updates** controls automatic checks
 and optional automatic downloads/installations. Updating keeps local reading data.
 Users on v0.3.0 or earlier need to install v0.3.1 manually once to get the updater.
 

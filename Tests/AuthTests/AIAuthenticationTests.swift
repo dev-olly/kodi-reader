@@ -66,6 +66,43 @@ final class AIAuthenticationTests: XCTestCase {
         }
     }
 
+    func testSocialOAuthBackgroundCallbackExchangesAndRestoresSession() async throws {
+        for provider in [Provider.google, .apple] {
+            let storage = MemoryAuthStorage()
+            let wireSession = session()
+            let sdk = try client(storage: storage) { request in
+                XCTAssertEqual(request.url?.lastPathComponent, "token")
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "grant_type" })?.value, "pkce")
+                let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+                XCTAssertEqual(body["auth_code"] as? String, "test-code")
+                XCTAssertFalse((body["code_verifier"] as? String ?? "").isEmpty)
+                let encoder = JSONEncoder()
+                encoder.dateEncodingStrategy = .iso8601
+                return (try encoder.encode(wireSession),
+                        HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+            }
+            let result = try await sdk.signInWithOAuth(provider: provider,
+                redirectTo: URL(string: "com.olly.KodiReader://auth/callback"),
+                launchFlow: { url in
+                    XCTAssertEqual(URLComponents(url: url, resolvingAgainstBaseURL: false)?
+                        .queryItems?.first(where: { $0.name == "provider" })?.value, provider.rawValue)
+                    return try await withCheckedThrowingContinuation { continuation in
+                        let completion = OAuthCallback.handler(for: continuation)
+                        DispatchQueue.global().async {
+                            completion(URL(string: "com.olly.KodiReader://auth/callback?code=test-code"), nil)
+                        }
+                    }
+                })
+            XCTAssertEqual(result.user.id, wireSession.user.id)
+            let restored = AIAuthController(client: try client(storage: storage))
+            XCTAssertTrue(restored.isSignedIn)
+            XCTAssertEqual(restored.userID, wireSession.user.id)
+            let token = try await restored.accessToken()
+            XCTAssertEqual(token, "access-token")
+        }
+    }
+
     private func session(expired: Bool = false) -> Session {
         Session(accessToken: "access-token", tokenType: "bearer", expiresIn: 3600,
                 expiresAt: Date().timeIntervalSince1970 + (expired ? -100 : 3600), refreshToken: "refresh-token",

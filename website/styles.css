@@ -195,3 +195,5 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
 .demo-search:focus-within { border-color: var(--demo-muted); }
 .demo-search input:focus-visible { outline: none; }
 .demo-filters select:focus-visible { outline: 1px solid var(--demo-muted); outline-offset: 4px; }
+.demo-controls + .demo-no-matches + .demo-annotation { margin-top: 24px; min-height: 175px; }
+.demo-no-matches { color: var(--demo-muted); font-size: 12px; margin-top: 24px; min-height: 175px; }

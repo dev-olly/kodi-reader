@@ -394,7 +394,7 @@ struct AskAIPanel: View {
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
-            .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 10))
+            .background(model.settings.theme.surface, in: .rect(cornerRadius: 10))
             .overlay {
                 RoundedRectangle(cornerRadius: 10)
                     .strokeBorder(composerFocused ? model.settings.theme.accent : model.settings.theme.border, lineWidth: 1)

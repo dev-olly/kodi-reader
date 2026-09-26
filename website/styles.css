@@ -189,3 +189,5 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
 .demo-search { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #84968a35; padding: 8px 0; color: var(--demo-muted); }
 .demo-search input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--demo-ink); font: inherit; font-size: 11px; }
 .demo-search input::placeholder { color: var(--demo-muted); }
+.demo-filters { display: flex; gap: 12px; margin-top: 10px; }
+.demo-filters select { width: 50%; min-width: 0; border: 0; background: transparent; color: var(--demo-muted); font: inherit; font-size: 10px; cursor: pointer; }

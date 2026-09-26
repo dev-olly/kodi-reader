@@ -5,6 +5,7 @@ import SwiftUI
 @main
 struct KodiReaderApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @AppStorage("kodiAuthWelcomeSeen") private var authWelcomeSeen = false
     @State private var model = AppModel()
     @StateObject private var updater = AppUpdater()
     @Environment(\.scenePhase) private var scenePhase
@@ -45,6 +46,7 @@ struct KodiReaderApp: App {
         CommandGroup(after: .newItem) {
             Button("Open Document…") { model.presentOpenPanel() }
                 .keyboardShortcut("o", modifiers: .command)
+                .disabled(!authWelcomeSeen && !model.aiAuth.isSignedIn)
 
             Button("Open Webpage…") { model.presentOpenURL() }
                 .keyboardShortcut("o", modifiers: [.command, .shift])

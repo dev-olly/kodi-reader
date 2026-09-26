@@ -77,6 +77,13 @@ struct UpdateUserDriverTests {
         assert(driver.state.title == "View update", "Informational updates must not offer installation")
         driver.dismissUpdateInstallation()
 
+        driver.presentUpdate(version: "0.4.0") { _ in }
+        driver.showDownloadInitiated { cancelled = true }
+        driver.cancelDownload()
+        assert(cancelled)
+        driver.dismissUpdateInstallation()
+        assert(!driver.state.isVisible)
+
         print("Update lifecycle passed: discovery, download progress, cancellation, restart/save ordering, failure recovery, retry, and informational updates.")
     }
 }

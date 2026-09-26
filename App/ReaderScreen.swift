@@ -194,8 +194,8 @@ struct ReaderScreen: View {
                 .help("Close workspace")
                 .accessibilityLabel("Close workspace")
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.horizontal, 24)
+            .padding(.top, 16)
             Rectangle().fill(model.settings.theme.border.opacity(0.65)).frame(height: 1)
             ZStack {
                 inspectorContent

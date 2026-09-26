@@ -202,3 +202,15 @@ mocked tests cover the PKCE callback exchange and storage for both providers.
 
 References: [Apple web setup](https://developer.apple.com/help/account/capabilities/configure-sign-in-with-apple-for-the-web/),
 [Supabase Apple provider](https://supabase.com/docs/guides/auth/social-login/auth-apple).
+
+### Apple invalid_client diagnosis (2026-09-26)
+
+The live Auth log for the failed `/callback` request reported
+`oauth2: "invalid_client"`. The configured Services ID is
+`com.olly.KodiReader.auth`, but the stored OAuth client secret's JWT `sub` was
+`KodiReader`. Its Team ID and Key ID matched the signing key. The client secret
+must be generated for the exact Services ID, preserving capitalization.
+A replacement was generated locally using the existing downloaded Apple key,
+with its signature verified and expiration on 2027-03-25. Replacement in the
+Supabase dashboard and another live sign-in test remain pending. No private key
+or client secret is stored in this repository.

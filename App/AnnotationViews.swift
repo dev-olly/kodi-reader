@@ -522,7 +522,7 @@ struct AnnotationsInspector: View {
                             Text(annotation.title)
                                 .font(.system(size: 20, weight: .regular, design: .serif))
                                 .lineSpacing(4)
-                                .lineLimit(3)
+                                .lineLimit(4)
                             if annotation.isOrphaned {
                                 Image(systemName: "exclamationmark.triangle.fill")
                                     .font(.caption2)

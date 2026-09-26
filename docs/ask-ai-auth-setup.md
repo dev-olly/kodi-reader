@@ -164,3 +164,29 @@ does not support native Sign in with Apple for Developer ID profiles. The app
 therefore uses browser OAuth through Supabase, with the same retained browser
 session and nonisolated callback handler as Google. Do not add the native
 `com.apple.developer.applesignin` entitlement to the Developer ID build.
+
+1. In Apple Developer → Certificates, Identifiers & Profiles → Identifiers,
+   select the App ID `com.olly.KodiReader` (register it if absent). Enable
+   Sign in with Apple, configure it as a primary App ID, and save.
+2. Register a Services ID, suggested identifier `com.olly.KodiReader.auth` and
+   description `Kodi Reader Sign In`. Enable Sign in with Apple for that
+   Services ID and associate it with the primary App ID above.
+3. Under the Services ID's Website URLs, enter domain
+   `hftfeybmgpousanpawgw.supabase.co` and return URL
+   `https://hftfeybmgpousanpawgw.supabase.co/auth/v1/callback`. Save.
+4. Under Keys, create a Sign in with Apple key associated with the primary
+   App ID. Record its Key ID and the developer Team ID (`3FJF74RW5L` for the
+   current signing team). Download its `.p8` private key and store it securely,
+   outside the repository. Never paste the key into chat or embed it in the app.
+5. In Supabase → Authentication → Sign-in providers → Apple, enable Apple,
+   set the first Client ID to the Services ID from step 2, and configure its
+   OAuth client secret. Generate that secret using the Team ID, Key ID,
+   Services ID, and private key via Supabase's documented local/browser tool.
+   Do not use the native bundle ID as the OAuth client ID.
+6. Keep `com.olly.KodiReader://auth/callback` in Supabase's redirect allowlist.
+   Google and Apple share this app return URL.
+7. After configuration, set `APPLE_SIGN_IN_ENABLED = YES` in the ignored
+   `Config/Auth.local.xcconfig`, build with Developer ID signing, and test
+   successful sign-in, cancellation, Hide My Email, and session persistence.
+   Keep the flag off until configuration is ready. No Apple private key or
+   OAuth client secret belongs in xcconfig or Info.plist.

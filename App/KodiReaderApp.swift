@@ -21,7 +21,11 @@ struct KodiReaderApp: App {
                 .frame(minWidth: 640, minHeight: 480)
                 // Opening a book from Finder or `open` arrives here, and the
                 // grant that comes with it is what lets the sandbox read it.
-                .onOpenURL { url in model.open(url: url) }
+                .onOpenURL { url in
+                    if url.scheme?.lowercased() != "com.olly.kodireader" {
+                        model.open(url: url)
+                    }
+                }
         }
         .windowStyle(.hiddenTitleBar)
         .windowToolbarStyle(.unified(showsTitle: false))

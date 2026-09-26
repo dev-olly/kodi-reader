@@ -103,7 +103,7 @@ struct AskAIPanel: View {
             }
 
         }
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 24)
         .padding(.top, 20)
         .padding(.bottom, 16)
         .background {

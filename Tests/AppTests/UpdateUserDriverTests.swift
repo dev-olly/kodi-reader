@@ -23,6 +23,20 @@ struct UpdateUserDriverTests {
         driver.performAction()
         assert(choices == [.install], "Repeated clicks must not reply twice")
 
+        var cancelled = false
+        driver.showDownloadInitiated { cancelled = true }
+        driver.showDownloadDidReceiveData(ofLength: 25)
+        assert(driver.state.progress == nil, "Unknown download sizes must be indeterminate")
+        driver.showDownloadDidReceiveExpectedContentLength(100)
+        assert(driver.state.progress == 0.25)
+        driver.showDownloadDidReceiveData(ofLength: 200)
+        assert(driver.state.progress == 1, "Incorrect content lengths must not exceed 100%")
+        driver.showDownloadDidReceiveExpectedContentLength(300)
+        assert(driver.state.progress == 0.75, "A revised size must retain received bytes")
+        driver.showDownloadDidStartExtractingUpdate()
+        driver.cancelDownload()
+        assert(!cancelled, "Do not invoke download cancellation during extraction")
+
         print("Update lifecycle passed: discovery, download progress, cancellation, restart/save ordering, failure recovery, retry, and informational updates.")
     }
 }

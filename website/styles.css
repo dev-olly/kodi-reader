@@ -182,3 +182,7 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
   html { scroll-behavior: auto; }
   .button { transition: none; }
 }
+
+/* Quiet controls shared with the native margin. */
+.demo-controls { margin-top: 16px; }
+.demo-controls[hidden], .demo-annotation[hidden], .demo-no-matches[hidden] { display: none; }

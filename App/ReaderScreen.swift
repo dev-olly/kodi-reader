@@ -137,6 +137,17 @@ struct ReaderScreen: View {
 
     private var workspacePanel: some View {
         VStack(spacing: 0) {
+            HStack {
+                Text("YOUR MARGIN")
+                    .font(.system(size: 9, weight: .medium))
+                    .tracking(1)
+                Spacer()
+                Text(String(format: "%02d", model.record?.annotations.count ?? 0))
+                    .font(.system(size: 9))
+            }
+            .foregroundStyle(model.settings.theme.muted)
+            .padding(.horizontal, 24)
+            .padding(.top, 28)
             HStack(spacing: 12) {
                 HStack(spacing: 3) {
                     ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in

@@ -593,6 +593,8 @@ struct ReaderScreen: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            UpdateButton()
+
             Button {
                 model.toggleBookmark()
             } label: {

@@ -107,7 +107,7 @@ struct AskAIPanel: View {
         .padding(.top, 20)
         .padding(.bottom, 16)
         .background {
-            model.settings.theme.uiBackground
+            model.settings.theme.surface
                 .overlay(alignment: .bottom) {
                     Rectangle()
                         .fill(model.settings.theme.border.opacity(0.8))

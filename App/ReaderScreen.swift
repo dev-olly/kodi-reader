@@ -149,17 +149,18 @@ struct ReaderScreen: View {
             .padding(.horizontal, 24)
             .padding(.top, 28)
             HStack(spacing: 12) {
-                HStack(spacing: 3) {
+                HStack(spacing: 24) {
                     ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in
                         Button { selectWorkspace(tab) } label: {
-                            Label(tab == .notes ? "Notes" : "Ask AI", systemImage: tab == .notes ? "note.text" : "sparkles")
-                                .font(.system(size: 12, weight: .medium))
+                            Text(tab == .notes ? "Notes" : "Ask AI")
+                                .font(.system(size: 12, weight: .regular))
                                 .foregroundStyle(model.workspace == tab ? model.settings.theme.uiForeground : model.settings.theme.muted)
-                                .frame(maxWidth: .infinity, minHeight: 30)
-                                .background {
+                                .frame(minHeight: 36)
+                                .overlay(alignment: .bottom) {
                                     if model.workspace == tab {
-                                        RoundedRectangle(cornerRadius: 7)
-                                            .fill(model.settings.theme.accent.opacity(0.12))
+                                        Rectangle()
+                                            .fill(model.settings.theme.uiForeground)
+                                            .frame(height: 2)
                                     }
                                 }
                                 .contentShape(.rect)
@@ -169,9 +170,7 @@ struct ReaderScreen: View {
                         .accessibilityAddTraits(model.workspace == tab ? .isSelected : [])
                     }
                 }
-                .padding(3)
-                .frame(maxWidth: 240)
-                .background(model.settings.theme.uiBackground.opacity(0.55), in: .rect(cornerRadius: 10))
+
 
                 Spacer(minLength: 0)
 

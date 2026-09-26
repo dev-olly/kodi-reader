@@ -62,6 +62,15 @@ struct UpdateUserDriverTests {
         driver.presentUpdate(version: "0.4.0") { choices.append($0) }
         assert(choices == [.install, .install], "Retry must resume the same version without a second click")
 
+        driver.showUpdaterError(NSError(domain: "Test", code: 2)) {}
+        driver.prepareToRetry()
+        driver.presentUpdate(version: "0.5.0") { choices.append($0) }
+        assert(driver.state.phase == .available && choices.count == 2,
+               "A newly discovered version must wait for the user's click")
+        driver.dismissUpdateInstallation()
+        driver.performAction()
+        assert(!driver.state.isVisible && choices.count == 2, "Dismissal clears pending install callbacks")
+
         print("Update lifecycle passed: discovery, download progress, cancellation, restart/save ordering, failure recovery, retry, and informational updates.")
     }
 }

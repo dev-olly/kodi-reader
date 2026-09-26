@@ -18,6 +18,8 @@
 	<true/>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
+	<key>GoogleSignInEnabled</key>
+    <string>$(GOOGLE_SIGN_IN_ENABLED)</string>
 	<key>SupabaseURL</key>
 	<string>$(SUPABASE_URL)</string>
 	<key>SupabasePublishableKey</key>

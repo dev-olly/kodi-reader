@@ -20,6 +20,7 @@ enum AIAuthError: LocalizedError {
 @Observable
 final class AIAuthController {
     private(set) var email: String?
+    private(set) var userID: UUID?
     var showingSignIn = false
     private(set) var isChangingAccount = false
     var accountError: String?
@@ -38,12 +39,14 @@ final class AIAuthController {
         self.backendURL = backendURL
         self.network = network
         email = client?.currentUser?.email
+        userID = client?.currentUser?.id
         if let client {
             observationTask = Task { [weak self] in
                 for await (_, session) in client.authStateChanges {
                     guard !Task.isCancelled else { break }
                     if session == nil, self?.email != nil { self?.onWillSignOut?() }
                     self?.email = session?.user.email
+                    self?.userID = session?.user.id
                 }
             }
         }
@@ -75,6 +78,7 @@ final class AIAuthController {
         let response = try await client.verifyOTP(email: email, token: code, type: .email)
         guard let session = response.session else { throw AIAuthError.signInRequired }
         self.email = session.user.email
+        self.userID = session.user.id
         showingSignIn = false
     }
 
@@ -100,6 +104,7 @@ final class AIAuthController {
                 try await browser.authenticate(url: url, callbackScheme: "com.olly.KodiReader")
             })
         email = session.user.email
+        userID = session.user.id
         showingSignIn = false
     }
 
@@ -134,6 +139,7 @@ final class AIAuthController {
         // A network failure must not leave this Mac signed in.
         try? await client?.signOut(scope: .local)
         email = nil
+        userID = nil
         accountError = nil
     }
 
@@ -160,6 +166,7 @@ final class AIAuthController {
             }
             try? await client?.signOut(scope: .local)
             email = nil
+            userID = nil
         } catch { accountError = error.localizedDescription }
     }
 }

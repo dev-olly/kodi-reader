@@ -71,6 +71,12 @@ struct UpdateUserDriverTests {
         driver.performAction()
         assert(!driver.state.isVisible && choices.count == 2, "Dismissal clears pending install callbacks")
 
+        driver.presentUpdate(version: "0.5.0", informationURL: URL(string: "https://example.com/update")!) {
+            choices.append($0)
+        }
+        assert(driver.state.title == "View update", "Informational updates must not offer installation")
+        driver.dismissUpdateInstallation()
+
         print("Update lifecycle passed: discovery, download progress, cancellation, restart/save ordering, failure recovery, retry, and informational updates.")
     }
 }

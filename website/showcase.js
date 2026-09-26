@@ -56,10 +56,13 @@ document.querySelectorAll('[data-highlight]').forEach(button => {
 document.querySelectorAll('[data-demo-mode]').forEach(button => {
   button.addEventListener('click', () => {
     document.querySelectorAll('[data-demo-mode]').forEach(item => item.setAttribute('aria-pressed', String(item === button)));
+    demoMode = button.dataset.demoMode;
+    document.querySelector('.demo-controls').hidden = demoMode === 'ai';
     document.getElementById('demo-response').textContent = button.dataset.demoMode === 'ai'
       ? 'The passage suggests that attention is a practice: staying with an idea long enough to understand it, rather than simply moving on to the next one.'
       : 'Less collecting, more noticing. I want to bring this into how I read, work, and spend my days.';
     document.querySelector('.demo-note-label').textContent = button.dataset.demoMode === 'ai' ? 'A DIFFERENT PERSPECTIVE' : 'A THOUGHT TO KEEP';
+    filterDemoMargin();
   });
 });
 function selectTab(tab) {
@@ -83,4 +86,22 @@ tabs.forEach((tab, index) => {
     selectTab(tabs[next]);
     tabs[next].focus();
   });
+});
+
+let demoMode = 'note';
+function filterDemoMargin() {
+  const annotation = document.querySelector('.demo-annotation');
+  const query = document.getElementById('demo-search').value.trim().toLocaleLowerCase();
+  const chapter = document.getElementById('demo-chapter-filter').value;
+  const kind = document.getElementById('demo-filter').value;
+  // The preview contains one saved note, from chapter three.
+  const matches = demoMode === 'ai' || (
+    annotation.textContent.toLocaleLowerCase().includes(query) &&
+    (chapter === 'all' || chapter === '3') && kind !== 'highlights'
+  );
+  annotation.hidden = !matches;
+  document.querySelector('.demo-no-matches').hidden = matches;
+}
+['demo-search', 'demo-filter', 'demo-chapter-filter'].forEach(id => {
+  document.getElementById(id).addEventListener(id === 'demo-search' ? 'input' : 'change', filterDemoMargin);
 });

@@ -186,3 +186,5 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
 /* Quiet controls shared with the native margin. */
 .demo-controls { margin-top: 16px; }
 .demo-controls[hidden], .demo-annotation[hidden], .demo-no-matches[hidden] { display: none; }
+.demo-search { display: flex; align-items: center; gap: 8px; border-bottom: 1px solid #84968a35; padding: 8px 0; color: var(--demo-muted); }
+.demo-search input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--demo-ink); font: inherit; font-size: 11px; }

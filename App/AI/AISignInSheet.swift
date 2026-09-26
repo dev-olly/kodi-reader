@@ -63,7 +63,13 @@ struct AISignInSheet: View {
                             catch { self.error = error.localizedDescription }
                         }
                     } label: {
-                        providerLabel("Continue with Google", symbol: "g.circle")
+                        providerLabel("Continue with Google") {
+                            Image("GoogleLogo")
+                                .renderingMode(.original)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(width: 18, height: 18)
+                        }
                     }
                     .buttonStyle(AuthOptionStyle(theme: model.settings.theme))
                     .disabled(busy || !auth.isConfigured || !auth.googleEnabled)
@@ -78,7 +84,9 @@ struct AISignInSheet: View {
                             catch { self.error = error.localizedDescription }
                         }
                     } label: {
-                        providerLabel("Continue with Apple", symbol: "apple.logo")
+                        providerLabel("Continue with Apple") {
+                            Image(systemName: "apple.logo")
+                        }
                     }
                     .buttonStyle(AuthOptionStyle(theme: model.settings.theme, apple: true))
                     .disabled(busy || !auth.isConfigured || !auth.appleEnabled)
@@ -90,7 +98,9 @@ struct AISignInSheet: View {
                         Rectangle().fill(model.settings.theme.border).frame(height: 1)
                     }.padding(.vertical, 4)
                     Button { choosingEmail = true; error = nil } label: {
-                        providerLabel("Continue with email", symbol: "envelope")
+                        providerLabel("Continue with email") {
+                            Image(systemName: "envelope")
+                        }
                     }
                     .buttonStyle(AuthOptionStyle(theme: model.settings.theme))
                     .disabled(busy || !auth.isConfigured)
@@ -120,9 +130,9 @@ struct AISignInSheet: View {
         }
     }
 
-    private func providerLabel(_ title: String, symbol: String) -> some View {
+    private func providerLabel<Icon: View>(_ title: String, @ViewBuilder icon: () -> Icon) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: symbol).font(.system(size: 18)).frame(width: 22)
+            icon().font(.system(size: 18)).frame(width: 22).accessibilityHidden(true)
             Text(title).font(.system(size: 14, weight: .medium))
             Spacer(minLength: 0)
         }

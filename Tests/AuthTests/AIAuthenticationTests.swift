@@ -1,4 +1,5 @@
 import Auth
+import AuthenticationServices
 import EpubKit
 import Security
 import XCTest
@@ -30,6 +31,15 @@ private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
 
 @MainActor
 final class AIAuthenticationTests: XCTestCase {
+    func testOAuthCallbackCanCompleteOnBackgroundQueue() async throws {
+        let expected = URL(string: "com.olly.KodiReader://auth/callback?code=test-code")!
+        let result: URL = try await withCheckedThrowingContinuation { continuation in
+            let completion = OAuthCallback.handler(for: continuation)
+            DispatchQueue.global().async { completion(expected, nil) }
+        }
+        XCTAssertEqual(result, expected)
+    }
+
     private func session(expired: Bool = false) -> Session {
         Session(accessToken: "access-token", tokenType: "bearer", expiresIn: 3600,
                 expiresAt: Date().timeIntervalSince1970 + (expired ? -100 : 3600), refreshToken: "refresh-token",

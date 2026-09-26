@@ -51,6 +51,17 @@ struct UpdateUserDriverTests {
         driver.performAction()
         assert(restartEvents.suffix(2) == ["save", "retry termination"])
 
+        var acknowledged = false
+        driver.showUpdaterError(NSError(domain: "Test", code: 1, userInfo: [NSLocalizedDescriptionKey: "Offline"])) {
+            acknowledged = true
+        }
+        driver.dismissUpdateInstallation()
+        assert(acknowledged && driver.state.phase == .failed && driver.state.isVisible)
+        assert(driver.state.message == "Offline", "Retain the failure after Sparkle tears down the session")
+        driver.prepareToRetry()
+        driver.presentUpdate(version: "0.4.0") { choices.append($0) }
+        assert(choices == [.install, .install], "Retry must resume the same version without a second click")
+
         print("Update lifecycle passed: discovery, download progress, cancellation, restart/save ordering, failure recovery, retry, and informational updates.")
     }
 }

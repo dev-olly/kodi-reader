@@ -388,7 +388,8 @@ struct AnnotationsInspector: View {
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Your collection")
-                    .font(.system(size: 20, design: .serif))
+                    .font(.system(size: 11, weight: .regular))
+                    .foregroundStyle(model.settings.theme.muted)
                 Text("\(annotations.count) \(annotations.count == 1 ? "highlight" : "highlights") · \(bookmarks.count) \(bookmarks.count == 1 ? "bookmark" : "bookmarks")")
                     .font(.system(size: 11))
                     .foregroundStyle(model.settings.theme.muted)

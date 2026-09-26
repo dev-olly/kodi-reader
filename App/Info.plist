@@ -20,6 +20,8 @@
 	<true/>
 	<key>GoogleSignInEnabled</key>
     <string>$(GOOGLE_SIGN_IN_ENABLED)</string>
+    <key>AppleSignInEnabled</key>
+    <string>$(APPLE_SIGN_IN_ENABLED)</string>
 	<key>SupabaseURL</key>
 	<string>$(SUPABASE_URL)</string>
 	<key>SupabasePublishableKey</key>

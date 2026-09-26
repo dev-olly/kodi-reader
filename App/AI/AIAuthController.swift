@@ -1,4 +1,6 @@
 import Auth
+import AppKit
+import AuthenticationServices
 import Foundation
 import Observation
 
@@ -76,6 +78,31 @@ final class AIAuthController {
         showingSignIn = false
     }
 
+    var googleEnabled: Bool { Bundle.main.object(forInfoDictionaryKey: "GoogleSignInEnabled") as? String == "YES" }
+    var appleEnabled: Bool { Bundle.main.object(forInfoDictionaryKey: "AppleSignInEnabled") as? String == "YES" }
+
+    func signInWithGoogle() async throws {
+        guard googleEnabled else { throw AIAuthError.notConfigured }
+        try await signInWithProvider(.google)
+    }
+
+    func signInWithApple() async throws {
+        guard appleEnabled else { throw AIAuthError.notConfigured }
+        try await signInWithProvider(.apple)
+    }
+
+    private func signInWithProvider(_ provider: Provider) async throws {
+        guard let client else { throw AIAuthError.notConfigured }
+        let browser = OAuthBrowserSession()
+        let session = try await client.signInWithOAuth(provider: provider,
+            redirectTo: URL(string: "com.olly.KodiReader://auth/callback"),
+            launchFlow: { url in
+                try await browser.authenticate(url: url, callbackScheme: "com.olly.KodiReader")
+            })
+        email = session.user.email
+        showingSignIn = false
+    }
+
     func accessToken() async throws -> String {
         guard let client else { throw AIAuthError.notConfigured }
         do {
@@ -134,5 +161,67 @@ final class AIAuthController {
             try? await client?.signOut(scope: .local)
             email = nil
         } catch { accountError = error.localizedDescription }
+    }
+}
+
+/// AuthenticationServices delivers completion on a background queue on macOS.
+/// Creating this handler outside the main actor avoids the SDK convenience
+/// wrapper's inherited actor assertion. Resuming a continuation is thread-safe;
+/// the awaiting caller resumes on its own actor.
+enum OAuthCallback {
+    nonisolated static func handler(
+        for continuation: CheckedContinuation<URL, Error>
+    ) -> @Sendable (URL?, Error?) -> Void {
+        { url, error in
+            if let error {
+                continuation.resume(throwing: error)
+            } else if let url {
+                continuation.resume(returning: url)
+            } else {
+                continuation.resume(throwing: BrowserAuthError.missingCallback)
+            }
+        }
+    }
+}
+
+private enum BrowserAuthError: LocalizedError {
+    case missingCallback, couldNotStart
+
+    var errorDescription: String? {
+        switch self {
+        case .missingCallback: return "Sign-in did not return a response. Please try again."
+        case .couldNotStart: return "Could not open sign-in. Please try again."
+        }
+    }
+}
+
+@MainActor
+private final class OAuthBrowserSession: NSObject, ASWebAuthenticationPresentationContextProviding {
+    private var session: ASWebAuthenticationSession?
+    private let anchor: NSWindow
+
+    override init() {
+        anchor = NSApp.keyWindow ?? NSApp.mainWindow ?? NSWindow()
+        super.init()
+    }
+
+    func authenticate(url: URL, callbackScheme: String) async throws -> URL {
+        defer { session = nil }
+        return try await withCheckedThrowingContinuation { continuation in
+            let browserSession = ASWebAuthenticationSession(
+                url: url,
+                callbackURLScheme: callbackScheme,
+                completionHandler: OAuthCallback.handler(for: continuation)
+            )
+            session = browserSession
+            browserSession.presentationContextProvider = self
+            if !browserSession.start() {
+                continuation.resume(throwing: BrowserAuthError.couldNotStart)
+            }
+        }
+    }
+
+    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        anchor
     }
 }

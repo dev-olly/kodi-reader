@@ -78,6 +78,8 @@ struct WebBrowserScreen: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            UpdateButton()
+
             if model.isSavingWebPage {
                 ProgressView()
                     .controlSize(.small)

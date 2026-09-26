@@ -3,4 +3,5 @@ SUPABASE_URL =
 SUPABASE_PUBLISHABLE_KEY =
 // Enable only after the provider and signed build are verified.
 GOOGLE_SIGN_IN_ENABLED = NO
+APPLE_SIGN_IN_ENABLED = NO
 #include? "Auth.local.xcconfig"

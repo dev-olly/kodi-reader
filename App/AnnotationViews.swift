@@ -515,7 +515,7 @@ struct AnnotationsInspector: View {
                 HStack(alignment: .top, spacing: 10) {
                     RoundedRectangle(cornerRadius: 2)
                         .fill(annotation.color.swiftUIColor)
-                        .frame(width: 4)
+                        .frame(width: 2)
 
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {

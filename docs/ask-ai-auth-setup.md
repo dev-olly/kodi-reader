@@ -151,3 +151,7 @@ handles the PKCE code exchange and session storage. This avoids the main-actor
 assertion in Supabase Swift 2.55.2's browser convenience callback, observed in the
 2026-09-26 signed-app crash report when macOS delivered completion on an XPC
 background queue.
+
+Real Google sign-in, cancellation, and persistence after relaunch still need
+verification in a signed build. If the Google consent app is in Testing mode,
+the testing account must be on its test-user list. Apple setup is separate.

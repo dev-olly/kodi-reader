@@ -84,6 +84,13 @@ struct UpdateUserDriverTests {
         driver.dismissUpdateInstallation()
         assert(!driver.state.isVisible)
 
+        driver.presentUpdate(version: "0.4.0", ready: true) { _ in restartEvents.append("resume install") }
+        assert(driver.state.phase == .ready, "Already installing updates should offer restart immediately")
+        driver.performAction()
+        assert(restartEvents.suffix(2) == ["save", "resume install"])
+        driver.showUpdateInstalledAndRelaunched(true) { acknowledged = true }
+        driver.dismissUpdateInstallation()
+        assert(!driver.state.isVisible)
         print("Update lifecycle passed: discovery, download progress, cancellation, restart/save ordering, failure recovery, retry, and informational updates.")
     }
 }

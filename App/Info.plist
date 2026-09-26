@@ -20,6 +20,8 @@
 	<true/>
 	<key>SUVerifyUpdateBeforeExtraction</key>
 	<true/>
+	<key>PaymentsEnabled</key>
+	<string>$(PAYMENTS_ENABLED)</string>
 	<key>GoogleSignInEnabled</key>
     <string>$(GOOGLE_SIGN_IN_ENABLED)</string>
     <key>AppleSignInEnabled</key>

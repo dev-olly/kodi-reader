@@ -155,3 +155,12 @@ background queue.
 Real Google sign-in, cancellation, and persistence after relaunch still need
 verification in a signed build. If the Google consent app is in Testing mode,
 the testing account must be on its test-user list. Apple setup is separate.
+
+## Apple sign-in setup (Developer ID distribution)
+
+Kodi Reader is distributed using Developer ID rather than the Mac App Store.
+Apple's [macOS capability table](https://developer.apple.com/help/account/reference/supported-capabilities-macos/)
+does not support native Sign in with Apple for Developer ID profiles. The app
+therefore uses browser OAuth through Supabase, with the same retained browser
+session and nonisolated callback handler as Google. Do not add the native
+`com.apple.developer.applesignin` entitlement to the Developer ID build.

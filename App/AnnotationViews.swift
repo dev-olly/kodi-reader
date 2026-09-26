@@ -517,7 +517,7 @@ struct AnnotationsInspector: View {
                         .fill(annotation.color.swiftUIColor)
                         .frame(width: 2)
 
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 6) {
                             Text(annotation.title)
                                 .font(.system(size: 16, design: .serif))

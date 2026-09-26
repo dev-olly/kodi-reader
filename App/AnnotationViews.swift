@@ -550,7 +550,7 @@ struct AnnotationsInspector: View {
                         if let chapter = annotation.chapterTitle {
                             Text(chapter)
                                 .font(.caption2)
-                                .foregroundStyle(.tertiary)
+                                .foregroundStyle(model.settings.theme.muted)
                         }
                     }
                     Spacer(minLength: 0)

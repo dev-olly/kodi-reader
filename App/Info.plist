@@ -8,6 +8,8 @@
 	<string>sa39Nmet+kTOVxBBfcQ2Ai9nBcfubvzVB7wTyZkESsw=</string>
 	<key>SUEnableAutomaticChecks</key>
 	<true/>
+	<key>SUScheduledCheckInterval</key>
+	<integer>86400</integer>
 	<key>SUAutomaticallyUpdate</key>
 	<false/>
 	<key>SUEnableSystemProfiling</key>
@@ -24,7 +26,7 @@
     <string>$(APPLE_SIGN_IN_ENABLED)</string>
     <key>CFBundleURLTypes</key>
     <array><dict><key>CFBundleURLSchemes</key><array><string>$(PRODUCT_BUNDLE_IDENTIFIER)</string></array></dict></array>
-	<key>SupabaseURL</key>
+    <key>SupabaseURL</key>
 	<string>$(SUPABASE_URL)</string>
 	<key>SupabasePublishableKey</key>
 	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>

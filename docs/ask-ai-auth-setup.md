@@ -139,3 +139,15 @@ owner configured its client ID and secret in Supabase and added
 `com.olly.KodiReader://auth/callback` to the redirect allowlist. A read of
 Supabase's public auth settings confirmed Google and email are enabled; Apple
 is still disabled.
+
+The Google client's authorized redirect URI is
+`https://hftfeybmgpousanpawgw.supabase.co/auth/v1/callback`. The Google client
+secret belongs only in Supabase, never in the app's xcconfig or Info.plist.
+`GOOGLE_SIGN_IN_ENABLED = YES` is set in the ignored `Config/Auth.local.xcconfig`
+for local signed builds. Distributed builds must carry the same flag after
+signed-app acceptance. Native callback capture uses the app's retained `ASWebAuthenticationSession`
+with a nonisolated completion handler. Supabase's `launchFlow` overload still
+handles the PKCE code exchange and session storage. This avoids the main-actor
+assertion in Supabase Swift 2.55.2's browser convenience callback, observed in the
+2026-09-26 signed-app crash report when macOS delivered completion on an XPC
+background queue.

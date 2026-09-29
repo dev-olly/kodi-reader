@@ -6,6 +6,36 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.0</title>
+            <pubDate>Tue, 29 Sep 2026 17:41:56 +0200</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>6</sparkle:version>
+            <sparkle:shortVersionString>0.4.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.0
+
+This release prepares Ask AI for secure credit purchases while Kodi Reader itself
+remains free.
+
+- Ask AI now understands server-managed balances, credit packs, and one-credit
+  answer charging.
+- Checkout opens securely in the browser and returns to Kodi Reader after payment;
+  the app then refreshes the balance automatically.
+- Questions and selected passages remain available when sign-in or checkout is
+  interrupted.
+- Session refresh, sign-out, account switching, insufficient-credit responses, and
+  service errors have clearer recovery behavior.
+- Credit and purchase controls stay hidden until the production rollout is enabled.
+  Reading, notes, drawings, and saved conversations continue to work as before.
+
+The app and update feed are signed, and the download is notarized by Apple.
+
+Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.0/KodiReader.dmg" length="7872927" type="application/octet-stream" sparkle:edSignature="L8XYq8CoAE8DTtwBO2auieo35upcA9gzeLlrRYSjNmpBUH4iG4OpIWNIr1WZ5R1l20hH1+ovq/Xk83grPRFLDA=="/>
+        </item>
+        <item>
             <title>0.3.2</title>
             <pubDate>Sat, 26 Sep 2026 17:34:22 +0200</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -68,6 +98,6 @@ Requires Apple Silicon and macOS 15 or later.
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: X4NujfzADNeH0wnmwp1Fv48nupoiwe+8mJrzr4va8F1+kdXdZQ0A/fHELVyP2XHpWFnwlSM8ux6e4PXpSNxfAw==
-length: 3944
+edSignature: XtYmvqoQqu3xIYaXnmMreQz6Ce+AEXuq8G+WgticmOj8Sy+SI2QOQdICzHI5oSoS3/rh791+8AO4udb9O1RTBA==
+length: 5619
 -->

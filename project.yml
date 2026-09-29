@@ -131,6 +131,7 @@ targets:
       - path: App/AI/AIModelConfig.swift
       - path: App/AI/AIConfigStore.swift
       - path: App/AI/ChatController.swift
+      - path: App/AI/SavedPromptStore.swift
       - path: App/AppDataDirectory.swift
       - path: App/LegacyFolioMigration.swift
     dependencies:

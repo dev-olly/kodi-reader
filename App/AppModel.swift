@@ -74,6 +74,7 @@ final class AppModel {
     let aiAuth: AIAuthController
     let aiCredits: AICreditsController
     let chat: ChatController
+    let savedPrompts: SavedPromptStore
 
     var notesInSidebar: Bool {
         get { settings.noteEditorPlacement == .sidebar }
@@ -119,6 +120,7 @@ final class AppModel {
         self.aiCredits = aiCredits
         let chat = ChatController(configStore: aiConfig, auth: aiAuth)
         self.chat = chat
+        self.savedPrompts = SavedPromptStore()
         aiAuth.onWillSignOut = { [weak chat, weak aiCredits] in chat?.stop(); aiCredits?.reset() }
         chat.onInsufficientCredits = { [weak aiCredits] in
             guard AIFeatureFlags.paymentsEnabled else { return }

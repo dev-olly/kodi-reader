@@ -31,7 +31,7 @@ Freeform sketches per highlight via a bundled, offline [Excalidraw](https://exca
 ![Visual notes with Excalidraw](docs/screenshots/app-draw.png)
 
 ### Ask AI
-Opt-in OpenAI-powered chat about the book, with per-book chat threads and surrounding-passage context sent for better answers.
+Opt-in OpenAI-powered chat about the book, with per-book chat threads and surrounding-passage context sent for better answers. Quick prompt badges and personal saved prompts make recurring questions easier to ask.
 
 ![Ask AI](docs/screenshots/app-ask-ai.png)
 

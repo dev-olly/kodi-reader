@@ -100,8 +100,7 @@ Backend repository: `../kodi-reader-ai`. Use Node 22 or newer and run `npm ci`, 
 hour, and both are in-memory and reset with the process. They are not a credit ledger
 and are not shared across Fly machines. Use a limited rollout until paid usage is built.
 
-No database migrations or application profile table are needed for this phase.
-Later credit accounts should reference the verified Supabase user UUID, never the email.
+The authentication-only phase needs no profile table. The credit phase adds a private ledger linked to the verified Supabase UUID; see [credits setup](ask-ai-credits-setup.md) for its migration and release gates.
 
 ## 4. Release and manual acceptance
 

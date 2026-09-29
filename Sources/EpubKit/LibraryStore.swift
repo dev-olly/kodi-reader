@@ -9,7 +9,7 @@ public final class LibraryStore: @unchecked Sendable {
     /// Current on-disk schema. v1 notes decode as-is; missing `anchorStatus`
     /// defaults to `.unknown` on the Annotation type. v3 adds optional
     /// `sourceURL` on BookRecord for frozen webpages; v4 adds PDF documents.
-    public static let currentVersion = 4
+    public static let currentVersion = 5
 
     private struct Payload: Codable {
         var version: Int = LibraryStore.currentVersion
@@ -22,7 +22,11 @@ public final class LibraryStore: @unchecked Sendable {
     private let fileURL: URL
     private let queue = DispatchQueue(label: "library-store", qos: .utility)
     private var payload: Payload
+    private var durableRecords: [String: BookRecord] = [:]
     private let lock = NSLock()
+    private let ioLock = NSRecursiveLock()
+    public var onDurableChange: (@Sendable () -> Void)?
+    public private(set) var migrationError: String?
     /// Coalesces the frequent position updates that arrive while reading.
     private var pendingSave: DispatchWorkItem?
     /// Excalidraw scenes live next to `library.json`, keyed by book.
@@ -59,8 +63,25 @@ public final class LibraryStore: @unchecked Sendable {
 
     public init(fileURL: URL) {
         self.fileURL = fileURL
-        payload = LibraryStore.load(from: fileURL) ?? Payload()
+        let loaded = LibraryStore.load(from: fileURL)
+        payload = loaded ?? Payload()
+        if FileManager.default.fileExists(atPath: fileURL.path), loaded == nil {
+            migrationError = "The local library could not be read. Restore library.before-icloud.json before enabling sync."
+        }
+        durableRecords = payload.books
         drawingStore = DrawingStore(rootDirectory: fileURL.deletingLastPathComponent())
+        let backup = fileURL.deletingLastPathComponent().appendingPathComponent("library.before-icloud.json")
+        if FileManager.default.fileExists(atPath: fileURL.path), !FileManager.default.fileExists(atPath: backup.path) {
+            do { try FileManager.default.copyItem(at: fileURL, to: backup) }
+            catch { migrationError = error.localizedDescription }
+        }
+        for id in payload.books.keys {
+            if payload.books[id]?.chats == nil, let messages = payload.books[id]?.chatMessages, !messages.isEmpty {
+                let thread = ChatThread.wrappingLegacyMessages(messages)
+                payload.books[id]?.chats = [thread]
+                payload.books[id]?.activeChatID = thread.id
+            }
+        }
     }
 
     // MARK: - Imported book files
@@ -202,9 +223,65 @@ public final class LibraryStore: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         return payload.books.values
+            .filter { !$0.isHiddenFromRecents }
             .sorted { $0.lastOpenedAt > $1.lastOpenedAt }
             .prefix(limit)
             .map { $0 }
+    }
+
+    /// All records, including books hidden from Recents and cloud-only books.
+    public func allBooks() -> [BookRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return payload.books.values.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+    }
+
+    public func durableBooks() -> [BookRecord] {
+        lock.lock(); defer { lock.unlock() }
+        return Array(durableRecords.values)
+    }
+
+    public func record(cloudIdentity: String) -> BookRecord? {
+        allBooks().first { $0.cloudIdentity == cloudIdentity }
+    }
+
+    public func hideFromRecents(_ id: String) {
+        update(id) { $0.isHiddenFromRecents = true }
+    }
+
+    public func removeLocalDownload(_ id: String) throws {
+        guard let record = record(for: id), record.cloudFile != nil else { throw SyncFailure.missingFile }
+        if let url = existingImportedURL(for: record) { try FileManager.default.removeItem(at: url) }
+        try updateAndFlush(id) {
+            $0.importedRelativePath = nil; $0.fileBookmark = nil; $0.lastKnownPath = nil
+        }
+    }
+
+    /// Persist received changes without turning them into new outgoing edits.
+    public func applyRemoteChanges(_ records: [BookRecord]) throws {
+        ioLock.lock(); defer { ioLock.unlock() }
+        lock.lock()
+        let previous = payload
+        for record in records { payload.books[record.id] = record }
+        lock.unlock()
+        do { try writeToDisk(notify: false) }
+        catch { lock.lock(); payload = previous; lock.unlock(); throw error }
+    }
+
+    public func deleteForSync(_ id: String) throws {
+        ioLock.lock(); defer { ioLock.unlock() }
+        lock.lock(); let previous = payload; payload.books[id] = nil; lock.unlock()
+        do { try writeToDisk(notify: false) }
+        catch { lock.lock(); payload = previous; lock.unlock(); throw error }
+        if let record = previous.books[id], let file = existingImportedURL(for: record) {
+            try? FileManager.default.removeItem(at: file)
+        }
+        drawingStore.deleteAllScenes(bookID: id)
+    }
+
+    public func checkpoint() throws {
+        pendingSave?.cancel(); pendingSave = nil
+        drawingStore.flush()
+        try writeToDisk()
     }
 
     // MARK: - Settings
@@ -277,7 +354,9 @@ public final class LibraryStore: @unchecked Sendable {
         try? writeToDisk()
     }
 
-    private func writeToDisk() throws {
+    private func writeToDisk(notify: Bool = true) throws {
+        ioLock.lock()
+        defer { ioLock.unlock() }
         lock.lock()
         let snapshot = payload
         lock.unlock()
@@ -287,6 +366,8 @@ public final class LibraryStore: @unchecked Sendable {
         let data = try encoder.encode(snapshot)
         // Atomic so a crash mid-write cannot truncate the library.
         try data.write(to: fileURL, options: .atomic)
+        lock.lock(); durableRecords = snapshot.books; lock.unlock()
+        if notify { onDurableChange?() }
     }
 }
 

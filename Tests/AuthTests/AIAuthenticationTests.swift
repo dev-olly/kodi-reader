@@ -345,4 +345,145 @@ final class AIAuthenticationTests: XCTestCase {
                                    kSecAttrAccount as String: "test-session"]
         XCTAssertEqual(SecItemCopyMatching(query as CFDictionary, nil), errSecItemNotFound)
     }
+    func testDisabledPaymentsMakeNoCreditRequestsAndAllowAuthenticatedAI() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let network = network(status: 200)
+        var requests = 0
+        MockURLProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.url?.lastPathComponent, "completions")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-token")
+            return (200, "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n")
+        }
+        let credits = AICreditsController(auth: auth, network: network, paymentsEnabled: false)
+        await credits.refresh()
+        let pack = AICreditPack(id: "starter", name: "Starter", credits: 250, amount: 100, available: true)
+        let checkout = await credits.checkout(pack: pack)
+        XCTAssertNil(checkout)
+        XCTAssertFalse(credits.handlePaymentReturn(URL(string: "com.olly.KodiReader://credits/complete?order=\(UUID())")!))
+        await credits.checkPendingPurchase()
+        XCTAssertEqual(requests, 0)
+        XCTAssertNil(credits.balance)
+        XCTAssertTrue(credits.packs.isEmpty)
+        XCTAssertFalse(credits.showingPacks)
+        let chat = try chat(auth: auth, network: network)
+        chat.input = "Question"; chat.send(); try await settle(chat)
+        XCTAssertEqual(requests, 1)
+        XCTAssertEqual(chat.messages.last?.text, "Answer")
+        XCTAssertTrue(auth.isSignedIn)
+    }
+
+    func testZeroCreditsKeepsQuestionAndPassagesAndOpensPacks() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let chat = try chat(auth: auth, network: network(status: 402))
+        var showedPacks = false
+        chat.onInsufficientCredits = { showedPacks = true }
+        let reference = ChatReference(quotedText: "A passage", spineIndex: 0)
+        chat.input = "Question"; chat.pendingReferences = [reference]
+        chat.send(); try await settle(chat)
+        XCTAssertTrue(showedPacks)
+        XCTAssertEqual(chat.input, "Question"); XCTAssertEqual(chat.pendingReferences, [reference])
+        XCTAssertTrue(chat.messages.isEmpty); XCTAssertTrue(auth.isSignedIn)
+    }
+
+    func testEachSendHasAnIdempotencyKeyAndCreditProtocol() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let network = network(status: 200)
+        var ids = Set<String>()
+        MockURLProtocol.handler = { request in
+            let id = request.value(forHTTPHeaderField: "Idempotency-Key")!
+            XCTAssertNotNil(UUID(uuidString: id)); ids.insert(id)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-Kodi-Credit-Protocol"), "1")
+            return (200, "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n")
+        }
+        let chat = try chat(auth: auth, network: network)
+        chat.input = "Question"; chat.send(); try await settle(chat)
+        chat.input = "Follow up"; chat.send(); try await settle(chat)
+        XCTAssertEqual(ids.count, 2)
+    }
+
+    func testUnexpectedEOFDoesNotCountAsSuccessfulAnswer() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let chat = try chat(auth: auth, network: network(status: 200, body: "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n"))
+        chat.input = "Question"; chat.send(); try await settle(chat)
+        XCTAssertEqual(chat.messages.last?.text, "Partial"); XCTAssertNotNil(chat.errorMessage)
+    }
+
+    func testBalanceBelongsToAccountAndClearsOnSignOut() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let network = network(status: 200)
+        MockURLProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer access-token")
+            return request.url!.lastPathComponent == "credits" ? (200, #"{"balance":25,"enforced":true}"#) :
+                (200, #"{"sandbox":true,"packs":[{"id":"starter","name":"Starter","credits":250,"amount":null,"available":false}]}"#)
+        }
+        let credits = AICreditsController(auth: auth, network: network, paymentsEnabled: true)
+        await credits.refresh()
+        XCTAssertEqual(credits.balance, 25); XCTAssertEqual(credits.packs.first?.credits, 250)
+        XCTAssertNil(credits.packs.first?.formattedPrice)
+        await auth.signOut(); await credits.refresh()
+        XCTAssertNil(credits.balance); XCTAssertTrue(credits.packs.isEmpty)
+    }
+
+    func testCheckoutReturnWaitsForServerAndRestoresPendingPurchase() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let network = network(status: 200)
+        let suite = "kodi.checkout.tests.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var order = UUID(), confirmed = false
+        MockURLProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                order = UUID(uuidString: request.value(forHTTPHeaderField: "Idempotency-Key")!)!
+                return (200, #"{"url":"https://checkout.example.com/?_ptxn=txn_test"}"#)
+            }
+            if request.url!.path.contains("/checkout/") {
+                return (200, "{\"id\":\"\(order)\",\"status\":\"\(confirmed ? "confirmed" : "pending")\",\"credits\":\(confirmed ? 250 : 0),\"balance\":\(confirmed ? 275 : 25)}")
+            }
+            return request.url!.lastPathComponent == "credits" ? (200, #"{"balance":25,"enforced":true}"#) :
+                (200, #"{"sandbox":true,"packs":[{"id":"starter","name":"Starter","credits":250,"amount":100,"available":true}]}"#)
+        }
+        let first = AICreditsController(auth: auth, network: network, defaults: defaults, automaticallyMonitorPurchases: false, paymentsEnabled: true)
+        await first.refresh()
+        let checkout = await first.checkout(pack: first.packs[0])
+        XCTAssertNotNil(checkout)
+        XCTAssertFalse(first.handlePaymentReturn(URL(string: "com.olly.KodiReader://credits/complete?order=\(UUID())")!))
+        XCTAssertTrue(first.handlePaymentReturn(URL(string: "com.olly.KodiReader://credits/complete?order=\(order)")!))
+        await first.checkPendingPurchase()
+        XCTAssertNil(first.addedCredits); XCTAssertEqual(first.balance, 25)
+        first.reset()
+        let restored = AICreditsController(auth: auth, network: network, defaults: defaults, automaticallyMonitorPurchases: false, paymentsEnabled: true)
+        await restored.refresh()
+        confirmed = true
+        await restored.checkPendingPurchase()
+        XCTAssertEqual(restored.addedCredits, 250); XCTAssertEqual(restored.balance, 275)
+        XCTAssertTrue(restored.showingPacks)
+        restored.dismissPurchaseSuccess()
+        XCTAssertFalse(restored.handlePaymentReturn(URL(string: "com.olly.KodiReader://credits/complete?order=\(order)")!))
+        XCTAssertNil(restored.addedCredits)
+    }
+
+    func testPurchaseStatusCannotUpdateSignedOutAccount() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let network = network(status: 200)
+        let suite = "kodi.checkout.tests.\(UUID())"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        var statusRequests = 0
+        MockURLProtocol.handler = { request in
+            if request.httpMethod == "POST" { return (200, #"{"url":"https://checkout.example.com"}"#) }
+            if request.url!.path.contains("/checkout/") { statusRequests += 1; return (503, "{}") }
+            return request.url!.lastPathComponent == "credits" ? (200, #"{"balance":25,"enforced":true}"#) :
+                (200, #"{"sandbox":true,"packs":[{"id":"starter","name":"Starter","credits":250,"amount":100,"available":true}]}"#)
+        }
+        let credits = AICreditsController(auth: auth, network: network, defaults: defaults, automaticallyMonitorPurchases: false, paymentsEnabled: true)
+        await credits.refresh()
+        _ = await credits.checkout(pack: credits.packs[0])
+        await credits.checkPendingPurchase()
+        XCTAssertNil(credits.addedCredits)
+        await auth.signOut(); await credits.refresh(); await credits.checkPendingPurchase()
+        XCTAssertEqual(statusRequests, 1)
+        XCTAssertNil(credits.balance); XCTAssertNil(credits.addedCredits)
+    }
+
 }

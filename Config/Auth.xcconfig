@@ -5,5 +5,5 @@ SUPABASE_PUBLISHABLE_KEY =
 GOOGLE_SIGN_IN_ENABLED = NO
 APPLE_SIGN_IN_ENABLED = NO
 // Payment development is opt-in; public releases keep this disabled.
-PAYMENTS_ENABLED = NO
+PAYMENTS_ENABLED = YES
 #include? "Auth.local.xcconfig"

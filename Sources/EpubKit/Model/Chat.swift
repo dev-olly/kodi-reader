@@ -56,6 +56,7 @@ public struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     public var messages: [ChatMessage]
     public var createdAt: Date
     public var updatedAt: Date
+    public var recoveredFrom: UUID? = nil
 
     public init(
         id: UUID = UUID(),
@@ -83,6 +84,7 @@ public struct ChatThread: Codable, Identifiable, Hashable, Sendable {
     public static func wrappingLegacyMessages(_ messages: [ChatMessage]) -> ChatThread {
         let stamp = messages.last?.createdAt ?? Date()
         return ChatThread(
+            id: SyncCoding.uuid("legacy-chat:" + messages.map { $0.id.uuidString }.joined(separator: ":")),
             title: title(from: messages),
             messages: messages,
             createdAt: messages.first?.createdAt ?? stamp,

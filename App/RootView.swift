@@ -6,6 +6,7 @@ import UniformTypeIdentifiers
 struct RootView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("kodiAuthWelcomeSeen") private var authWelcomeSeen = false
+    @Environment(\.scenePhase) private var phase
 
     var body: some View {
         @Bindable var model = model
@@ -51,8 +52,15 @@ struct RootView: View {
         .onChange(of: model.aiAuth.isSignedIn) { _, signedIn in
             if signedIn { authWelcomeSeen = true }
         }
+        .task(id: model.aiAuth.userID) { await model.aiCredits.refresh() }
+        .onChange(of: phase) { _, phase in
+            if phase == .active { Task { await model.aiCredits.refresh() } }
+        }
         .sheet(isPresented: Binding(get: { !needsAuthWelcome && model.aiAuth.showingSignIn }, set: { model.aiAuth.showingSignIn = $0 })) {
             AISignInSheet(auth: model.aiAuth)
+        }
+        .sheet(isPresented: Binding(get: { AIFeatureFlags.paymentsEnabled && model.aiCredits.showingPacks }, set: { model.aiCredits.showingPacks = $0 })) {
+            AICreditPacksSheet(credits: model.aiCredits)
         }
         .sheet(isPresented: $model.isShowingOpenURLSheet) {
             OpenURLSheet()

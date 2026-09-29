@@ -5,6 +5,7 @@ import SwiftUI
 
 /// Shared note editor used as a modal sheet or the trailing inspector.
 struct NoteEditor: View {
+    @Environment(AppModel.self) private var model
     enum Presentation {
         case sheet
         case sidebar
@@ -39,6 +40,7 @@ struct NoteEditor: View {
     @State private var sourceModeReason: String?
     @State private var saveStatus: SaveStatus = .saved
     @State private var drawingController = ExcalidrawController()
+    @State private var latestDrawing: (Data, Int)?
 
     private enum EditorMode {
         case edit
@@ -107,7 +109,7 @@ struct NoteEditor: View {
             )
             .padding(presentation == .sheet ? 28 : 0)
         }
-        .onAppear(perform: load)
+        .onAppear { load(); model.beginNoteEditing(annotation.id, flush: { flush(teardown: false) }) }
         .background(theme.surface)
         .foregroundStyle(theme.uiForeground)
         .colorScheme(theme.colorScheme)
@@ -127,7 +129,12 @@ struct NoteEditor: View {
         .onChange(of: annotation.note) { _, newValue in
             applyPersistedNote(newValue ?? "")
         }
-        .onDisappear(perform: flush)
+        .onDisappear {
+            flush {
+                model.sync.checkpoint()
+                model.endNoteEditing(annotation.id)
+            }
+        }
     }
 
     // MARK: - Sections
@@ -462,6 +469,7 @@ struct NoteEditor: View {
 
     private func wireDrawing() {
         drawingController.onSceneChanged = { count, data in
+            latestDrawing = (data, count)
             scheduleDrawingSave(data, elementCount: count)
         }
         drawingController.onError = { message in
@@ -469,12 +477,13 @@ struct NoteEditor: View {
         }
     }
 
-    private func flush() {
+    private func flush(teardown: Bool = true, completion: (() -> Void)? = nil) {
         saveWork?.cancel()
         persistNote(text)
         drawingWork?.cancel()
-        onDrawActiveChanged?(false)
-        flushDrawingBeforeClose(teardown: true)
+        if let latestDrawing { onSaveDrawing?(latestDrawing.0, latestDrawing.1) { _ in } }
+        if teardown { onDrawActiveChanged?(false) }
+        flushDrawingBeforeClose(teardown: teardown, completion: completion)
     }
 
     private func askAIAboutHighlight() {
@@ -487,9 +496,10 @@ struct NoteEditor: View {
         }
     }
 
-    private func flushDrawingBeforeClose(teardown: Bool) {
+    private func flushDrawingBeforeClose(teardown: Bool, completion: (() -> Void)? = nil) {
         guard didOpenDraw, let onSaveDrawing else {
             if teardown { drawingController.tearDown() }
+            completion?()
             return
         }
         saveStatus = .saving
@@ -500,14 +510,17 @@ struct NoteEditor: View {
                     case .success:
                         saveStatus = .saved
                         if teardown { drawingController.tearDown() }
+                        completion?()
                     case .failure(let error):
                         saveStatus = .failed(error.localizedDescription)
                         if teardown { drawingController.tearDown() }
+                        completion?()
                     }
                 }
             } else {
                 saveStatus = .failed("The drawing surface was not ready.")
                 if teardown { drawingController.tearDown() }
+                completion?()
             }
         }
     }

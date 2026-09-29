@@ -101,7 +101,14 @@ struct AskAIPanel: View {
                 RoundedRectangle(cornerRadius: 8)
                     .strokeBorder(model.settings.theme.border, lineWidth: 1)
             }
-
+            if AIFeatureFlags.paymentsEnabled && model.aiAuth.isSignedIn && model.aiCredits.enforced {
+                HStack {
+                    Text(model.aiCredits.balance.map { "\($0) credits" } ?? (model.aiCredits.error == nil ? "Ask AI" : "Credits unavailable"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Buy credits") { model.aiCredits.showingPacks = true }.font(.caption)
+                }
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 20)

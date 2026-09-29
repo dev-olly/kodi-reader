@@ -9,7 +9,8 @@ final class ChatController {
     var messages: [ChatMessage] = []
     var input: String = ""
     var pendingReferences: [ChatReference] = []
-    var isStreaming = false
+    var isStreaming = false { didSet { if oldValue && !isStreaming { onStreamStopped?() } } }
+    var onStreamStopped: (() -> Void)?
     var errorMessage: String?
     /// Set by the panel so Cmd+L can park the caret in the composer.
     var shouldFocusComposer = false
@@ -18,6 +19,8 @@ final class ChatController {
     private(set) var threads: [ChatThread] = []
     private(set) var activeThreadID: UUID?
 
+    var onCreditsChanged: (() -> Void)?
+    var onInsufficientCredits: (() -> Void)?
     /// Called after the conversation changes so AppModel can write the book record.
     var onPersist: (([ChatThread], UUID?) -> Void)?
     /// Live book metadata for the system prompt.
@@ -108,6 +111,7 @@ final class ChatController {
                 let stream = self.service.stream(
                     config: config,
                     accessToken: token,
+                    requestID: operation,
                     context: context,
                     history: history,
                     userText: text,
@@ -125,6 +129,7 @@ final class ChatController {
                 // Stop is intentional.
             } catch {
                 guard self.operationID == operation else { return }
+                if case AIChatError.insufficientCredits = error { self.onInsufficientCredits?() }
                 if case AIChatError.authRequired = error { self.auth.showingSignIn = true }
                 self.errorMessage = error.localizedDescription
                 if let index = self.messages.lastIndex(where: { $0.id == assistant.id }),
@@ -138,6 +143,7 @@ final class ChatController {
                 }
             }
             guard self.operationID == operation else { return }
+            self.onCreditsChanged?()
             self.isStreaming = false
             self.streamTask = nil
             self.operationID = nil
@@ -146,6 +152,7 @@ final class ChatController {
     }
 
     func stop() {
+        if isStreaming { onCreditsChanged?() }
         operationID = nil
         streamTask?.cancel()
         streamTask = nil
@@ -223,6 +230,18 @@ final class ChatController {
         shouldFocusComposer = false
     }
 
+    /// Refresh synced history while keeping the composer and selected thread local.
+    func mergeStoredThreads(_ stored: [ChatThread]) {
+        guard !isStreaming else { return }
+        threads = stored.sorted { $0.updatedAt > $1.updatedAt }
+        if let activeThreadID, let thread = threads.first(where: { $0.id == activeThreadID }) {
+            messages = thread.messages
+        } else if activeThreadID != nil {
+            activeThreadID = threads.first?.id
+            messages = threads.first?.messages ?? []
+        }
+    }
+
     /// Clear in-memory state without persisting — used when closing a book.
     func detach() {
         operationID = nil
@@ -257,7 +276,7 @@ final class ChatController {
         let now = Date()
         if let id = activeThreadID, let index = threads.firstIndex(where: { $0.id == id }) {
             threads[index].messages = messages
-            threads[index].title = title
+            threads[index].title = threads[index].recoveredFrom == nil ? title : "Recovered version: " + title
             threads[index].updatedAt = now
         } else {
             let thread = ChatThread(title: title, messages: messages, updatedAt: now)

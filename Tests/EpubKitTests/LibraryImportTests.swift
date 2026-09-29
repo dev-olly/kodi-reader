@@ -91,7 +91,7 @@ final class LibraryImportTests: XCTestCase {
 
         let store = LibraryStore(fileURL: libraryURL)
         XCTAssertEqual(store.schemaVersion, LibraryStore.currentVersion)
-        XCTAssertEqual(LibraryStore.currentVersion, 4)
+        XCTAssertEqual(LibraryStore.currentVersion, 5)
     }
 
     func testBookRecordRoundTripsChatMessages() throws {

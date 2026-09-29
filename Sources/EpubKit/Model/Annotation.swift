@@ -28,6 +28,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     public var anchorStatus: AnchorStatus
     /// True when a drawing sidecar exists for this highlight.
     public var hasDrawing: Bool
+    public var recoveredFrom: UUID? = nil
 
     public init(
         id: UUID = UUID(),
@@ -98,7 +99,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing
+        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing, recoveredFrom
     }
 
     public init(from decoder: Decoder) throws {
@@ -114,6 +115,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         // Older library files omit this field.
         anchorStatus = try container.decodeIfPresent(AnchorStatus.self, forKey: .anchorStatus) ?? .unknown
         hasDrawing = try container.decodeIfPresent(Bool.self, forKey: .hasDrawing) ?? false
+        recoveredFrom = try container.decodeIfPresent(UUID.self, forKey: .recoveredFrom)
     }
 }
 
@@ -665,6 +667,9 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var activeChatID: UUID?
     /// Original webpage this EPUB was frozen from. Nil for local documents.
     public var sourceURL: URL?
+    public var cloudIdentity: String?
+    public var cloudFile: BlobManifest?
+    public var isHiddenFromRecents: Bool = false
 
     public init(
         id: String,
@@ -707,7 +712,7 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case id, title, author, documentKind, fileBookmark, lastKnownPath
         case importedRelativePath, lastOpenedAt, position, progress, annotations
-        case bookmarks, chatMessages, chats, activeChatID, sourceURL
+        case bookmarks, chatMessages, chats, activeChatID, sourceURL, cloudIdentity, cloudFile, isHiddenFromRecents
     }
 
     public init(from decoder: Decoder) throws {
@@ -728,6 +733,9 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         chats = try container.decodeIfPresent([ChatThread].self, forKey: .chats)
         activeChatID = try container.decodeIfPresent(UUID.self, forKey: .activeChatID)
         sourceURL = try container.decodeIfPresent(URL.self, forKey: .sourceURL)
+        cloudIdentity = try container.decodeIfPresent(String.self, forKey: .cloudIdentity)
+        cloudFile = try container.decodeIfPresent(BlobManifest.self, forKey: .cloudFile)
+        isHiddenFromRecents = try container.decodeIfPresent(Bool.self, forKey: .isHiddenFromRecents) ?? false
     }
 
     /// Non-optional view of the active conversation.

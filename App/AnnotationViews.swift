@@ -519,7 +519,7 @@ struct AnnotationsInspector: View {
 
                     VStack(alignment: .leading, spacing: 12) {
                         HStack(spacing: 6) {
-                            Text(annotation.title)
+                            Text(annotation.recoveredFrom == nil ? annotation.title : "Recovered version: " + annotation.title)
                                 .font(.system(size: 20, weight: .regular, design: .serif))
                                 .lineSpacing(4)
                                 .lineLimit(4)

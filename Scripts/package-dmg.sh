@@ -20,13 +20,17 @@ fi
 
 VERSION=""
 NOTARIZE=0
+ICLOUD=0
 for argument in "$@"; do
   case "$argument" in
+    --icloud)
+      ICLOUD=1
+      ;;
     --notarize)
       NOTARIZE=1
       ;;
     -h|--help)
-      echo "usage: $0 [version] [--notarize]"
+      echo "usage: $0 [version] [--notarize] [--icloud]"
       echo "example: $0 0.1.0 --notarize"
       exit 0
       ;;
@@ -44,13 +48,17 @@ for argument in "$@"; do
   esac
 done
 
+BUILD_CONFIGURATION="Release"
+if [[ "$ICLOUD" == 1 ]]; then
+  BUILD_CONFIGURATION="Release-iCloud"
+fi
 APP_NAME="Kodi Reader"
 SCHEME="KodiReader"
 PROJECT="KodiReader.xcodeproj"
-DERIVED="${PWD}/.build/DerivedData"
-STAGING="${PWD}/.build/dmg"
-OUT="${PWD}/KodiReader.dmg"
-APP="${DERIVED}/Build/Products/Release/${APP_NAME}.app"
+DERIVED="${KODI_DERIVED_DATA:-${PWD}/.build/DerivedData}"
+STAGING="${KODI_PACKAGE_STAGING:-${PWD}/.build/dmg}"
+OUT="${KODI_DMG_PATH:-${PWD}/KodiReader.dmg}"
+APP="${DERIVED}/Build/Products/${BUILD_CONFIGURATION}/${APP_NAME}.app"
 TEAM_ID="${KODI_TEAM_ID:-3FJF74RW5L}"
 SIGNING_IDENTITY="${KODI_SIGNING_IDENTITY:-Developer ID Application: Emmanuel Onyebueke (3FJF74RW5L)}"
 NOTARY_PROFILE="${KODI_NOTARY_PROFILE:-KodiReaderNotary}"
@@ -68,7 +76,7 @@ build_app() {
   xcodebuild \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
-    -configuration Release \
+    -configuration "$BUILD_CONFIGURATION" \
     -destination 'generic/platform=macOS' \
     -derivedDataPath "$DERIVED" \
     ARCHS=arm64 \
@@ -94,6 +102,49 @@ if [[ ! -d "$APP" ]]; then
   exit 1
 fi
 
+if [[ "$ICLOUD" == 1 ]]; then
+  if [[ ! -f "$APP/Contents/embedded.provisionprofile" ]]; then
+    echo "iCloud builds require an embedded Developer ID provisioning profile." >&2
+    exit 1
+  fi
+  codesign --display --entitlements - --xml "$APP" > "$DERIVED/icloud-entitlements.plist" 2>/dev/null
+  /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-container-identifiers:0' "$DERIVED/icloud-entitlements.plist" | grep -Fxq 'iCloud.com.olly.KodiReader'
+  security cms -D -i "$APP/Contents/embedded.provisionprofile" > "$DERIVED/icloud-profile.plist"
+  python3 - "$DERIVED/icloud-entitlements.plist" "$DERIVED/icloud-profile.plist" "$TEAM_ID" <<'PY'
+import datetime
+import plistlib
+import sys
+
+with open(sys.argv[1], 'rb') as file:
+    signed = plistlib.load(file)
+with open(sys.argv[2], 'rb') as file:
+    profile = plistlib.load(file)
+permitted = profile['Entitlements']
+expected = {
+    'com.apple.application-identifier': sys.argv[3] + '.com.olly.KodiReader',
+    'com.apple.developer.team-identifier': sys.argv[3],
+    'com.apple.developer.icloud-container-environment': 'Production',
+    'com.apple.developer.aps-environment': 'production',
+}
+for key, value in expected.items():
+    if signed.get(key) != value:
+        sys.exit('Incorrect distribution entitlement: ' + key)
+    allowance = permitted.get(key)
+    if allowance != value and not (isinstance(allowance, list) and value in allowance):
+        sys.exit('Provisioning profile does not permit: ' + key)
+for key, value in {
+    'com.apple.developer.icloud-services': 'CloudKit',
+    'com.apple.developer.icloud-container-identifiers': 'iCloud.com.olly.KodiReader',
+}.items():
+    allowance = permitted.get(key, [])
+    if value not in signed.get(key, []) or (allowance != '*' and value not in allowance):
+        sys.exit('Missing container/service permission: ' + key)
+expiry = profile['ExpirationDate'].replace(tzinfo=datetime.timezone.utc)
+if expiry <= datetime.datetime.now(datetime.timezone.utc):
+    sys.exit('The Developer ID provisioning profile has expired.')
+PY
+fi
+
 # A build (unlike archive/export) does not re-sign Sparkle's nested helpers.
 # Sign from the inside out so every executable has our Developer ID and timestamp.
 SPARKLE="$APP/Contents/Frameworks/Sparkle.framework"
@@ -106,11 +157,11 @@ if [[ -d "$SPARKLE" ]]; then
     --sign "$SIGNING_IDENTITY" "$SPARKLE/Versions/B/XPCServices/Downloader.xpc"
   codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" "$SPARKLE"
   codesign --force --timestamp --options runtime --sign "$SIGNING_IDENTITY" \
-    --entitlements App/KodiReader.release.entitlements "$APP"
+    --preserve-metadata=entitlements "$APP"
 fi
 
 rm -rf "$STAGING" "$OUT"
-mkdir -p "$STAGING"
+mkdir -p "$STAGING" "$(dirname "$OUT")"
 ditto "$APP" "$STAGING/${APP_NAME}.app"
 FRAMEWORKS="$STAGING/${APP_NAME}.app/Contents/Frameworks"
 mkdir -p "$FRAMEWORKS"

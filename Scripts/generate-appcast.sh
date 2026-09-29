@@ -4,8 +4,10 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP=".build/dmg/Kodi Reader.app"
-TOOLS=".build/DerivedData/SourcePackages/artifacts/sparkle/Sparkle/bin"
+APP="${KODI_RELEASE_APP:-.build/dmg/Kodi Reader.app}"
+DMG="${KODI_DMG_PATH:-KodiReader.dmg}"
+DERIVED="${KODI_DERIVED_DATA:-.build/DerivedData}"
+TOOLS="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin"
 ACCOUNT="${KODI_SPARKLE_ACCOUNT:-com.olly.KodiReader}"
 VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
 PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist")"
@@ -15,11 +17,11 @@ if [[ "$("$TOOLS/generate_keys" --account "$ACCOUNT" -p)" != "$PUBLIC_KEY" ]]; t
   echo "The update-signing key does not match this app's public key." >&2
   exit 1
 fi
-xcrun stapler validate KodiReader.dmg
-spctl --assess --type open --context context:primary-signature KodiReader.dmg
+xcrun stapler validate "$DMG"
+spctl --assess --type open --context context:primary-signature "$DMG"
 
 mkdir -p "$ARCHIVES"
-cp KodiReader.dmg "$ARCHIVES/KodiReader.dmg"
+cp "$DMG" "$ARCHIVES/KodiReader.dmg"
 cp "docs/releases/$VERSION.md" "$ARCHIVES/KodiReader.md"
 if [[ -f appcast.xml ]]; then cp appcast.xml "$ARCHIVES/appcast.xml"; fi
 

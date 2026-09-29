@@ -171,7 +171,7 @@ public enum ReaderDocument: @unchecked Sendable {
     public init(fileURL: URL, knownBookID: String? = nil) throws {
         switch fileURL.pathExtension.lowercased() {
         case "pdf": self = .pdf(try PDFBook(fileURL: fileURL, knownBookID: knownBookID))
-        default: self = .epub(try EPUBBook(fileURL: fileURL))
+        default: self = .epub(try EPUBBook(fileURL: fileURL, knownBookID: knownBookID))
         }
     }
 

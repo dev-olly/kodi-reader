@@ -2,6 +2,15 @@ import XCTest
 @testable import EpubKit
 
 final class DrawingStoreTests: XCTestCase {
+    func testImmediateCheckpointSupersedesPendingDrawing() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("drawing-checkpoint-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = DrawingStore(rootDirectory: root), id = UUID()
+        store.saveScene(Data("old".utf8), bookID: "book", annotationID: id)
+        try store.replaceScene(Data("latest".utf8), bookID: "book", annotationID: id)
+        store.flush()
+        XCTAssertEqual(store.loadScene(bookID: "book", annotationID: id), Data("latest".utf8))
+    }
     func testSaveLoadDeleteRoundTrip() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("drawings-\(UUID().uuidString)", isDirectory: true)

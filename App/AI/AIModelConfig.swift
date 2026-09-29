@@ -38,10 +38,18 @@ struct AIModelConfig: Codable, Identifiable, Hashable, Sendable {
         self.requiresKey = requiresKey
     }
 
+    // The separately named payment test build talks only to the local test server.
+    // Production builds cannot select this endpoint through saved preferences.
+    #if KODI_PAYMENT_SANDBOX
+    private static let hostedURL = "http://127.0.0.1:55441/v1"
+    #else
+    private static let hostedURL = "https://kodi-reader-ai.fly.dev/v1"
+    #endif
+
     static let kodiHosted = AIModelConfig(
         id: UUID(uuidString: "A1000000-0000-4000-8000-000000000010")!,
         name: "Kodi AI",
-        baseURL: "https://kodi-reader-ai.fly.dev/v1",
+        baseURL: hostedURL,
         modelID: "gpt-5.6-terra",
         kind: .hosted,
         requiresKey: false

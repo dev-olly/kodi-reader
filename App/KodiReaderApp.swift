@@ -17,12 +17,19 @@ struct KodiReaderApp: App {
             RootView()
                 .environment(model)
                 .environmentObject(updater)
-                .task { updater.beforeInstall = { model.flush() } }
+                .task {
+                    updater.beforeInstall = { model.flush() }
+                    appDelegate.onCloudNotification = { model.sync.syncNow() }
+                    appDelegate.onWillTerminate = { model.flush() }
+                    model.sync.syncNow()
+                }
                 .frame(minWidth: 640, minHeight: 480)
                 // Opening a book from Finder or `open` arrives here, and the
                 // grant that comes with it is what lets the sandbox read it.
                 .onOpenURL { url in
-                    if url.scheme?.lowercased() != "com.olly.kodireader" {
+                    if model.aiCredits.handlePaymentReturn(url) {
+                        NSApp.activate(ignoringOtherApps: true)
+                    } else if !["com.olly.kodireader", "com.olly.kodireader.sandbox"].contains(url.scheme?.lowercased() ?? "") {
                         model.open(url: url)
                     }
                 }
@@ -31,12 +38,12 @@ struct KodiReaderApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1100, height: 820)
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { model.flush() }
+            if phase != .active { model.flush() } else { model.sync.syncNow() }
         }
         .commands { readerCommands }
 
         Settings {
-            UpdateSettingsView(updater: updater)
+            KodiSettingsView(updater: updater).environment(model)
         }
     }
 
@@ -151,6 +158,12 @@ struct KodiReaderApp: App {
 /// so we never resurrect the phantom AppWindow-N scenes from earlier launches.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowObserver: NSObjectProtocol?
+    var onCloudNotification: (() -> Void)?
+    var onWillTerminate: (() -> Void)?
+
+    func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
+        onCloudNotification?()
+    }
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         // Don't reopen previously restored windows on next launch.
@@ -158,6 +171,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        if (Bundle.main.object(forInfoDictionaryKey: "iCloudSyncEnabled") as? String) == "YES" {
+            NSApp.registerForRemoteNotifications()
+        }
         disableRestoration(on: NSApp.windows)
         windowObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
@@ -174,6 +190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        onWillTerminate?()
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
         }

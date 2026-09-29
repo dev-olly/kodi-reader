@@ -21,7 +21,7 @@ struct AIAccountMenu: View {
             Button("Cancel", role: .cancel) {}
             Button("Delete account", role: .destructive) { Task { await auth.deleteAccount() } }
         } message: {
-            Text("This permanently deletes your sign-in account. Your books, notes, and conversations on this Mac will remain.")
+            Text(AIFeatureFlags.paymentsEnabled ? "Your account and access to unused credits will be permanently removed. Deleting your account does not automatically refund purchases. Contact olly@kodi-reader.app about unused purchased credits before deleting. Your local books, notes, and conversations stay on this Mac." : "This permanently deletes your sign-in account. Your books, notes, and conversations on this Mac will remain.")
         }
         .alert("Account", isPresented: Binding(get: { auth.accountError != nil }, set: { if !$0 { auth.accountError = nil } })) {
             Button("OK") { auth.accountError = nil }

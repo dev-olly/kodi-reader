@@ -1,0 +1,7 @@
+{
+  "name": "kodi-paddle-sandbox-setup",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "dependencies": { "@paddle/paddle-node-sdk": "3.10.0" }
+}

@@ -9,6 +9,8 @@ enum AIChatError: LocalizedError {
     case emptyResponse
     case cancelled
     case authRequired
+    case insufficientCredits
+    case incompleteResponse
 
     var errorDescription: String? {
         switch self {
@@ -26,6 +28,12 @@ enum AIChatError: LocalizedError {
             return "The model returned an empty reply."
         case .cancelled:
             return nil
+        case .insufficientCredits:
+            return AIFeatureFlags.paymentsEnabled
+                ? "You have no credits left. Buy credits to continue."
+                : "Ask AI is temporarily unavailable. Please try again later."
+        case .incompleteResponse:
+            return "The reply was interrupted. Please try again."
         case .authRequired:
             return "Please sign in again to use Ask AI."
         }
@@ -44,6 +52,7 @@ struct AIChatService {
     func stream(
         config: AIModelConfig,
         accessToken: String,
+        requestID: UUID = UUID(),
         context: Context,
         history: [ChatMessage],
         userText: String,
@@ -55,6 +64,7 @@ struct AIChatService {
                     try await run(
                         config: config,
                         accessToken: accessToken,
+                        requestID: requestID,
                         context: context,
                         history: history,
                         userText: userText,
@@ -77,6 +87,7 @@ struct AIChatService {
     private func run(
         config: AIModelConfig,
         accessToken: String,
+        requestID: UUID,
         context: Context,
         history: [ChatMessage],
         userText: String,
@@ -93,6 +104,8 @@ struct AIChatService {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
         request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(requestID.uuidString, forHTTPHeaderField: "Idempotency-Key")
+        request.setValue("1", forHTTPHeaderField: "X-Kodi-Credit-Protocol")
         request.setValue("Kodi Reader", forHTTPHeaderField: "X-Title")
         request.setValue("https://github.com/dev-olly/kodi-reader", forHTTPHeaderField: "HTTP-Referer")
 
@@ -115,6 +128,7 @@ struct AIChatService {
             throw AIChatError.http(-1, "No HTTP response")
         }
         guard (200...299).contains(http.statusCode) else {
+            if http.statusCode == 402 { throw AIChatError.insufficientCredits }
             if http.statusCode == 401 { throw AIChatError.authRequired }
             var body = ""
             for try await line in bytes.lines {
@@ -126,13 +140,14 @@ struct AIChatService {
         }
 
         var receivedAny = false
+        var completed = false
         for try await line in bytes.lines {
             if Task.isCancelled { throw CancellationError() }
             let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
             guard trimmed.hasPrefix("data:") else { continue }
             let data = trimmed.dropFirst(5).trimmingCharacters(in: .whitespaces)
             if data.isEmpty { continue }
-            if data == "[DONE]" { break }
+            if data == "[DONE]" { completed = true; break }
             if let errorText = sseError(data) {
                 throw AIChatError.http(http.statusCode, errorText)
             }
@@ -142,6 +157,7 @@ struct AIChatService {
             }
         }
 
+        if !completed { throw AIChatError.incompleteResponse }
         if !receivedAny {
             throw AIChatError.emptyResponse
         }

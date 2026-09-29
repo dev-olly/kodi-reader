@@ -6,8 +6,7 @@
 
 A lightweight native EPUB and PDF reader for macOS. Paginated reading, typography and
 theme controls, highlights with notes and drawings, configurable Ask AI, webpage
-reading, and a distraction-free interface — without the store, the sync, or
-the library management.
+reading, optional private iCloud sync, and a distraction-free interface.
 
 ![Kodi Reader showing a highlighted passage and note](docs/screenshots/app-overview.png)
 
@@ -41,6 +40,13 @@ Load an article or page, extract the readable content, and read it in the same p
 
 ![Open web app or website](docs/screenshots/app-web.png)
 
+### iCloud sync
+In an iCloud-enabled signed build, Settings → iCloud offers Off (the default),
+Notes only, or Books and notes. Saved Ask AI history has a separate opt-in toggle.
+Choices apply to each Mac. Book files download when opened or through Download
+for Offline Reading; notes and reading position remain available offline.
+See [iCloud help](docs/icloud-sync.md) and [signing and release setup](docs/icloud-sync-setup.md).
+
 ## Status
 
 Source is public under MIT. Issues are welcome for bugs. **Pull requests are
@@ -61,8 +67,9 @@ its assets, and the download link on both the apex and `www` domains.
 
 ## Privacy
 
-- Books, PDFs, highlights, notes, and drawings stay on this Mac (sandbox
-  Application Support). EPUBs are read directly from their archives and PDFs
+- Books, PDFs, highlights, notes, and drawings are stored on this Mac (Application
+  Support). Optional iCloud sync stores the selected categories in the user's
+  private CloudKit database and uses their iCloud allowance. EPUBs are read directly from their archives and PDFs
   remain byte-for-byte unchanged; Kodi annotations are stored separately.
 - There is no analytics or telemetry.
 - **Ask AI** is opt-in. Quoted passages and chat are sent to the hosted Kodi AI

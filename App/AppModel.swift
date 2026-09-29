@@ -64,11 +64,15 @@ final class AppModel {
     }
     /// True when page-turn shortcuts should yield to the focused control —
     /// the note editor, Excalidraw, the notes list, or any other sidebar field.
-    var isNoteEditorOpen = false
+    var isNoteEditorOpen = false {
+        didSet { if !isNoteEditorOpen { sync.resumeDeferredChanges() } }
+    }
     /// Last colour applied via a swatch, a new note, or the note editor picker.
     private(set) var lastAppliedHighlightColor: HighlightColor?
+    let sync: LibrarySyncCoordinator
     let aiConfig: AIConfigStore
     let aiAuth: AIAuthController
+    let aiCredits: AICreditsController
     let chat: ChatController
 
     var notesInSidebar: Bool {
@@ -89,6 +93,8 @@ final class AppModel {
     /// URLs whose security scope we hold open, to be released on close.
     @ObservationIgnored private var scopedURL: URL?
     /// Live drawing scenes, so switching sheet/sidebar does not wait on disk.
+    @ObservationIgnored private var noteFlushHandlers: [UUID: () -> Void] = [:]
+    @ObservationIgnored private var openingID: UUID?
     @ObservationIgnored private var drawingCache: [UUID: Data] = [:]
     /// Reading position captured before an in-app browser preview, restored on close.
     @ObservationIgnored private var positionBeforeBrowser: Locator?
@@ -97,21 +103,48 @@ final class AppModel {
         let root = AppDataDirectory.prepare()
         let store = LibraryStore(fileURL: root.appendingPathComponent("library.json"))
         self.store = store
+        let iCloudEnabled = (Bundle.main.object(forInfoDictionaryKey: "iCloudSyncEnabled") as? String) == "YES"
+        self.sync = LibrarySyncCoordinator(store: store, transport: CloudKitSyncTransport(
+            stagingDirectory: root.appendingPathComponent("Sync/Payloads"), enabled: iCloudEnabled))
         settings = (try? store.migrateAppearanceSettings(defaultSettings: ReaderSettings()) {
             $0.applyAppearanceDefaults()
         }) ?? store.loadSettings(ReaderSettings.self) ?? ReaderSettings()
-        recents = store.recentBooks()
+        recents = store.recentBooks(limit: .max)
 
         let aiConfig = AIConfigStore(directory: root)
         self.aiConfig = aiConfig
         let aiAuth = AIAuthController()
         self.aiAuth = aiAuth
+        let aiCredits = AICreditsController(auth: aiAuth)
+        self.aiCredits = aiCredits
         let chat = ChatController(configStore: aiConfig, auth: aiAuth)
         self.chat = chat
-        aiAuth.onWillSignOut = { [weak chat] in chat?.stop() }
+        aiAuth.onWillSignOut = { [weak chat, weak aiCredits] in chat?.stop(); aiCredits?.reset() }
+        chat.onInsufficientCredits = { [weak aiCredits] in
+            guard AIFeatureFlags.paymentsEnabled else { return }
+            aiCredits?.showingPacks = true
+        }
+        chat.onCreditsChanged = { [weak aiCredits] in Task {
+            // Give cancellation settlement a moment to reach the server before refreshing.
+            try? await Task.sleep(for: .milliseconds(500))
+            await aiCredits?.refresh()
+        } }
         chat.onPersist = { [weak self] threads, activeID in
             self?.persistChat(threads, activeID: activeID)
         }
+        sync.isEntityEditing = { [weak self] entity in
+            guard let self, record?.cloudIdentity == entity.bookID else { return false }
+            switch entity.kind {
+            case .book: return !noteFlushHandlers.isEmpty || chat.isStreaming
+            case .annotation:
+                guard let key = entity.id.split(separator: ":").last, let id = UUID(uuidString: String(key)) else { return false }
+                return noteFlushHandlers[id] != nil
+            case .chat: return chat.isStreaming
+            default: return false
+            }
+        }
+        sync.onLibraryChanged = { [weak self] in self?.refreshAfterSync() }
+        chat.onStreamStopped = { [weak self] in self?.sync.resumeDeferredChanges() }
         chat.contextProvider = { [weak self] in
             AIChatService.Context(
                 bookTitle: self?.book?.title ?? self?.record?.title ?? "",
@@ -205,7 +238,26 @@ final class AppModel {
         }
     }
 
-    func open(url: URL, sourceURL: URL? = nil) {
+    func open(url: URL, sourceURL: URL? = nil, expectedIdentity: String? = nil, preferredLocalID: String? = nil) {
+        closeBook()
+        let operation = UUID(); openingID = operation
+        let scoped = url.startAccessingSecurityScopedResource()
+        Task {
+            defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+            do {
+                let kind: DocumentKind = url.pathExtension.lowercased() == "pdf" ? .pdf : .epub
+                let identity = try await Task.detached { try BlobManifest.bookIdentity(file: url, kind: kind) }.value
+                guard openingID == operation else { return }
+                if let expectedIdentity, identity != expectedIdentity {
+                    errorMessage = "This is a different edition or file. Locate the same book to attach its synced notes."
+                    return
+                }
+                openPrepared(url: url, sourceURL: sourceURL, identity: identity, preferredLocalID: preferredLocalID)
+            } catch { if openingID == operation { errorMessage = error.localizedDescription } }
+        }
+    }
+
+    private func openPrepared(url: URL, sourceURL: URL?, identity: String, preferredLocalID: String?) {
         closeBook()
 
         let didScope = url.startAccessingSecurityScopedResource()
@@ -216,31 +268,42 @@ final class AppModel {
                 throw EPUBError.cannotAccessFile(url)
             }
 
-            let provisional = try ReaderDocument(fileURL: url)
+            let provisional = try ReaderDocument(fileURL: url, knownBookID: url.pathExtension.lowercased() == "pdf" ? identity : nil)
+            var matched = store.record(cloudIdentity: identity)
+            if let preferredLocalID, let preferred = store.record(for: preferredLocalID),
+               preferred.cloudIdentity == nil || preferred.cloudIdentity == identity {
+                matched = preferred
+            }
+            if matched == nil, let legacy = store.record(for: provisional.bookID),
+               let legacyFile = store.existingImportedURL(for: legacy),
+               try BlobManifest.bookIdentity(file: legacyFile, kind: legacy.documentKind) == identity {
+                matched = legacy
+            }
+            let localID = matched?.id ?? identity
             // Durable copy inside the container — Recents opens this forever.
             let importedURL = try store.importBook(
                 from: url,
-                bookID: provisional.bookID,
+                bookID: localID,
                 kind: provisional.kind
             )
             let readingFromImport = importedURL.resolvingSymlinksInPath().path
                 != url.resolvingSymlinksInPath().path
-            let book = readingFromImport
-                ? try ReaderDocument(fileURL: importedURL, knownBookID: provisional.bookID)
-                : provisional
+            let book = try ReaderDocument(fileURL: importedURL, knownBookID: localID)
 
             if readingFromImport, didScope {
                 url.stopAccessingSecurityScopedResource()
             }
 
-            let existing = store.record(for: book.bookID)
+            let existing = matched ?? store.record(for: localID)
             var record = existing ?? BookRecord(
                 id: book.bookID,
                 title: book.title,
                 author: book.author,
                 documentKind: book.kind
             )
-            record.title = book.title
+            record.cloudIdentity = sync.isLocalRecovery(localID) ? nil : identity
+            record.isHiddenFromRecents = false
+            record.title = sync.isLocalRecovery(localID) ? "Recovered version: " + book.title : book.title
             record.author = book.author
             record.documentKind = book.kind
             record.lastOpenedAt = Date()
@@ -276,7 +339,7 @@ final class AppModel {
             self.book = book
             self.record = record
             reader = controller
-            recents = store.recentBooks()
+            recents = store.recentBooks(limit: .max)
             drawingCache.removeAll()
             errorMessage = nil
             chat.load(threads: record.conversationThreads, activeID: record.activeChatID)
@@ -289,10 +352,14 @@ final class AppModel {
     /// Reopens a book from Recents, preferring the imported library copy.
     func reopen(_ record: BookRecord) {
         if let imported = store.existingImportedURL(for: record) {
-            open(url: imported)
+            open(url: imported, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
             return
         }
 
+        if record.cloudFile != nil, sync.preferences.mode == .booksAndNotes {
+            downloadForOffline(record, openAfter: true)
+            return
+        }
         if let data = record.fileBookmark {
             var isStale = false
             do {
@@ -302,7 +369,7 @@ final class AppModel {
                     relativeTo: nil,
                     bookmarkDataIsStale: &isStale
                 )
-                open(url: url)
+                open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
                 return
             } catch {
                 // Fall through to Locate…
@@ -319,7 +386,7 @@ final class AppModel {
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         panel.prompt = "Locate"
-        panel.message = "Kodi Reader needs permission to open “\(record.title)” again. Choose the \(record.documentKind.rawValue.uppercased()) file."
+        panel.message = "Locate the same \(record.documentKind.rawValue.uppercased()) file for “\(record.title)” to attach its notes."
 
         if let path = record.lastKnownPath {
             let directory = URL(fileURLWithPath: path).deletingLastPathComponent()
@@ -330,7 +397,7 @@ final class AppModel {
         }
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        open(url: url)
+        open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
     }
 
     /// Best-effort bookmark of the original file; Recents does not depend on it.
@@ -354,9 +421,10 @@ final class AppModel {
     }
 
     func closeBook() {
+        openingID = nil
         chat.stop()
         persistChat(chat.threads, activeID: chat.activeThreadID)
-        store.flush()
+        flush()
         reader?.tearDown()
         reader = nil
         book = nil
@@ -366,15 +434,15 @@ final class AppModel {
         workspace = .closed
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
-        recents = store.recentBooks()
+        recents = store.recentBooks(limit: .max)
         drawingCache.removeAll()
         positionBeforeBrowser = nil
         closeBrowser()
     }
 
     func removeFromRecents(_ record: BookRecord) {
-        store.remove(bookID: record.id)
-        recents = store.recentBooks()
+        store.hideFromRecents(record.id)
+        recents = store.recentBooks(limit: .max)
     }
 
     func importedURL(for record: BookRecord) -> URL? {
@@ -382,7 +450,59 @@ final class AppModel {
     }
 
     func flush() {
-        store.flush()
+        for flushEditor in Array(noteFlushHandlers.values) { flushEditor() }
+        sync.checkpoint()
+    }
+
+    func beginNoteEditing(_ id: UUID, flush: @escaping () -> Void) { noteFlushHandlers[id] = flush }
+    func endNoteEditing(_ id: UUID) {
+        noteFlushHandlers[id] = nil
+        sync.resumeDeferredChanges()
+    }
+
+    func refreshAfterSync() {
+        recents = store.recentBooks(limit: .max)
+        guard let currentID = record?.id else { return }
+        guard let updated = store.record(for: currentID) else {
+            closeBook()
+            return
+        }
+        record = updated
+        drawingCache.removeAll()
+        reader?.setAnnotations(updated.annotations)
+        if !chat.isStreaming { chat.mergeStoredThreads(updated.conversationThreads) }
+    }
+
+    func downloadForOffline(_ record: BookRecord, openAfter: Bool = false) {
+        guard sync.status.downloads[record.id] == nil else { return }
+        Task {
+            do {
+                let url = try await sync.download(record)
+                if openAfter { open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id) }
+            } catch { errorMessage = error.localizedDescription }
+        }
+    }
+
+    func removeDownload(_ record: BookRecord) {
+        do {
+            if self.record?.id == record.id { closeBook() }
+            try sync.removeDownload(record)
+            refreshAfterSync()
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func deleteEverywhere(_ record: BookRecord) {
+        do {
+            if self.record?.id == record.id { closeBook() }
+            try sync.deleteEverywhere(record)
+        } catch { errorMessage = error.localizedDescription }
+    }
+
+    func showHiddenBooks() {
+        for book in store.allBooks() where book.isHiddenFromRecents {
+            store.update(book.id) { $0.isHiddenFromRecents = false }
+        }
+        recents = store.recentBooks(limit: .max)
     }
 
     // MARK: - Reader wiring
@@ -652,33 +772,24 @@ final class AppModel {
             return
         }
         let hasDrawing = elementCount > 0
-        drawingCache[id] = hasDrawing ? scene : nil
-        let finish: (Result<Void, Error>) -> Void = { [weak self] result in
-            guard let self else { return }
-            switch result {
-            case .success:
-                self.mutateAnnotations(bookID: bookID, pushToReader: false) { annotations in
-                    guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
-                    annotations[index].hasDrawing = hasDrawing
-                    if hasDrawing, annotations[index].color == .underline {
-                        annotations[index].color = .yellow
-                        self.lastAppliedHighlightColor = .yellow
-                    }
-                    annotations[index].modifiedAt = Date()
+        do {
+            try store.drawingStore.replaceScene(hasDrawing ? scene : nil, bookID: bookID, annotationID: id)
+            try store.updateAndFlush(bookID) { record in
+                var annotations = record.annotations
+                guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
+                annotations[index].hasDrawing = hasDrawing
+                if hasDrawing, annotations[index].color == .underline {
+                    annotations[index].color = .yellow
+                    lastAppliedHighlightColor = .yellow
                 }
-                if let annotations = self.record?.annotations {
-                    self.reader?.setAnnotations(annotations)
-                }
-            case .failure:
-                break
+                annotations[index].modifiedAt = Date()
+                record.annotations = annotations
             }
-            completion?(result)
-        }
-        if hasDrawing {
-            store.drawingStore.saveScene(scene, bookID: bookID, annotationID: id, completion: finish)
-        } else {
-            store.drawingStore.deleteScene(bookID: bookID, annotationID: id, completion: finish)
-        }
+            drawingCache[id] = hasDrawing ? scene : nil
+            record = store.record(for: bookID)
+            if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
+            completion?(.success(()))
+        } catch { completion?(.failure(error)) }
     }
 
     func changeColor(_ color: HighlightColor, for id: UUID) {

@@ -10,6 +10,12 @@ options:
   # project builds regardless of which toolchain is selected.
   projectFormat: xcode15_3
 
+configs:
+  Debug: debug
+  Release: release
+  Debug-iCloud: debug
+  Release-iCloud: release
+
 packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
@@ -23,15 +29,20 @@ packages:
 configFiles:
   Debug: Config/Auth.xcconfig
   Release: Config/Auth.xcconfig
+  Debug-iCloud: Config/Auth.xcconfig
+  Release-iCloud: Config/Auth.xcconfig
 
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.3.2"
-    CURRENT_PROJECT_VERSION: "5"
+    MARKETING_VERSION: "0.4.0"
+    CURRENT_PROJECT_VERSION: "6"
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
+    KODI_ICLOUD_ENABLED: NO
+    KODI_PRODUCT_NAME: Kodi Reader
+    KODI_BUNDLE_IDENTIFIER: com.olly.KodiReader
   configs:
     Debug:
       SPARKLE_INSTALLER_LAUNCHER: "true"
@@ -39,6 +50,14 @@ settings:
       CODE_SIGN_IDENTITY: "-"
     Release:
       SPARKLE_INSTALLER_LAUNCHER: "false"
+    Debug-iCloud:
+      SPARKLE_INSTALLER_LAUNCHER: "true"
+      KODI_ICLOUD_ENABLED: YES
+      DEVELOPMENT_TEAM: 3FJF74RW5L
+      CODE_SIGN_IDENTITY: "Apple Development"
+    Release-iCloud:
+      SPARKLE_INSTALLER_LAUNCHER: "false"
+      KODI_ICLOUD_ENABLED: YES
 
 targets:
   # Deliberately not "Books", which would collide with Apple's own app in
@@ -59,8 +78,8 @@ targets:
         product: ReaderUI
     settings:
       base:
-        PRODUCT_NAME: Kodi Reader
-        PRODUCT_BUNDLE_IDENTIFIER: com.olly.KodiReader
+        PRODUCT_NAME: $(KODI_PRODUCT_NAME)
+        PRODUCT_BUNDLE_IDENTIFIER: $(KODI_BUNDLE_IDENTIFIER)
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/KodiReader.entitlements
         ENABLE_PREVIEWS: YES
@@ -73,12 +92,40 @@ targets:
           CODE_SIGN_IDENTITY: "Developer ID Application"
           CODE_SIGN_ENTITLEMENTS: App/KodiReader.release.entitlements
           CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+        Debug-iCloud:
+          CODE_SIGN_ENTITLEMENTS: App/KodiReader.icloud-debug.entitlements
+        Release-iCloud:
+          DEVELOPMENT_TEAM: 3FJF74RW5L
+          CODE_SIGN_STYLE: Manual
+          CODE_SIGN_IDENTITY: "Developer ID Application"
+          CODE_SIGN_ENTITLEMENTS: App/KodiReader.icloud-release.entitlements
+          PROVISIONING_PROFILE_SPECIFIER: Kodi Reader iCloud Developer ID
+          CODE_SIGN_INJECT_BASE_ENTITLEMENTS: NO
+
+  KodiReaderSyncSmoke:
+    type: application
+    platform: macOS
+    sources:
+      - path: Tools/CloudKitSmoke
+    dependencies:
+      - package: EpubReaderCore
+        product: EpubKit
+    settings:
+      base:
+        PRODUCT_NAME: Kodi CloudKit Smoke
+        PRODUCT_BUNDLE_IDENTIFIER: com.olly.KodiReader
+        INFOPLIST_FILE: Tools/CloudKitSmoke/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/KodiReader.icloud-debug.entitlements
+        DEVELOPMENT_TEAM: 3FJF74RW5L
+        CODE_SIGN_IDENTITY: Apple Development
 
   KodiReaderAuthTests:
     type: bundle.unit-test
     platform: macOS
     sources:
       - path: Tests/AuthTests
+      - path: App/AI/AICreditsController.swift
+      - path: App/AI/AIFeatureFlags.swift
       - path: App/AI/AIAuthController.swift
       - path: App/AI/AIChatService.swift
       - path: App/AI/AIModelConfig.swift
@@ -96,10 +143,30 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
 
 schemes:
+  KodiReader-SyncSmoke:
+    build:
+      targets:
+        KodiReaderSyncSmoke: all
+    run:
+      config: Debug-iCloud
+
   KodiReader:
     build:
       targets:
         KodiReader: all
     test:
+      targets:
+        - KodiReaderAuthTests
+
+  KodiReader-iCloud:
+    build:
+      targets:
+        KodiReader: all
+    run:
+      config: Debug-iCloud
+    archive:
+      config: Release-iCloud
+    test:
+      config: Debug-iCloud
       targets:
         - KodiReaderAuthTests

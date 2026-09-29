@@ -36,7 +36,9 @@ enum AppDataDirectory {
     static func prepare() -> URL {
         let url = root
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
+        #if !KODI_PAYMENT_SANDBOX
         LegacyFolioMigration.run(into: url)
+        #endif
         // Read-aloud was removed; discard its obsolete downloaded model cache.
         try? FileManager.default.removeItem(at: url.appendingPathComponent("Kokoro", isDirectory: true))
         return url

@@ -27,6 +27,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         updater.publisher(for: \.automaticallyDownloadsUpdates).assign(to: &$automaticallyDownloadsUpdates)
         driver.$state.assign(to: &$state)
         driver.beforeRestart = { [weak self] in self?.beforeInstall?() }
+        #if !KODI_PAYMENT_SANDBOX
         guard startingUpdater else { return }
         do {
             try updater.start()
@@ -36,6 +37,7 @@ final class AppUpdater: NSObject, ObservableObject, SPUUpdaterDelegate {
         } catch {
             driver.state.message = "Updates are unavailable: \(error.localizedDescription)"
         }
+        #endif
     }
 
     func checkForUpdates() {

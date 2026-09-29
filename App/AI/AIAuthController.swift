@@ -63,7 +63,7 @@ final class AIAuthController {
             url: url.appendingPathComponent("auth/v1"),
             headers: ["apikey": key],
             storageKey: "kodi-auth-\(url.host!)",
-            localStorage: KeychainLocalStorage(service: "com.olly.KodiReader.auth"),
+            localStorage: KeychainLocalStorage(service: "\(Bundle.main.bundleIdentifier ?? "com.olly.KodiReader").auth"),
             emitLocalSessionAsInitialSession: true
         )
     }

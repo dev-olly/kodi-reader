@@ -17,11 +17,11 @@ public final class EPUBBook: @unchecked Sendable {
     public var title: String { publication.metadata.title }
     public var author: String { publication.metadata.authorText }
 
-    public convenience init(fileURL: URL) throws {
-        try self.init(container: EPUBContainer(fileURL: fileURL))
+    public convenience init(fileURL: URL, knownBookID: String? = nil) throws {
+        try self.init(container: EPUBContainer(fileURL: fileURL), knownBookID: knownBookID)
     }
 
-    public init(container: EPUBContainer) throws {
+    public init(container: EPUBContainer, knownBookID: String? = nil) throws {
         self.container = container
 
         let packagePath = try PackageParser.packagePath(in: container)
@@ -41,7 +41,7 @@ public final class EPUBBook: @unchecked Sendable {
             packagePath: packagePath
         )
 
-        bookID = EPUBBook.makeBookID(
+        bookID = knownBookID ?? EPUBBook.makeBookID(
             identifier: package.metadata.identifier,
             fileURL: container.fileURL
         )

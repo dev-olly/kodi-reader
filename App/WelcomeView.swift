@@ -8,6 +8,7 @@ struct WelcomeView: View {
     @State private var urlText = ""
     @State private var urlError: String?
     @State private var isFieldHovered = false
+    @State private var bookToDelete: BookRecord?
     @FocusState private var urlFieldFocused: Bool
 
     var body: some View {
@@ -56,6 +57,17 @@ struct WelcomeView: View {
           .frame(maxWidth: .infinity)
         }
         .background(model.settings.theme.surface)
+        .confirmationDialog("Delete this book and its reading data?", isPresented: Binding(
+            get: { bookToDelete != nil }, set: { if !$0 { bookToDelete = nil } }
+        ), titleVisibility: .visible) {
+            if let target = bookToDelete {
+                Button(target.cloudIdentity == nil ? "Delete Book and Notes" : "Delete Book and Notes Everywhere", role: .destructive) {
+                    model.deleteEverywhere(target); bookToDelete = nil
+                }
+            }
+        } message: {
+            Text("This deletes the book, notes, drawings, bookmarks, and saved conversations. Synced deletions reach other Macs when they reconnect. Use Remove Download to keep your reading data.")
+        }
     }
 
     private var urlField: some View {
@@ -126,7 +138,7 @@ struct WelcomeView: View {
 
     private var recents: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Continue reading")
+            Text("Your library")
                 .font(.caption)
                 .fontWeight(.semibold)
                 .foregroundStyle(.secondary)
@@ -171,6 +183,16 @@ struct WelcomeView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
+                    if let downloading = model.sync.status.downloads[record.id] {
+                        ProgressView("Downloading…", value: downloading).font(.caption)
+                    } else if model.importedURL(for: record) == nil {
+                        Label(record.cloudFile != nil && model.sync.preferences.mode == .booksAndNotes ? "In iCloud" : "Locate file to read", systemImage: "icloud")
+                            .font(.caption).foregroundStyle(.secondary)
+                    } else if model.sync.isLocalRecovery(record.id) {
+                        Text("Recovered locally").font(.caption).foregroundStyle(.secondary)
+                    } else if record.cloudIdentity == nil {
+                        Text("Locate file to enable sync").font(.caption).foregroundStyle(.secondary)
+                    }
                     ProgressView(value: min(1, max(0, record.progress)))
                         .padding(.top, 8)
                 }
@@ -189,6 +211,7 @@ struct WelcomeView: View {
             .contentShape(.rect)
         }
         .buttonStyle(.plain)
+        .disabled(model.sync.status.downloads[record.id] != nil)
         .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(record.title), \(record.author)")
@@ -200,8 +223,19 @@ struct WelcomeView: View {
                     model.openOriginalInBrowser(record)
                 }
             }
-            Button("Remove from Recent", role: .destructive) {
+            if record.cloudFile != nil {
+                if model.importedURL(for: record) == nil {
+                    Button("Download for Offline Reading") { model.downloadForOffline(record) }
+                        .disabled(model.sync.preferences.mode != .booksAndNotes)
+                } else {
+                    Button("Remove Download") { model.removeDownload(record) }
+                }
+            }
+            Button("Remove from Recent") {
                 model.removeFromRecents(record)
+            }
+            Button(record.cloudIdentity == nil ? "Delete Book and Notes…" : "Delete Book and Notes Everywhere…", role: .destructive) {
+                bookToDelete = record
             }
         }
     }

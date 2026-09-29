@@ -63,6 +63,22 @@ public final class DrawingStore: @unchecked Sendable {
         queue.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
+    /// Commit an editor checkpoint before updating its annotation metadata.
+    public func replaceScene(_ data: Data?, bookID: String, annotationID: UUID) throws {
+        lock.lock()
+        pendingSaves[annotationID]?.work.cancel()
+        pendingSaves[annotationID] = nil
+        lock.unlock()
+        // Serialize with previously scheduled writes before checkpointing metadata.
+        try queue.sync {
+            if let data { try write(data, bookID: bookID, annotationID: annotationID) }
+            else {
+                let url = sceneURL(bookID: bookID, annotationID: annotationID)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            }
+        }
+    }
+
     /// Writes any pending scenes immediately.
     public func flush() {
         lock.lock()

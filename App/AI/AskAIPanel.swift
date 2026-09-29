@@ -8,6 +8,18 @@ struct AskAIPanel: View {
     @FocusState private var composerFocused: Bool
     @State private var bottomID = UUID()
     @State private var showingHistory = false
+    @State private var showingPromptEditor = false
+    @State private var editingPromptID: UUID?
+    @State private var promptTitle = ""
+    @State private var promptText = ""
+    @State private var promptEditorError: String?
+
+    private let quickPrompts: [(title: String, text: String)] = [
+        ("ELI5", "Explain this in simple language, as if I were new to the topic. Define any jargon and give a concrete example."),
+        ("Summary", "Summarize the main point of this passage or section in a few sentences."),
+        ("Key ideas", "What are the key ideas here? Give me a short bullet list."),
+        ("Critique", "What assumptions does the author make here, and what are the strongest objections?")
+    ]
 
     var body: some View {
         VStack(spacing: 0) {
@@ -33,6 +45,9 @@ struct AskAIPanel: View {
                 composerFocused = true
                 model.chat.shouldFocusComposer = false
             }
+        }
+        .sheet(isPresented: $showingPromptEditor) {
+            promptEditor
         }
     }
 
@@ -216,12 +231,6 @@ struct AskAIPanel: View {
                             .lineSpacing(3)
                     }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        promptSuggestion("Explain the argument in this section")
-                        promptSuggestion("What is the author implying here?")
-                        promptSuggestion("Turn this into a note I can keep")
-                    }
-
                     Spacer()
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -251,34 +260,6 @@ struct AskAIPanel: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private func promptSuggestion(_ text: String) -> some View {
-        Button {
-            model.chat.input = text
-            composerFocused = true
-        } label: {
-            HStack(spacing: 8) {
-                Text(text)
-                    .font(.system(size: 12))
-                    .lineLimit(2)
-                Spacer(minLength: 0)
-                Image(systemName: "arrow.up.right")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(model.settings.theme.muted)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .foregroundStyle(model.settings.theme.uiForeground)
-        .background(model.settings.theme.surface, in: .rect(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(model.settings.theme.border.opacity(0.8), lineWidth: 1)
-        }
     }
 
     @ViewBuilder
@@ -354,6 +335,8 @@ struct AskAIPanel: View {
 
     private var composer: some View {
         VStack(alignment: .leading, spacing: 10) {
+            promptBadges
+
             if !model.chat.pendingReferences.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(model.chat.pendingReferences) { reference in
@@ -416,6 +399,126 @@ struct AskAIPanel: View {
                         .frame(height: 1)
                 }
         }
+    }
+
+    private var promptBadges: some View {
+        HStack(spacing: 6) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(quickPrompts, id: \.title) { prompt in
+                        promptBadge(prompt.title, systemImage: nil) {
+                            insertPrompt(prompt.text)
+                        }
+                    }
+                    ForEach(model.savedPrompts.prompts) { prompt in
+                        promptBadge(prompt.title, systemImage: "bookmark.fill") {
+                            insertPrompt(prompt.text)
+                        }
+                        .contextMenu {
+                            Button("Edit saved prompt") { editPrompt(prompt) }
+                            Button("Delete saved prompt", role: .destructive) {
+                                model.savedPrompts.delete(prompt.id)
+                            }
+                        }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .scrollIndicators(.hidden)
+            promptBadge("Save", systemImage: "plus") {
+                newPrompt()
+            }
+            .help("Save a prompt for use in any book")
+        }
+    }
+
+    private func promptBadge(
+        _ title: String,
+        systemImage: String?,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 4) {
+                if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.system(size: 10))
+                }
+                Text(title.count > 24 ? String(title.prefix(24)) + "…" : title)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(model.settings.theme.uiForeground)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 6)
+            .background(model.settings.theme.surface, in: Capsule())
+            .overlay {
+                Capsule().strokeBorder(model.settings.theme.border, lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .help(title)
+    }
+
+    private func insertPrompt(_ text: String) {
+        let current = model.chat.input.trimmingCharacters(in: .whitespacesAndNewlines)
+        model.chat.input = current.isEmpty ? text : current + "\n" + text
+        composerFocused = true
+    }
+
+    private func newPrompt() {
+        editingPromptID = nil
+        promptTitle = ""
+        promptText = model.chat.input
+        promptEditorError = nil
+        showingPromptEditor = true
+    }
+
+    private func editPrompt(_ prompt: SavedPrompt) {
+        editingPromptID = prompt.id
+        promptTitle = prompt.title
+        promptText = prompt.text
+        promptEditorError = nil
+        showingPromptEditor = true
+    }
+
+    private var promptEditor: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(editingPromptID == nil ? "Save prompt" : "Edit saved prompt")
+                .font(.headline)
+            Text("Saved prompts appear in Ask AI for every book.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            TextField("Badge name", text: $promptTitle)
+            TextEditor(text: $promptText)
+                .font(.body)
+                .frame(minHeight: 120)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 6)
+                        .strokeBorder(model.settings.theme.border, lineWidth: 1)
+                }
+            if let promptEditorError {
+                Text(promptEditorError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+            HStack {
+                Spacer()
+                Button("Cancel") { showingPromptEditor = false }
+                Button("Save") {
+                    if model.savedPrompts.save(id: editingPromptID, title: promptTitle, text: promptText) {
+                        showingPromptEditor = false
+                    } else {
+                        promptEditorError = "Add a name and prompt, and use a unique name."
+                    }
+                }
+                .keyboardShortcut(.defaultAction)
+                .disabled(promptTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                          || promptText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(20)
+        .frame(width: 400)
     }
 
     private var inputBinding: Binding<String> {

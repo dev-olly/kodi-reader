@@ -1,6 +1,6 @@
 # Paddle live verification and production launch plan
 
-Status date: 29 September 2026
+Status date: 30 September 2026
 
 This is the working task board for moving Ask AI credits from the verified Paddle sandbox flow to real payments. Do not use sandbox IDs, tokens, balances, or test prices in production. Do not enable live checkout until every release gate in Phase 5 is complete.
 
@@ -9,12 +9,12 @@ This is the working task board for moving Ask AI credits from the verified Paddl
 - Email authentication works in a signed Mac build.
 - Production Supabase already contains the credit-accounting migration. Do not reapply it.
 - The Paddle sandbox flow has passed checkout, signed webhook, duplicate-event, full-refund, automatic app return, and automatic balance-refresh tests.
-- The gated production backend, live Paddle catalog, credentials, webhook, and public checkout configuration were deployed on 29 September 2026. Checkout and credit enforcement remain disabled pending Paddle approval and the coordinated app release.
+- The production backend, live Paddle catalog, credentials, webhook, and public checkout configuration are active. Checkout and credit enforcement were enabled together on 30 September 2026 after Paddle approval and the compatible app release.
 - Paddle Live now has three active SaaS products and tax-inclusive one-time EUR prices: Starter `pri_01m3pryz3g6b43nda6dwf3jyn5` (€3.99), Regular `pri_01m3przj1tvy7xrjkbt67b8t1m` (€7.99), and Plus `pri_01m3ps0343dg05hrdfgsc6psxx` (€14.99).
-- `kodi-reader.app` is pending Paddle domain review. Account identity and payout verification remain with Olly.
+- Paddle approved the account and `kodi-reader.app`. The live default payment link is `https://www.kodi-reader.app/checkout`.
 - The €1 / €2 / €3 sandbox prices are test values only. Retail prices were approved on 29 September 2026: Starter €3.99, Regular €7.99, and Plus €14.99, all tax-inclusive one-time purchases.
 - Google and Apple sign-in remain disabled and are not required for an email-first payment launch.
-- Kodi Reader 0.4.0 (build 6) has a Developer ID-signed, Apple-notarized release candidate at `.build/KodiReader-0.4.0-rc.dmg`. It contains payment support but keeps credit and purchase controls hidden while backend enforcement is off.
+- Kodi Reader 0.4.1 (build 7) is published, Developer ID signed, Apple notarized, and distributed through the signed Sparkle update feed. It includes live authentication, credit accounting, checkout return, and balance refresh.
 
 ## Phase 1 — Decide the information Paddle and customers will see
 
@@ -88,26 +88,26 @@ These are human/account actions. Codex can guide the dashboard and verify the re
   **Owner:** Olly  
   **Done when:** the dashboard is in live mode rather than the separate sandbox account.
 
-- [ ] **PAD-02 — Submit `kodi-reader.app` for Website Approval**  
+- [x] **PAD-02 — Submit `kodi-reader.app` for Website Approval**
   **Owner:** Olly, after Phase 2  
   **Submit:** only the exact domain/subdomain that launches checkout. Paddle says every checkout subdomain needs separate approval.  
-  **Evidence:** submitted 29 September 2026; Paddle currently reports `Pending`.  
+  **Evidence:** approved by Paddle before the live payment test on 30 September 2026.
   **Done when:** the production checkout domain is approved. Manual reviews may take roughly 5–7 business days according to Paddle.
 
-- [ ] **PAD-03 — Complete identity/business verification**  
+- [x] **PAD-03 — Complete identity/business verification**
   **Owner:** Olly  
   **Private information:** enter identity documents and proof directly in Paddle/Sumsub; never send them to Codex or commit them. Registered businesses may also need business identification.  
-  **Done when:** Paddle reports the account verification complete.
+  **Done when:** Paddle reports the account verification complete. Completed before live activation on 30 September 2026.
 
 - [ ] **PAD-04 — Configure payout and account currency**  
   **Owner:** Olly  
   **Decision:** EUR balance is recommended if it matches the receiving bank account. Configure payout destination and threshold directly in Paddle.  
   **Done when:** Paddle reports payouts ready. No bank details are stored in the project.
 
-- [ ] **PAD-05 — Configure checkout and tax settings**  
+- [x] **PAD-05 — Configure checkout and tax settings**
   **Owner:** Olly with Codex verification  
   **Settings:** tax-inclusive customer prices, desired live payment methods, approved default payment link `https://kodi-reader.app/checkout`, and the appropriate approved taxable category for hosted Ask AI.  
-  **Status:** prices and account default are tax-inclusive; the default payment link is `https://kodi-reader.app/checkout` and is pending domain approval. Payment-method choice awaits the owner's final review.  
+  **Status:** prices are tax-inclusive; the approved default payment link is `https://www.kodi-reader.app/checkout`; the live checkout accepted the production payment method during the smoke test.
   **Done when:** a read-only configuration review matches the approved pricing/policy record.
 
 ## Phase 4 — Create live catalog and connect production securely
@@ -151,25 +151,26 @@ Start only after Paddle verification and LIVE-04. All Paddle live IDs and creden
   **Status:** 179 reader/core tests and 26 authentication/credit tests pass. The signed 0.4.0 release candidate passed code-signature verification, Gatekeeper assessment, and Apple notarization. Complete the remaining manual payment matrix after Paddle approves the live account and domain.  
   **Done when:** all automated checks pass and a signed staging build passes the manual matrix.
 
-- [ ] **REL-02 — Build, sign, notarize, and publish the compatible Mac app**  
+- [x] **REL-02 — Build, sign, notarize, and publish the compatible Mac app**
   **Owner:** Codex; Apple credentials remain with Olly  
   **Order:** app release precedes production credit enforcement. Google/Apple buttons remain disabled unless separately verified.  
-  **Status:** version 0.4.0 (build 6) is built, signed with Developer ID, notarized by Apple, and stapled. Publication remains pending; do not enable the production gates before users can obtain this version.  
+  **Status:** version 0.4.1 (build 7) is published through the signed Sparkle feed and GitHub release.
   **Done when:** users can update to the version that supports auth, credit protocol 1, checkout return, and HTTP 402/426 handling.
 
 - [x] **REL-03 — Deploy production backend with gates closed**  
   **Owner:** Codex  
   **Done when:** new backend code is running, health is green, auth still works, old behavior remains available, and no live purchase is possible.
 
-- [ ] **REL-04 — Activate live payments and credits together**  
+- [x] **REL-04 — Activate live payments and credits together**
   **Owner:** Codex after Olly's explicit launch approval  
   **Coordinated change:** enable the live checkout config and set `CREDITS_ENFORCED=true`, `PRICING_APPROVED=true`, `PADDLE_LIVE_APPROVED=true`. Never set `PADDLE_SANDBOX_ENABLED` in production.  
-  **Done when:** catalog, balance, checkout, webhook, and Ask AI credit charging are simultaneously active.
+  **Done when:** catalog, balance, checkout, webhook, and Ask AI credit charging are simultaneously active. Completed 30 September 2026.
 
-- [ ] **REL-05 — Controlled real-payment smoke test**  
+- [x] **REL-05 — Controlled real-payment smoke test**
   **Owner:** Olly performs/approves the real purchase; Codex observes system state  
   **Scope:** one smallest-pack purchase with a pre-agreed spending limit. Verify Paddle transaction, signed webhook, exact credit grant, browser return, success screen, one Ask AI charge, receipt, and support/refund path.  
-  **Done when:** payment and ledger reconcile, with no duplicate grant. A real purchase is never initiated without action-time approval.
+  **Evidence:** a live €3.99 Starter purchase completed in Paddle; the browser reported payment complete; Kodi Reader reopened automatically; the signed webhook added exactly 250 credits (25 → 275); and one completed Ask AI answer settled exactly one credit (275 → 274). No duplicate grant was observed.
+  **Done when:** payment and ledger reconcile, with no duplicate grant. Completed 30 September 2026.
 
 - [ ] **REL-06 — Monitor and document rollback**  
   **Owner:** Codex  

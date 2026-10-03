@@ -21,6 +21,7 @@ fi
 VERSION=""
 NOTARIZE=0
 ICLOUD=0
+GOOGLE_DRIVE=0
 for argument in "$@"; do
   case "$argument" in
     --icloud)
@@ -29,8 +30,11 @@ for argument in "$@"; do
     --notarize)
       NOTARIZE=1
       ;;
+    --google-drive)
+      GOOGLE_DRIVE=1
+      ;;
     -h|--help)
-      echo "usage: $0 [version] [--notarize] [--icloud]"
+      echo "usage: $0 [version] [--notarize] [--icloud] [--google-drive]"
       echo "example: $0 0.1.0 --notarize"
       exit 0
       ;;
@@ -100,6 +104,14 @@ fi
 if [[ ! -d "$APP" ]]; then
   echo "expected app at $APP" >&2
   exit 1
+fi
+
+if [[ "$GOOGLE_DRIVE" == 1 ]]; then
+  DRIVE_CLIENT_ID="$(/usr/libexec/PlistBuddy -c 'Print :GoogleDriveClientID' "$APP/Contents/Info.plist")"
+  if [[ ! "$DRIVE_CLIENT_ID" =~ ^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$ ]] || [[ "$DRIVE_CLIENT_ID" == YOUR_CLIENT_ID* ]]; then
+    echo "Google Drive release requires a configured Desktop OAuth client ID in the final app." >&2
+    exit 1
+  fi
 fi
 
 if [[ "$ICLOUD" == 1 ]]; then

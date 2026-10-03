@@ -151,6 +151,33 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertNil(b.existingImportedURL(for: received)); XCTAssertEqual(ta.uploads, 0); XCTAssertEqual(tb.downloads, 0)
         XCTAssertFalse(cloud.entities.values.contains { $0.kind == .chat })
     }
+    func testStoppedProviderKeepsItsJournalAndNeverUploadsToOldCloud() async throws {
+        let originalCloud = TestCloud(), destinationCloud = TestCloud(), local = try store()
+        let book = try book(in: local, with: note())
+        let firstJournal = local.rootDirectory.appendingPathComponent("Sync/journal.json")
+        let secondJournal = local.rootDirectory.appendingPathComponent("Sync/GoogleDrive/account/journal.json")
+        let original = LibrarySyncCoordinator(store: local, transport: TestTransport(originalCloud),
+                                              journalURL: firstJournal)
+        await original.setPreferences(.init(mode: .notesOnly)); try await settle(original)
+        await original.stop()
+        local.update(book.id) { $0.annotations[0].note = "after switch" }
+        try local.checkpoint()
+        for _ in 0..<20 { await Task.yield() }
+        XCTAssertFalse(originalCloud.entities.values.contains {
+            (try? $0.value(SyncedAnnotation.self).annotation.note) == "after switch"
+        })
+        let destination = LibrarySyncCoordinator(store: local, transport: TestTransport(destinationCloud),
+                                                 journalURL: secondJournal)
+        await destination.setPreferences(.init(mode: .notesOnly)); try await settle(destination)
+        XCTAssertTrue(destinationCloud.entities.values.contains {
+            (try? $0.value(SyncedAnnotation.self).annotation.note) == "after switch"
+        })
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstJournal.path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: secondJournal.path))
+        XCTAssertFalse(originalCloud.entities.values.contains {
+            (try? $0.value(SyncedAnnotation.self).annotation.note) == "after switch"
+        })
+    }
     func testFullLibraryDownloadsOnlyOnDemandAndCanRemoveDownload() async throws {
         let cloud = TestCloud(), a = try store(), b = try store()
         let bytes = Data(repeating: 43, count: BlobManifest.chunkSize + 123)
@@ -495,6 +522,34 @@ final class LibrarySyncTests: XCTestCase {
         let restarted = LibrarySyncCoordinator(store: reopened, transport: TestTransport(cloud))
         try await run(restarted)
         XCTAssertTrue(cloud.entities.values.contains { $0.kind == .annotation && !$0.deleted })
+    }
+    func testGoogleStorageFailureKeepsPendingNotes() async throws {
+        let cloud = TestCloud(), local = try store()
+        let record = try book(in: local, with: note())
+        let transport = TestTransport(cloud)
+        transport.error = DriveAPIError(status: 403, reason: "storageQuotaExceeded", retryAfter: nil)
+        let coordinator = LibrarySyncCoordinator(store: local, transport: transport,
+            journalURL: local.rootDirectory.appendingPathComponent("Sync/GoogleDrive/account/journal.json"))
+        await coordinator.setPreferences(.init(mode: .notesOnly))
+        for _ in 0..<100 { await Task.yield() }
+        XCTAssertEqual(coordinator.status.phase, .storageFull)
+        XCTAssertEqual(local.record(for: record.id)?.annotations.first?.note, "first")
+        XCTAssertTrue(cloud.entities.isEmpty)
+        await coordinator.stop()
+        let resumed = LibrarySyncCoordinator(store: local, transport: TestTransport(cloud),
+            journalURL: local.rootDirectory.appendingPathComponent("Sync/GoogleDrive/account/journal.json"))
+        try await run(resumed)
+        XCTAssertTrue(cloud.entities.values.contains { $0.kind == .annotation && !$0.deleted })
+    }
+    func testCloudMetadataExcludesLocalSourcePaths() async throws {
+        let cloud = TestCloud(), local = try store()
+        let book = try book(in: local)
+        local.update(book.id) { $0.sourceURL = URL(fileURLWithPath: "/Users/private/book.epub") }
+        try local.checkpoint()
+        let sync = LibrarySyncCoordinator(store: local, transport: TestTransport(cloud))
+        await sync.setPreferences(.init(mode: .notesOnly)); try await settle(sync)
+        let uploaded = try XCTUnwrap(cloud.entities.values.first { $0.kind == .book })
+        XCTAssertNil(try uploaded.value(SyncedBook.self).sourceURL)
     }
     func testLargeAIHistoryRemainsOptional() async throws {
         let cloud = TestCloud(), a = try store(); let local = try book(in: a)

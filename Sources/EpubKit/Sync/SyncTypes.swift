@@ -2,6 +2,18 @@ import CryptoKit
 import Foundation
 import Observation
 
+public enum SyncProvider: String, Codable, CaseIterable, Identifiable, Sendable {
+    case off, iCloud, googleDrive
+    public var id: String { rawValue }
+    public var title: String {
+        switch self {
+        case .off: "Off"
+        case .iCloud: "iCloud"
+        case .googleDrive: "Google Drive"
+        }
+    }
+}
+
 public enum SyncMode: String, Codable, CaseIterable, Identifiable, Sendable {
     case off, notesOnly, booksAndNotes
     public var id: String { rawValue }
@@ -22,7 +34,7 @@ public struct SyncPreferences: Codable, Equatable, Sendable {
 public final class SyncStatus {
     public enum Phase: String, Sendable {
         case off = "Off", synced = "Synced", syncing = "Syncing", offline = "Offline"
-        case unavailable = "iCloud unavailable", storageFull = "Storage full", error = "Sync needs attention"
+        case unavailable = "Cloud unavailable", storageFull = "Storage full", error = "Sync needs attention"
     }
     public internal(set) var phase: Phase = .off
     public internal(set) var message: String?
@@ -107,15 +119,20 @@ enum SyncCoding {
 
 public enum SyncFailure: LocalizedError {
     case unavailable, accountChanged, cloudReset, corruptAsset, missingFile, categoryDisabled, unsupportedSchema
+    case googleSignInRequired, googleNotConfigured, googleQuotaExceeded, googleRateLimited
     public var errorDescription: String? {
         switch self {
-        case .unavailable: "iCloud sync requires an iCloud account and an iCloud-enabled signed build."
-        case .accountChanged: "Your iCloud account changed. Enable sync again to upload this Mac’s local library to the current account."
-        case .cloudReset: "Kodi’s iCloud data was removed. Enable sync again to upload this Mac’s local library."
+        case .unavailable: "Cloud sync is unavailable. Your local library is safe."
+        case .accountChanged: "Your cloud account changed. Enable sync again to copy this Mac’s local library to the current account."
+        case .cloudReset: "Kodi’s cloud data was removed. Enable sync again to copy this Mac’s local library."
         case .corruptAsset: "The download could not be verified. Your existing local copy was kept. Try again."
         case .missingFile: "Locate this book’s file to enable sync."
         case .categoryDisabled: "Enable Books and notes to download this book."
-        case .unsupportedSchema: "This iCloud data needs a newer version of Kodi Reader."
+        case .unsupportedSchema: "This cloud data needs a newer version of Kodi Reader."
+        case .googleSignInRequired: "Connect Google Drive again to resume sync. Your local changes are safe."
+        case .googleNotConfigured: "Google Drive sync is not configured in this build."
+        case .googleQuotaExceeded: "Google Drive storage is full. Local changes will sync when space is available."
+        case .googleRateLimited: "Google Drive is busy. Kodi will retry later."
         }
     }
 }

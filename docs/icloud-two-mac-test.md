@@ -7,7 +7,7 @@ personal iCloud account; neither needs an Apple Developer login.
 
 ## Main acceptance test
 
-1. Install the DMG on both Macs. Open **Kodi Reader → Settings → iCloud**.
+1. Install the DMG on both Macs. Open **Kodi Reader → Settings → Sync** and choose **iCloud**.
    Sync starts Off. Use a disposable EPUB or PDF for this test.
 2. Choose **Notes only** on both Macs. Import the same exact file on each,
    even with different filenames. On Mac A add a note, drawing and bookmark,

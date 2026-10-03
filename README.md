@@ -6,7 +6,7 @@
 
 A lightweight native EPUB and PDF reader for macOS. Paginated reading, typography and
 theme controls, highlights with notes and drawings, configurable Ask AI, webpage
-reading, optional private iCloud sync, and a distraction-free interface.
+reading, optional iCloud or Google Drive sync, and a distraction-free interface.
 
 ![Kodi Reader showing a highlighted passage and note](docs/screenshots/app-overview.png)
 
@@ -40,12 +40,13 @@ Load an article or page, extract the readable content, and read it in the same p
 
 ![Open web app or website](docs/screenshots/app-web.png)
 
-### iCloud sync
-In an iCloud-enabled signed build, Settings → iCloud offers Off (the default),
-Notes only, or Books and notes. Saved Ask AI history has a separate opt-in toggle.
-Choices apply to each Mac. Book files download when opened or through Download
-for Offline Reading; notes and reading position remain available offline.
-See [iCloud help](docs/icloud-sync.md) and [signing and release setup](docs/icloud-sync-setup.md).
+### Cloud sync
+Settings → Sync offers Off (the default), iCloud, or Google Drive, with one
+provider active per Mac. Choose Notes only or Books and notes; saved Ask AI
+history has a separate opt-in toggle. Book files download when opened or through
+Download for Offline Reading. Switching providers requires a confirmed copy of
+this Mac's library; the old cloud copy remains. See [iCloud help](docs/icloud-sync.md),
+[Google Drive help](docs/google-drive-sync.md), and their release setup guides.
 
 ## Status
 
@@ -68,8 +69,9 @@ its assets, and the download link on both the apex and `www` domains.
 ## Privacy
 
 - Books, PDFs, highlights, notes, and drawings are stored on this Mac (Application
-  Support). Optional iCloud sync stores the selected categories in the user's
-  private CloudKit database and uses their iCloud allowance. EPUBs are read directly from their archives and PDFs
+  Support). Optional sync stores selected categories in either the user's
+  private iCloud database or hidden Google Drive app-data folder, using their
+  respective storage allowance. EPUBs are read directly from their archives and PDFs
   remain byte-for-byte unchanged; Kodi annotations are stored separately.
 - There is no analytics or telemetry.
 - **Ask AI** is opt-in. Quoted passages and chat are sent to the hosted Kodi AI

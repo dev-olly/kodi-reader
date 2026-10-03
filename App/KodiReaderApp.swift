@@ -19,9 +19,12 @@ struct KodiReaderApp: App {
                 .environmentObject(updater)
                 .task {
                     updater.beforeInstall = { model.flush() }
-                    appDelegate.onCloudNotification = { model.sync.syncNow() }
+                    appDelegate.onCloudNotification = {
+                        if model.sync.provider == .iCloud { model.sync.syncNow() }
+                    }
                     appDelegate.onWillTerminate = { model.flush() }
                     model.sync.syncNow()
+                    model.sync.setActive(true)
                 }
                 .frame(minWidth: 640, minHeight: 480)
                 // Opening a book from Finder or `open` arrives here, and the
@@ -38,7 +41,9 @@ struct KodiReaderApp: App {
         .windowToolbarStyle(.unified(showsTitle: false))
         .defaultSize(width: 1100, height: 820)
         .onChange(of: scenePhase) { _, phase in
-            if phase != .active { model.flush() } else { model.sync.syncNow() }
+            if phase != .active { model.flush() }
+            else { model.sync.syncNow() }
+            model.sync.setActive(phase == .active)
         }
         .commands { readerCommands }
 

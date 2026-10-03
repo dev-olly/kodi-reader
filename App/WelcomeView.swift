@@ -186,7 +186,8 @@ struct WelcomeView: View {
                     if let downloading = model.sync.status.downloads[record.id] {
                         ProgressView("Downloading…", value: downloading).font(.caption)
                     } else if model.importedURL(for: record) == nil {
-                        Label(record.cloudFile != nil && model.sync.preferences.mode == .booksAndNotes ? "In iCloud" : "Locate file to read", systemImage: "icloud")
+                        Label(record.cloudFile != nil && model.sync.preferences.mode == .booksAndNotes ? "In \(model.sync.provider.title)" : "Locate file to read",
+                              systemImage: model.sync.provider == .iCloud ? "icloud" : "externaldrive")
                             .font(.caption).foregroundStyle(.secondary)
                     } else if model.sync.isLocalRecovery(record.id) {
                         Text("Recovered locally").font(.caption).foregroundStyle(.secondary)

@@ -4,7 +4,7 @@ Kodi Reader can sync through the iCloud account signed into your Mac. This
 requires an iCloud-enabled, Apple-signed Kodi build. It uses your personal iCloud
 storage; no Kodi account or separate sync subscription is needed.
 
-Open **Settings → iCloud** and choose:
+Open **Settings → Sync**, select **iCloud**, then choose:
 
 - **Off**: the default. Read and edit locally.
 - **Notes only**: sync book titles and authors, highlights, attached notes and
@@ -19,6 +19,9 @@ AI configuration, credentials, and credit balances are excluded.
 
 Choose different modes on different Macs. Switching modes or turning off AI
 history stops transfers in the disabled category and keeps existing copies.
+Switching to Google Drive requires a confirmed copy from the fully merged local
+library. Kodi never syncs both clouds at once, and the previous iCloud copy stays
+in your Apple account. See [Google Drive sync](google-drive-sync.md).
 
 ## Downloads and removal
 

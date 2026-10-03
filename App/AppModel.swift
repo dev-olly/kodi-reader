@@ -69,7 +69,7 @@ final class AppModel {
     }
     /// Last colour applied via a swatch, a new note, or the note editor picker.
     private(set) var lastAppliedHighlightColor: HighlightColor?
-    let sync: LibrarySyncCoordinator
+    let sync: LibrarySyncService
     let aiConfig: AIConfigStore
     let aiAuth: AIAuthController
     let aiCredits: AICreditsController
@@ -105,8 +105,8 @@ final class AppModel {
         let store = LibraryStore(fileURL: root.appendingPathComponent("library.json"))
         self.store = store
         let iCloudEnabled = (Bundle.main.object(forInfoDictionaryKey: "iCloudSyncEnabled") as? String) == "YES"
-        self.sync = LibrarySyncCoordinator(store: store, transport: CloudKitSyncTransport(
-            stagingDirectory: root.appendingPathComponent("Sync/Payloads"), enabled: iCloudEnabled))
+        self.sync = LibrarySyncService(store: store, iCloudEnabled: iCloudEnabled,
+            googleClientID: Bundle.main.object(forInfoDictionaryKey: "GoogleDriveClientID") as? String)
         settings = (try? store.migrateAppearanceSettings(defaultSettings: ReaderSettings()) {
             $0.applyAppearanceDefaults()
         }) ?? store.loadSettings(ReaderSettings.self) ?? ReaderSettings()

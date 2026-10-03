@@ -50,13 +50,15 @@ the app’s sandbox library so Recents can reopen them without asking again.
 Excalidraw scenes live as sidecar files next to that JSON
 (`Drawings/<bookID>/<annotationID>.excalidraw.json`) so the library stays small.
 
-**Optional iCloud sync** uses a `LibrarySyncCoordinator` and injectable
-`SyncTransport` in EpubKit. A separate atomic journal tracks durable local
+**Optional cloud sync** uses a provider-aware app service, reusable
+`LibrarySyncCoordinator`, and injectable `SyncTransport` in EpubKit. Separate
+atomic journals for iCloud and each Google account track durable local
 changes, ancestors, server versions, tombstones, deferred merges, and engine
-state. `CloudKitSyncTransport` uses private CKSyncEngine record zones for reading
-data and optional AI conversations. File assets live in a separate zone fetched
-explicitly, as immutable SHA-256 chunks of at most 16 MiB. Metadata publishes
+state. `CloudKitSyncTransport` uses private CKSyncEngine record zones;
+`GoogleDriveSyncTransport` uses versioned metadata files and the Drive change
+feed in the hidden app-data folder. File assets use immutable SHA-256 chunks of
+at most 16 MiB and are fetched explicitly. Metadata publishes
 only after the referenced chunks upload; downloads are verified before atomic
 installation. Content hashes distinguish editions and survive renames. Conflicts
 preserve recovered versions, and open editors defer remote replacements.
-See [iCloud implementation and release setup](icloud-sync-setup.md).
+See [iCloud setup](icloud-sync-setup.md) and [Google Drive setup](google-drive-sync-setup.md).

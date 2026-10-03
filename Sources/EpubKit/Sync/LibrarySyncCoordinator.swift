@@ -1,6 +1,7 @@
 import CloudKit
 import Foundation
 import Observation
+import OSLog
 
 @MainActor @Observable
 public final class LibrarySyncCoordinator {
@@ -11,6 +12,7 @@ public final class LibrarySyncCoordinator {
     public var isEditing: () -> Bool = { false }
     public var isEntityEditing: (SyncEntity) -> Bool = { _ in false }
     @ObservationIgnored private let store: LibraryStore
+    @ObservationIgnored private let logger = Logger(subsystem: "com.olly.KodiReader", category: "Sync")
     @ObservationIgnored private let transport: any SyncTransport
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var journal: SyncJournal
@@ -23,13 +25,17 @@ public final class LibrarySyncCoordinator {
     @ObservationIgnored private var manifests: [String: (Date, Int64, BlobManifest)] = [:]
     @ObservationIgnored private var sourceFiles: [String: URL] = [:]
     @ObservationIgnored private var retryAfter = Date.distantPast
+    @ObservationIgnored private var retryFailures = 0
     @ObservationIgnored private var activeMaterializations = 0
     @ObservationIgnored private var cacheCleanup = Set<String>()
+    @ObservationIgnored private var stopped: Bool
 
-    public init(store: LibraryStore, transport: any SyncTransport, now: @escaping () -> Date = Date.init) {
+    public init(store: LibraryStore, transport: any SyncTransport, now: @escaping () -> Date = Date.init,
+                journalURL overrideJournalURL: URL? = nil, active: Bool = true) {
         self.store = store; self.transport = transport; self.now = now
+        stopped = !active
         let root = store.rootDirectory.appendingPathComponent("Sync", isDirectory: true)
-        journalURL = root.appendingPathComponent("journal.json")
+        journalURL = overrideJournalURL ?? root.appendingPathComponent("journal.json")
         chunkDirectory = root.appendingPathComponent("Chunks", isDirectory: true)
         if let data = try? Data(contentsOf: journalURL), let saved = try? JSONDecoder().decode(SyncJournal.self, from: data) {
             journal = saved
@@ -55,7 +61,7 @@ public final class LibrarySyncCoordinator {
         await transport.stop()
         await task?.value
         task = nil
-        if acknowledge {
+        if acknowledge && journal.requiresAcknowledgement {
             if let previous = journal.accountID {
                 let archive = journalURL.deletingLastPathComponent().appendingPathComponent("Accounts", isDirectory: true)
                 do {
@@ -85,8 +91,18 @@ public final class LibrarySyncCoordinator {
         else { syncNow() }
     }
 
+    /// Stops a provider without modifying its saved preferences or pending journal.
+    public func stop() async {
+        stopped = true
+        generation += 1; task?.cancel(); debounce?.cancel()
+        await transport.stop()
+        await task?.value
+        task = nil
+        transport.onEvent = nil
+    }
+
     public func syncNow() {
-        guard preferences.mode != .off, !journal.requiresAcknowledgement, task == nil else { return }
+        guard !stopped, preferences.mode != .off, !journal.requiresAcknowledgement, task == nil else { return }
         let token = generation
         // CloudKit invokes the delegate inside a task-local callback context.
         // New sync work must not inherit it, even when it runs after a debounce.
@@ -102,6 +118,25 @@ public final class LibrarySyncCoordinator {
     public func checkpoint() {
         do { try store.checkpoint(); try capture(); try persist() }
         catch { fail(error) }
+    }
+
+    /// Bring the current provider's remote metadata into the local library
+    /// before the app starts copying that library to another provider.
+    public func prepareProviderSwitch() async throws {
+        try store.checkpoint(); try capture(); try persist()
+        guard !stopped, preferences.mode != .off else { return }
+        await task?.value
+        syncNow()
+        await task?.value
+        if !journal.deferred.isEmpty {
+            throw NSError(domain: "KodiSync", code: 4, userInfo: [NSLocalizedDescriptionKey:
+                "Finish editing the open note or Ask AI reply before switching cloud providers."])
+        }
+        if [.error, .offline, .unavailable, .storageFull].contains(status.phase) {
+            throw NSError(domain: "KodiSync", code: 5, userInfo: [NSLocalizedDescriptionKey:
+                status.message ?? "Sync the current cloud before copying its library to another provider."])
+        }
+        try store.checkpoint(); try capture(); try persist()
     }
 
     public func resumeDeferredChanges() {
@@ -163,12 +198,13 @@ public final class LibrarySyncCoordinator {
     }
 
     private func localChanged() {
+        guard !stopped else { return }
         do { try capture(); try persist(); schedule() }
         catch { fail(error) }
     }
 
     private func schedule() {
-        guard preferences.mode != .off, !journal.requiresAcknowledgement else { return }
+        guard !stopped, preferences.mode != .off, !journal.requiresAcknowledgement else { return }
         debounce?.cancel()
         let onlyPositions = journal.pending.values.filter { allowed($0) }.allSatisfy { $0.kind == .position }
         let seconds = onlyPositions ? max(2, 30 - now().timeIntervalSince(lastPositionSend)) : 2
@@ -264,6 +300,8 @@ public final class LibrarySyncCoordinator {
             journal.lastSuccessfulSync = Date(); status.lastSuccessfulSync = journal.lastSuccessfulSync
             try persist()
         }
+        logger.info("sync pass: sent \(outgoing.count, privacy: .public), pending \(self.journal.pending.count, privacy: .public)")
+        retryFailures = 0
     }
 
     private func allowed(_ entity: SyncEntity) -> Bool {
@@ -359,7 +397,8 @@ public final class LibrarySyncCoordinator {
             if let generation = journal.assetGenerations?[metadataID] { file?.generation = generation }
             let hasLocalOrigin = book.id != identity || store.existingImportedURL(for: book) != nil
             if hasLocalOrigin || journal.local[metadataID] != nil {
-                try add(SyncedBook(title: book.title, author: book.author, kind: book.documentKind, sourceURL: book.sourceURL, file: file), identity, .book, "metadata")
+                let publicSource = book.sourceURL.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
+                try add(SyncedBook(title: book.title, author: book.author, kind: book.documentKind, sourceURL: publicSource, file: file), identity, .book, "metadata")
             }
             let positionID = "position:\(identity):position"
             if (hasLocalOrigin || journal.local[positionID] != nil) && !(journal.local[positionID]?.deleted == true && book.position == nil) {
@@ -495,7 +534,8 @@ public final class LibrarySyncCoordinator {
             if entity.deleted { try store.deleteForSync(book.id); return }
             let value = try entity.value(SyncedBook.self)
             book.title = value.title; book.author = value.author; book.documentKind = value.kind
-            book.sourceURL = value.sourceURL; book.cloudFile = value.file
+            book.sourceURL = value.sourceURL.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
+            book.cloudFile = value.file
         } else if entity.kind == .annotation {
             let value = try entity.value(SyncedAnnotation.self)
             let id = value.annotation.id
@@ -578,9 +618,42 @@ public final class LibrarySyncCoordinator {
 
     private func fail(_ error: Error) {
         status.phase = .error; status.message = error.localizedDescription
-        if let failure = error as? SyncFailure, failure == .unavailable { status.phase = .unavailable }
+        if let failure = error as? SyncFailure {
+            switch failure {
+            case .unavailable, .googleSignInRequired, .googleNotConfigured, .accountChanged, .cloudReset:
+                status.phase = .unavailable
+            case .googleQuotaExceeded: status.phase = .storageFull
+            case .googleRateLimited: status.phase = .offline
+            default: break
+            }
+        }
+        if let network = error as? URLError {
+            status.phase = .offline
+            logger.error("Network sync code \(network.errorCode, privacy: .public)")
+        }
+        if let drive = error as? DriveAPIError {
+            logger.error("Drive sync HTTP \(drive.status, privacy: .public), code \(drive.reason, privacy: .public)")
+            switch drive.reason {
+            case "storageQuotaExceeded": status.phase = .storageFull
+            case "invalidCredentials", "authError": status.phase = .unavailable
+            case "rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded": status.phase = .offline
+            default: if drive.status >= 500 { status.phase = .offline }
+            }
+            if drive.status == 401 { status.phase = .unavailable }
+            if drive.status == 429 || drive.status >= 500 || ["rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded"].contains(drive.reason) {
+                retryFailures = min(9, retryFailures + 1)
+                let exponential = min(3600, pow(2, Double(retryFailures)) * 5) + Double.random(in: 0...1)
+                let delay = max(drive.retryAfter ?? 0, drive.reason == "dailyLimitExceeded" ? 3600 : exponential)
+                retryAfter = Date().addingTimeInterval(delay)
+                debounce?.cancel()
+                debounce = Task.detached { @MainActor [weak self] in
+                    do { try await Task.sleep(for: .seconds(delay)); self?.syncNow() } catch {}
+                }
+            }
+        }
         let ns = error as NSError
         if ns.domain == "CKErrorDomain" {
+            logger.error("CloudKit sync code \(ns.code, privacy: .public)")
             switch ns.code {
             case 3, 4: status.phase = .offline
             case 9, 10: status.phase = .unavailable

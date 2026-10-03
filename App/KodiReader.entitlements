@@ -17,6 +17,8 @@
 	     browsing and article-image downloads also use the network. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.security.network.server</key>
+	<true/>
 	<!-- Documents are opened through the open panel; the security-scoped bookmark
 	     saved alongside each one is what allows reopening it on next launch. -->
 	<key>com.apple.security.files.user-selected.read-only</key>

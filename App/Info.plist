@@ -4,6 +4,8 @@
 <dict>
 	<key>iCloudSyncEnabled</key>
 	<string>$(KODI_ICLOUD_ENABLED)</string>
+	<key>GoogleDriveClientID</key>
+	<string>$(GOOGLE_DRIVE_CLIENT_ID)</string>
 	<key>SUFeedURL</key>
 	<string>https://raw.githubusercontent.com/dev-olly/kodi-reader/main/appcast.xml</string>
 	<key>SUPublicEDKey</key>

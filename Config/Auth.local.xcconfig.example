@@ -2,4 +2,6 @@
 // The empty expansion prevents xcconfig from treating // as a comment.
 SUPABASE_URL = https:/$()/YOUR_PROJECT.supabase.co
 SUPABASE_PUBLISHABLE_KEY = sb_publishable_YOUR_PUBLIC_KEY
+// Google Cloud Desktop OAuth client with Drive API enabled. This ID is public.
+GOOGLE_DRIVE_CLIENT_ID = YOUR_CLIENT_ID.apps.googleusercontent.com
 // Never put sb_secret_, service_role, SMTP, or OpenAI keys in this file.

@@ -407,12 +407,12 @@ struct AskAIPanel: View {
                 HStack(spacing: 6) {
                     ForEach(quickPrompts, id: \.title) { prompt in
                         promptBadge(prompt.title, systemImage: nil) {
-                            insertPrompt(prompt.text)
+                            model.chat.send(prompt: prompt.text)
                         }
                     }
                     ForEach(model.savedPrompts.prompts) { prompt in
                         promptBadge(prompt.title, systemImage: "bookmark.fill") {
-                            insertPrompt(prompt.text)
+                            model.chat.send(prompt: prompt.text)
                         }
                         .contextMenu {
                             Button("Edit saved prompt") { editPrompt(prompt) }
@@ -458,12 +458,6 @@ struct AskAIPanel: View {
         }
         .buttonStyle(.plain)
         .help(title)
-    }
-
-    private func insertPrompt(_ text: String) {
-        let current = model.chat.input.trimmingCharacters(in: .whitespacesAndNewlines)
-        model.chat.input = current.isEmpty ? text : current + "\n" + text
-        composerFocused = true
     }
 
     private func newPrompt() {
@@ -576,6 +570,8 @@ private struct SelectableAIAnswer: View {
 
     @Environment(AppModel.self) private var model
     @State private var selection: String?
+    @State private var selectionRect: CGRect?
+    @State private var actionSize = CGSize(width: 110, height: 28)
     @State private var clearSelectionToken = 0
     @State private var isSaving = false
     @State private var saveError: String?
@@ -587,51 +583,75 @@ private struct SelectableAIAnswer: View {
             markdown: markdown,
             isDark: model.settings.theme.isDark,
             clearSelectionToken: clearSelectionToken,
-            onSelectionChange: { selected in
+            onSelectionChange: { selected, rect in
                 selection = selected
+                if let rect { selectionRect = rect }
                 saveError = nil
                 if selected != nil {
                     addedConfirmation = false
                 }
             }
         )
-        .overlay(alignment: .topTrailing) {
-            if let selection, canAddToNote {
-                VStack(alignment: .trailing, spacing: 4) {
-                    Button {
-                        addToNote(selection)
-                    } label: {
-                        if isSaving {
-                            ProgressView()
+        .overlay(alignment: .topLeading) {
+            GeometryReader { answerGeometry in
+                if let selectionRect {
+                    Group {
+                        if let selection, canAddToNote {
+                            VStack(alignment: .trailing, spacing: 4) {
+                                Button {
+                                    addToNote(selection)
+                                } label: {
+                                    if isSaving {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                    } else {
+                                        Label("Add to note", systemImage: "note.text.badge.plus")
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
                                 .controlSize(.small)
-                        } else {
-                            Label("Add to note", systemImage: "note.text.badge.plus")
+                                .disabled(isSaving)
+
+                                if let saveError {
+                                    Text(saveError)
+                                        .font(.caption2)
+                                        .foregroundStyle(.red)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 5)
+                                        .background(.regularMaterial, in: .rect(cornerRadius: 6))
+                                }
+                            }
+                            .padding(4)
+                            .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
+                        } else if addedConfirmation {
+                            Label("Added to note", systemImage: "checkmark.circle.fill")
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(.green)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 6)
+                                .background(.regularMaterial, in: .rect(cornerRadius: 7))
+                                .padding(4)
+                                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .top)))
                         }
                     }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    .disabled(isSaving)
-
-                    if let saveError {
-                        Text(saveError)
-                            .font(.caption2)
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 5)
-                            .background(.regularMaterial, in: .rect(cornerRadius: 6))
+                    .fixedSize()
+                    .background {
+                        GeometryReader { actionGeometry in
+                            Color.clear
+                                .onAppear { actionSize = actionGeometry.size }
+                                .onChange(of: actionGeometry.size) { _, size in actionSize = size }
+                        }
                     }
+                    .offset(
+                        x: min(
+                            max(4, selectionRect.midX - actionSize.width / 2),
+                            max(4, answerGeometry.size.width - actionSize.width - 4)
+                        ),
+                        y: selectionRect.minY >= actionSize.height + 5
+                            ? selectionRect.minY - actionSize.height - 5
+                            : selectionRect.maxY + 5
+                    )
                 }
-                .padding(4)
-                .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
-            } else if addedConfirmation {
-                Label("Added to note", systemImage: "checkmark.circle.fill")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 6)
-                    .background(.regularMaterial, in: .rect(cornerRadius: 7))
-                    .padding(4)
-                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .topTrailing)))
             }
         }
         .animation(.easeOut(duration: 0.12), value: canAddToNote)
@@ -699,7 +719,7 @@ private struct SelectableAIText: NSViewRepresentable {
     let markdown: String
     let isDark: Bool
     let clearSelectionToken: Int
-    let onSelectionChange: (String?) -> Void
+    let onSelectionChange: (String?, CGRect?) -> Void
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -783,15 +803,36 @@ private struct SelectableAIText: NSViewRepresentable {
             guard let textView else { return }
             let range = textView.selectedRange()
             let selected: String?
+            var selectionRect: CGRect?
             if range.length > 0 {
                 let value = (textView.string as NSString).substring(with: range)
                     .trimmingCharacters(in: .whitespacesAndNewlines)
                 selected = value.isEmpty ? nil : value
+                if selected != nil,
+                   let layoutManager = textView.layoutManager,
+                   let textContainer = textView.textContainer {
+                    layoutManager.ensureLayout(for: textContainer)
+                    let glyphs = layoutManager.glyphRange(
+                        forCharacterRange: range,
+                        actualCharacterRange: nil
+                    )
+                    if glyphs.length > 0 {
+                        var lineGlyphs = NSRange()
+                        layoutManager.lineFragmentUsedRect(
+                            forGlyphAt: glyphs.location,
+                            effectiveRange: &lineGlyphs
+                        )
+                        let firstLine = NSIntersectionRange(glyphs, lineGlyphs)
+                        let rect = layoutManager.boundingRect(forGlyphRange: firstLine, in: textContainer)
+                        let origin = textView.textContainerOrigin
+                        selectionRect = rect.offsetBy(dx: origin.x, dy: origin.y)
+                    }
+                }
             } else {
                 selected = nil
             }
             DispatchQueue.main.async { [parent] in
-                parent.onSelectionChange(selected)
+                parent.onSelectionChange(selected, selectionRect)
             }
         }
 

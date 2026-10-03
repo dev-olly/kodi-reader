@@ -11,7 +11,8 @@ struct ReaderScreen: View {
     @Environment(AppModel.self) private var model
     @State private var isShowingTypography = false
     @State private var editingAnnotation: Annotation?
-    /// True when the note editor was opened from the selection palette's Add Note.
+    @State private var activeHighlight: ActiveHighlight?
+    /// True when the note editor should focus its text field on opening.
     @State private var noteEditorAutofocus = false
     /// True when the inspector was opened only to host the sidebar editor.
     @State private var inspectorOpenedForEditor = false
@@ -69,6 +70,11 @@ struct ReaderScreen: View {
                 // Backup if a caller toggled visibility without pinning first.
                 reader.pinRestoreCurrentPositionOnce()
             }
+            .onChange(of: reader.selection) { _, selection in
+                if selection != nil { activeHighlight = nil }
+            }
+            .onChange(of: reader.page) { _, _ in activeHighlight = nil }
+            .onChange(of: reader.spineIndex) { _, _ in activeHighlight = nil }
             .onChange(of: model.isShowingAnnotations) { _, showing in
                 reader.pinRestoreCurrentPositionOnce()
                 if !showing, model.workspace == .closed, model.settings.noteEditorPlacement == .sidebar {
@@ -322,11 +328,43 @@ struct ReaderScreen: View {
         .frame(width: Self.navRailWidth)
     }
 
-    /// Anchored to the selection's own rect, which the runtime reports in
-    /// viewport coordinates.
+    private struct ActiveHighlight {
+        let id: UUID
+        let rect: CGRect
+    }
+
+    /// Anchored to viewport coordinates reported by the reader runtime.
     @ViewBuilder
     private var selectionPopover: some View {
-        if let selection = reader.selection {
+        if let activeHighlight,
+           let annotation = model.annotation(with: activeHighlight.id) {
+            HighlightPalette(
+                onPick: { model.changeColor($0, for: annotation.id) },
+                onAddNote: {
+                    self.activeHighlight = nil
+                    openNoteEditor(annotation, autofocus: !annotation.hasContent)
+                },
+                onAskAI: {
+                    self.activeHighlight = nil
+                    model.addAnnotationToChat(annotation)
+                },
+                onCopy: { copyToPasteboard(annotation.text) },
+                onDismiss: { self.activeHighlight = nil },
+                currentColor: annotation.visibleHighlightColor,
+                hasNote: annotation.hasNote,
+                hasAttachedContent: annotation.hasContent,
+                onDelete: {
+                    self.activeHighlight = nil
+                    deleteAnnotation(annotation.id)
+                }
+            )
+            .id(annotation.id)
+            .offset(
+                x: max(12, activeHighlight.rect.midX - 200),
+                y: max(12, activeHighlight.rect.maxY + 10)
+            )
+            .transition(.scale(scale: 0.94).combined(with: .opacity))
+        } else if let selection = reader.selection {
             HighlightPalette(
                 onPick: { _ = model.addHighlight(color: $0) },
                 onAddNote: {
@@ -336,10 +374,7 @@ struct ReaderScreen: View {
                     editingAnnotation = nil
                     model.addSelectionToChat()
                 },
-                onCopy: {
-                    NSPasteboard.general.clearContents()
-                    NSPasteboard.general.setString(selection.text, forType: .string)
-                },
+                onCopy: { copyToPasteboard(selection.text) },
                 onDismiss: { reader.clearSelection() }
             )
             .offset(
@@ -348,6 +383,11 @@ struct ReaderScreen: View {
             )
             .transition(.scale(scale: 0.94).combined(with: .opacity))
         }
+    }
+
+    private func copyToPasteboard(_ text: String) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(text, forType: .string)
     }
 
     private var isSidebarPlacement: Bool {
@@ -442,8 +482,9 @@ struct ReaderScreen: View {
     }
 
     private func handleHighlightActivated(id: UUID, rect: CGRect) {
-        guard let annotation = model.annotation(with: id) else { return }
-        openNoteEditor(annotation, autofocus: !annotation.hasContent)
+        guard model.annotation(with: id) != nil else { return }
+        reader.clearSelection()
+        activeHighlight = ActiveHighlight(id: id, rect: rect)
     }
 
     private func addNote(from selection: ReaderSelection) {

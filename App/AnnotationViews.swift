@@ -4,13 +4,17 @@ import ReaderUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Colour picker shown next to a fresh selection, plus a way to open a note.
+/// Actions shown next to a fresh selection or an existing highlight.
 struct HighlightPalette: View {
     let onPick: (HighlightColor) -> Void
     let onAddNote: () -> Void
     let onAskAI: () -> Void
     let onCopy: () -> Void
     let onDismiss: () -> Void
+    var currentColor: HighlightColor? = nil
+    var hasNote = false
+    var hasAttachedContent = false
+    var onDelete: (() -> Void)? = nil
 
     @State private var copied = false
     @State private var copyGeneration = 0
@@ -21,9 +25,17 @@ struct HighlightPalette: View {
                 ForEach(HighlightColor.allCases, id: \.self) { color in
                     Button { onPick(color) } label: {
                         swatch(for: color)
+                            .padding(3)
+                            .overlay {
+                                if currentColor == color {
+                                    RoundedRectangle(cornerRadius: 5)
+                                        .strokeBorder(.primary, lineWidth: 1.5)
+                                }
+                            }
                     }
                     .buttonStyle(.plain)
                     .help(color.displayName)
+                    .accessibilityLabel(color.displayName + " highlight")
                 }
 
                 Divider().frame(height: 20)
@@ -31,12 +43,12 @@ struct HighlightPalette: View {
                 Button(action: onAddNote) {
                     HStack(spacing: 4) {
                         Image(systemName: "text.badge.plus")
-                        Text("Note")
+                        Text(hasNote ? "Edit Note" : "Note")
                     }
                     .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help("Highlight and add a note")
+                .help(currentColor == nil ? "Highlight and add a note" : "Open note for this highlight")
 
                 Button(action: onAskAI) {
                     HStack(spacing: 4) {
@@ -46,7 +58,7 @@ struct HighlightPalette: View {
                     .font(.system(size: 12, weight: .medium))
                 }
                 .buttonStyle(.plain)
-                .help("Ask AI about this selection")
+                .help(currentColor == nil ? "Ask AI about this selection" : "Ask AI about this highlight")
 
                 Button(action: copyTapped) {
                     HStack(spacing: 4) {
@@ -57,7 +69,7 @@ struct HighlightPalette: View {
                     .foregroundStyle(copied ? Color.secondary : Color.primary)
                 }
                 .buttonStyle(.plain)
-                .help(copied ? "Copied to clipboard" : "Copy selected text")
+                .help(copied ? "Copied to clipboard" : currentColor == nil ? "Copy selected text" : "Copy highlighted text")
                 .overlay(alignment: .bottom) {
                     if copied {
                         Text("Copied to clipboard")
@@ -72,6 +84,18 @@ struct HighlightPalette: View {
                             .transition(.opacity.combined(with: .scale(scale: 0.96)))
                             .allowsHitTesting(false)
                     }
+                }
+
+                if let onDelete {
+                    Divider().frame(height: 20)
+
+                    Button(action: onDelete) {
+                        Image(systemName: "trash")
+                            .font(.system(size: 12))
+                    }
+                    .buttonStyle(.plain)
+                    .help(hasAttachedContent ? "Delete highlight and its note or drawing" : "Delete highlight")
+                    .accessibilityLabel(hasAttachedContent ? "Delete highlight and its note or drawing" : "Delete highlight")
                 }
 
                 Divider().frame(height: 20)

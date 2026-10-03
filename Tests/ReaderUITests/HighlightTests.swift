@@ -45,6 +45,82 @@ final class HighlightTests: XCTestCase {
         XCTAssertGreaterThan(count, 0, "The highlight produced no rects")
     }
 
+    func testInlineItalicsDoNotDoublePaintHighlight() throws {
+        let (reader, chapter) = try loadTextChapter()
+        var updated = false
+        reader.evaluateForTesting("""
+        (function () {
+          var p = document.querySelector('p');
+          p.innerHTML = 'Before the <em>new</em> idea and after the <em>old</em> idea.';
+          return true;
+        })()
+        """) { _ in updated = true }
+        XCTAssertTrue(spin(timeout: 5) { updated })
+
+        reader.setAnnotations([
+            Annotation(
+                locator: Locator(
+                    spineIndex: chapter,
+                    start: TextPosition(elementPath: [999], offset: 0)
+                ),
+                text: "Before the new idea and after the old idea.",
+                color: .green
+            )
+        ])
+        let count = waitForNumber(
+            reader,
+            "document.querySelectorAll('.reader-highlight-rect').length"
+        ) { $0 > 0 }
+        XCTAssertGreaterThan(count ?? 0, 0)
+
+        let overlappingPairs = waitForNumber(reader, """
+        (function () {
+          var rects = Array.from(document.querySelectorAll('.reader-highlight-rect'))
+            .map(function (el) { return el.getBoundingClientRect(); });
+          var count = 0;
+          for (var i = 0; i < rects.length; i++) {
+            for (var j = i + 1; j < rects.length; j++) {
+              var width = Math.min(rects[i].right, rects[j].right)
+                - Math.max(rects[i].left, rects[j].left);
+              var height = Math.min(rects[i].bottom, rects[j].bottom)
+                - Math.max(rects[i].top, rects[j].top);
+              if (width > 0.5 && height > 0.5) count++;
+            }
+          }
+          return count;
+        })()
+        """) { _ in true }
+        XCTAssertEqual(overlappingPairs, 0, "Inline italics received a second highlight layer")
+    }
+
+    func testClickingPaintedHighlightReportsItsIdentityAndRect() throws {
+        let (reader, chapter) = try loadTextChapter()
+        let anchor = try XCTUnwrap(reportedPosition)
+        let annotation = Annotation(
+            locator: Locator(
+                spineIndex: chapter,
+                start: anchor,
+                end: TextPosition(elementPath: anchor.elementPath, offset: anchor.offset + 25)
+            ),
+            text: "highlighted passage",
+            color: .yellow
+        )
+
+        var activated: (UUID, CGRect)?
+        reader.onHighlightActivated = { activated = ($0, $1) }
+        reader.setAnnotations([annotation])
+        _ = try XCTUnwrap(waitForNumber(
+            reader,
+            "document.querySelectorAll('.reader-highlight-rect').length"
+        ) { $0 > 0 })
+
+        reader.evaluateForTesting("document.querySelector('.reader-highlight-rect').click()") { _ in }
+        XCTAssertTrue(spin(timeout: 5) { activated != nil })
+        XCTAssertEqual(activated?.0, annotation.id)
+        XCTAssertGreaterThan(activated?.1.width ?? 0, 0)
+        XCTAssertGreaterThan(activated?.1.height ?? 0, 0)
+    }
+
     func testNoteAlwaysPaintsAFilledHighlightEvenIfSavedAsUnderline() throws {
         let (reader, chapter) = try loadTextChapter()
         let anchor = try XCTUnwrap(reportedPosition, "No position was reported")

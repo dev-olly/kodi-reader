@@ -1075,6 +1075,46 @@
     return { status: "orphaned", range: null, locator: null };
   }
 
+  // Range.getClientRects() includes both an inline element's box and its text
+  // fragments. Painting both makes emphasis such as <em> appear more saturated.
+  function highlightRects(range) {
+    var merged = [];
+    var rects = range.getClientRects();
+    for (var i = 0; i < rects.length; i++) {
+      var rect = rects[i];
+      if (rect.width < 1 || rect.height < 1) continue;
+      var current = {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      };
+
+      for (var j = 0; j < merged.length;) {
+        var other = merged[j];
+        var centerDistance = Math.abs(
+          (current.top + current.bottom - other.top - other.bottom) / 2
+        );
+        var sameLine = centerDistance <=
+          Math.min(current.bottom - current.top, other.bottom - other.top) / 2;
+        var horizontalOverlap = current.left <= other.right + 0.5 &&
+          other.left <= current.right + 0.5;
+        if (sameLine && horizontalOverlap) {
+          current.left = Math.min(current.left, other.left);
+          current.top = Math.min(current.top, other.top);
+          current.right = Math.max(current.right, other.right);
+          current.bottom = Math.max(current.bottom, other.bottom);
+          merged.splice(j, 1);
+          j = 0;
+        } else {
+          j++;
+        }
+      }
+      merged.push(current);
+    }
+    return merged.sort(function (a, b) { return a.top - b.top || a.left - b.left; });
+  }
+
   function renderHighlights() {
     var layer = highlightLayer();
     layer.textContent = "";
@@ -1103,10 +1143,9 @@
         highlight.end = resolved.locator.end;
       }
 
-      var rects = resolved.range.getClientRects();
+      var rects = highlightRects(resolved.range);
       for (var r = 0; r < rects.length; r++) {
         var rect = rects[r];
-        if (rect.width < 1 || rect.height < 1) continue;
 
         var div = document.createElement("div");
         div.className = "reader-highlight-rect";
@@ -1115,8 +1154,8 @@
         if (highlight.hasNote && r === 0) div.dataset.hasNote = "true";
         div.style.left = rect.left + scrollLeft + "px";
         div.style.top = rect.top + scrollTop + "px";
-        div.style.width = rect.width + "px";
-        div.style.height = rect.height + "px";
+        div.style.width = rect.right - rect.left + "px";
+        div.style.height = rect.bottom - rect.top + "px";
         div.style.backgroundColor = highlight.color || "rgba(255, 214, 69, 0.45)";
         if (highlight.style === "underline") {
           div.style.setProperty("--highlight-underline-color", highlight.color);

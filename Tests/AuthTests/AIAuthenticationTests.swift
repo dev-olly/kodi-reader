@@ -154,6 +154,18 @@ final class AIAuthenticationTests: XCTestCase {
         XCTAssertEqual(chat.pendingReferences, [reference])
     }
 
+    func testSignedOutPromptBadgeStagesPromptForRetry() throws {
+        let auth = AIAuthController(client: nil)
+        let chat = try chat(auth: auth)
+        chat.input = "My unfinished question"
+
+        chat.send(prompt: "Summarize this passage")
+
+        XCTAssertTrue(auth.showingSignIn)
+        XCTAssertEqual(chat.input, "My unfinished question\nSummarize this passage")
+        XCTAssertTrue(chat.messages.isEmpty)
+    }
+
     func testVerifiedCodeCreatesSessionButDoesNotSendDraft() async throws {
         let wireSession = session()
         let sdk = try client { request in
@@ -262,6 +274,24 @@ final class AIAuthenticationTests: XCTestCase {
         try await settle(chat)
         XCTAssertEqual(chat.messages.last?.text, "An answer")
         XCTAssertNil(chat.errorMessage)
+    }
+
+    func testPromptBadgeSendsImmediatelyAndKeepsComposerDraft() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let body = "data: {\"choices\":[{\"delta\":{\"content\":\"An answer\"}}]}\n\ndata: [DONE]\n\n"
+        let chat = try chat(auth: auth, network: network(status: 200, body: body))
+        let reference = ChatReference(quotedText: "A passage", spineIndex: 0)
+        chat.input = "My unfinished question"
+        chat.pendingReferences = [reference]
+
+        chat.send(prompt: "Summarize this passage")
+        try await settle(chat)
+
+        XCTAssertEqual(chat.messages.first?.text, "Summarize this passage")
+        XCTAssertEqual(chat.messages.first?.references, [reference])
+        XCTAssertEqual(chat.messages.last?.text, "An answer")
+        XCTAssertEqual(chat.input, "My unfinished question")
+        XCTAssertTrue(chat.pendingReferences.isEmpty)
     }
 
     func testSignOutClearsLocalSessionEvenOfflineAndCallsCancellation() async throws {

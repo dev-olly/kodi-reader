@@ -3,26 +3,25 @@
 ## Current delivery state
 
 The Google transport, provider UI, durable per-account journals, and local
-deterministic tests are implemented. On 3 October 2026, Drive API and the
-non-sensitive `drive.appdata` scope were enabled in the `kodi-reader` Google
-Cloud project. A separate Desktop OAuth client was created, and its ID and
-client secret were added to ignored `Config/Auth.local.xcconfig`. Google’s token
-endpoint rejected this Desktop client without `client_secret` even though its
-desktop OAuth guide marks that parameter optional; Kodi now supplies it during
-authorization-code and refresh exchanges. Live authorization and the Drive
-account lookup succeeded in a local Debug build, and the Keychain connection
-survived an app restart. The provider stayed on iCloud, so no library copy or
-two-Mac sync has been verified. A Debug-iCloud app build
-succeeded with the credentials embedded and the loopback-listener entitlement, but
-strict signature verification reports `CSSMERR_TP_NOT_TRUSTED` for the local
-development certificate. The repository's unsigned Debug build also succeeded;
-use a properly signed development build for final Keychain and iCloud testing.
-The external consent screen remains in Testing with incomplete branding. Full
-Google Drive sync, two-Mac testing, production consent, and a
-Google-enabled notarized release remain to be completed.
-The repository privacy page includes Google Drive sync, but the live site still
-shows the earlier iCloud-only policy; publish the updated page before production
-OAuth rollout.
+deterministic tests are implemented. The `kodi-reader` Google Cloud project has
+Drive API and only the non-sensitive `drive.appdata` OAuth scope enabled. A
+separate Desktop OAuth client is configured in ignored
+`Config/Auth.local.xcconfig`. Google's token endpoint rejected this client
+without `client_secret` even though its desktop OAuth guide marks that
+parameter optional; Kodi now supplies it during code and refresh exchanges.
+Live authorization and Drive account lookup succeeded, and the Keychain
+connection survived an app restart. The provider stayed on iCloud, so no
+library copy or two-Mac sync has been verified.
+
+On 7 October 2026, the live privacy and terms pages were confirmed and the
+Google consent branding was completed. The external OAuth audience remains in
+Testing pending publication. Kodi Reader 0.4.2 passed 197 Swift package tests
+and 29 Xcode authentication tests. Its Google-enabled, Developer ID signed DMG
+was notarized and passed Gatekeeper assessment. The signed app launched and
+showed its existing Google connection in Sync settings. The DMG is staged in a
+draft GitHub release; public release and Sparkle feed publication are pending
+the Google OAuth audience moving to Production. Two-Mac sync testing remains
+outstanding and is the purpose of this test release.
 
 ## Google configuration
 
@@ -102,5 +101,5 @@ and drawing edits, deletion, on-demand and offline downloads, a PDF larger than
 switch one Mac from iCloud to Google and back. Confirm the copy prompt, missing
 book handling, separate journals, and unchanged older cloud copy. Repeat with
 a different Google account, no connection, revoked permission, rate limiting,
-and exhausted Google storage. Verify the iCloud tests and signed build before
-publishing an update.
+and exhausted Google storage. Complete these checks before treating Google
+Drive sync as fully validated for general release.

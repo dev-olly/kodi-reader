@@ -3,12 +3,22 @@
 ## Current delivery state
 
 The Google transport, provider UI, durable per-account journals, and local
-deterministic tests are implemented. On 3 October 2026, the existing Google
-Cloud project `kodi-reader` was inspected: Drive API is enabled, its only
-OAuth client is a web client for Supabase, and the external consent screen is
-in Testing with incomplete branding. A Desktop OAuth client is not configured
-in `Config/Auth.local.xcconfig`. The app compiles and focused local tests pass,
-but live Google Drive authorization, two-Mac testing, production consent, and a
+deterministic tests are implemented. On 3 October 2026, Drive API and the
+non-sensitive `drive.appdata` scope were enabled in the `kodi-reader` Google
+Cloud project. A separate Desktop OAuth client was created, and its ID and
+client secret were added to ignored `Config/Auth.local.xcconfig`. Google’s token
+endpoint rejected this Desktop client without `client_secret` even though its
+desktop OAuth guide marks that parameter optional; Kodi now supplies it during
+authorization-code and refresh exchanges. Live authorization and the Drive
+account lookup succeeded in a local Debug build, and the Keychain connection
+survived an app restart. The provider stayed on iCloud, so no library copy or
+two-Mac sync has been verified. A Debug-iCloud app build
+succeeded with the credentials embedded and the loopback-listener entitlement, but
+strict signature verification reports `CSSMERR_TP_NOT_TRUSTED` for the local
+development certificate. The repository's unsigned Debug build also succeeded;
+use a properly signed development build for final Keychain and iCloud testing.
+The external consent screen remains in Testing with incomplete branding. Full
+Google Drive sync, two-Mac testing, production consent, and a
 Google-enabled notarized release remain to be completed.
 The repository privacy page includes Google Drive sync, but the live site still
 shows the earlier iCloud-only policy; publish the updated page before production
@@ -20,11 +30,13 @@ OAuth rollout.
    Drive API. Configure the OAuth consent screen for production, adding Kodi's
    name, homepage, privacy policy, and support contact. Request only
    `https://www.googleapis.com/auth/drive.appdata` for Drive sync.
-2. Create an OAuth client of type **Desktop app**. Put its public client ID in
-   ignored `Config/Auth.local.xcconfig` as
-   `GOOGLE_DRIVE_CLIENT_ID = <client-id>.apps.googleusercontent.com`. Do not add
-   a client secret: desktop apps cannot keep one confidential. The Ask AI Google
-   sign-in client and scopes are separate.
+2. Create an OAuth client of type **Desktop app**. Put its client ID and matching
+   client secret in ignored `Config/Auth.local.xcconfig` as
+   `GOOGLE_DRIVE_CLIENT_ID = <client-id>.apps.googleusercontent.com` and
+   `GOOGLE_DRIVE_CLIENT_SECRET = <client-secret>`. Never commit this file. A
+   desktop app cannot keep an embedded client secret confidential, so treat it
+   as an OAuth client identifier, not a server credential. PKCE still protects
+   each authorization code. The Ask AI Google sign-in client and scopes are separate.
 3. Generate the project with `xcodegen generate`. Build a Debug or Debug-iCloud
    app and verify **Connect Google Drive** opens the system browser, completes
    authorization through a random loopback port, and identifies the account.
@@ -36,7 +48,7 @@ OAuth rollout.
    API usage, quota, and project cost controls. Package a Developer ID signed,
    notarized app with `Scripts/package-dmg.sh --icloud --google-drive --notarize`
    and verify the final app's `GoogleDriveClientID` is populated. The release
-   script checks this when `--google-drive` is specified.
+   script checks both Desktop client fields when `--google-drive` is specified.
 
 Google references: [app-data folder](https://developers.google.com/workspace/drive/api/guides/appdata),
 [desktop OAuth and PKCE](https://developers.google.com/identity/protocols/oauth2/native-app),

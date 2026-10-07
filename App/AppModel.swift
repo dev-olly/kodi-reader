@@ -106,7 +106,8 @@ final class AppModel {
         self.store = store
         let iCloudEnabled = (Bundle.main.object(forInfoDictionaryKey: "iCloudSyncEnabled") as? String) == "YES"
         self.sync = LibrarySyncService(store: store, iCloudEnabled: iCloudEnabled,
-            googleClientID: Bundle.main.object(forInfoDictionaryKey: "GoogleDriveClientID") as? String)
+            googleClientID: Bundle.main.object(forInfoDictionaryKey: "GoogleDriveClientID") as? String,
+            googleClientSecret: Bundle.main.object(forInfoDictionaryKey: "GoogleDriveClientSecret") as? String)
         settings = (try? store.migrateAppearanceSettings(defaultSettings: ReaderSettings()) {
             $0.applyAppearanceDefaults()
         }) ?? store.loadSettings(ReaderSettings.self) ?? ReaderSettings()

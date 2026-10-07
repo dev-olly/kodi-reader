@@ -3,8 +3,9 @@ SUPABASE_URL =
 SUPABASE_PUBLISHABLE_KEY =
 // Enable only after the provider and signed build are verified.
 GOOGLE_SIGN_IN_ENABLED = NO
-// Public desktop OAuth client ID; configure in Auth.local.xcconfig.
+// Desktop OAuth credentials; configure in ignored Auth.local.xcconfig.
 GOOGLE_DRIVE_CLIENT_ID =
+GOOGLE_DRIVE_CLIENT_SECRET =
 APPLE_SIGN_IN_ENABLED = NO
 // Payment development is opt-in; public releases keep this disabled.
 PAYMENTS_ENABLED = YES

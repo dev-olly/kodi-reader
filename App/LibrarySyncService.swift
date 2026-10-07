@@ -31,12 +31,12 @@ final class LibrarySyncService {
     var googleConfigured: Bool { driveAuthorization.isConfigured }
     var googleConnected: Bool { driveAuthorization.isConnected }
 
-    init(store: LibraryStore, iCloudEnabled: Bool, googleClientID: String?) {
+    init(store: LibraryStore, iCloudEnabled: Bool, googleClientID: String?, googleClientSecret: String?) {
         self.store = store
         root = store.rootDirectory.appendingPathComponent("Sync", isDirectory: true)
         selectionURL = root.appendingPathComponent("selection.json")
         cloud = CloudKitSyncTransport(stagingDirectory: root.appendingPathComponent("Payloads"), enabled: iCloudEnabled)
-        driveAuthorization = GoogleDriveAuthorization(clientID: googleClientID)
+        driveAuthorization = GoogleDriveAuthorization(clientID: googleClientID, clientSecret: googleClientSecret)
         drive = GoogleDriveSyncTransport(credentials: driveAuthorization,
                                          stagingDirectory: root.appendingPathComponent("DrivePayloads"))
         let selection = (try? Data(contentsOf: selectionURL)).flatMap { try? JSONDecoder().decode(Selection.self, from: $0) }

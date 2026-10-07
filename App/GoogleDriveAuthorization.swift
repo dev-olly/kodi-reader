@@ -8,23 +8,52 @@ import Security
 /// Drive consent is separate from Ask AI's Supabase Google sign-in.
 @MainActor
 final class GoogleDriveAuthorization: GoogleDriveCredentialProvider {
+    private enum AuthorizationError: LocalizedError {
+        case browserUnavailable
+        case callbackInvalid
+        case tokenExchange(Int, String?)
+        case tokenResponseInvalid
+        case refreshTokenMissing
+        case keychain(OSStatus)
+
+        var errorDescription: String? {
+            switch self {
+            case .browserUnavailable:
+                "Could not open the Google sign-in page. Please try again."
+            case .callbackInvalid:
+                "Google sign-in did not return a valid confirmation to Kodi. Please try again."
+            case let .tokenExchange(status, code):
+                "Google rejected the Drive connection (HTTP \(status)\(code.map { ", \($0)" } ?? "")). Please try again."
+            case .tokenResponseInvalid:
+                "Google returned an incomplete Drive connection response. Please try again."
+            case .refreshTokenMissing:
+                "Google did not grant offline Drive access. Remove Kodi Reader’s access in your Google Account and connect again."
+            case let .keychain(status):
+                "Kodi could not save the Google Drive connection in Keychain (code \(status)). Try a signed build or check Keychain access."
+            }
+        }
+    }
+
     private let clientID: String?
+    private let clientSecret: String?
     private let session: URLSession
     private let keychainService = "com.olly.KodiReader.google-drive"
     private var currentToken: String?
     private var expiresAt = Date.distantPast
 
-    var isConfigured: Bool { clientID != nil }
+    var isConfigured: Bool { clientID != nil && clientSecret != nil }
     var isConnected: Bool { refreshToken != nil }
 
-    init(clientID: String?, session: URLSession = .shared) {
-        let normalized = clientID?.trimmingCharacters(in: .whitespacesAndNewlines)
-        self.clientID = normalized.flatMap { $0.isEmpty || $0.contains("$(") ? nil : $0 }
+    init(clientID: String?, clientSecret: String?, session: URLSession = .shared) {
+        let normalizedID = clientID?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.clientID = normalizedID.flatMap { $0.isEmpty || $0.contains("$(") ? nil : $0 }
+        let normalizedSecret = clientSecret?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.clientSecret = normalizedSecret.flatMap { $0.isEmpty || $0.contains("$(") ? nil : $0 }
         self.session = session
     }
 
     func connect() async throws {
-        guard let clientID else { throw SyncFailure.googleNotConfigured }
+        guard let clientID, let clientSecret else { throw SyncFailure.googleNotConfigured }
         let verifier = try Self.randomURLSafe(count: 64)
         let state = try Self.randomURLSafe(count: 32)
         let listener = try LoopbackOAuthListener()
@@ -44,26 +73,31 @@ final class GoogleDriveAuthorization: GoogleDriveCredentialProvider {
         ]
         guard let authorizationURL = url.url, NSWorkspace.shared.open(authorizationURL) else {
             listener.close()
-            throw SyncFailure.googleSignInRequired
+            throw AuthorizationError.browserUnavailable
         }
         let callback = try await listener.waitForCallback()
-        guard callback.state == state, let code = callback.code else { throw SyncFailure.googleSignInRequired }
+        guard callback.state == state, let code = callback.code else { throw AuthorizationError.callbackInvalid }
         let response = try await exchange([
-            "client_id": clientID, "code": code, "code_verifier": verifier,
+            "client_id": clientID, "client_secret": clientSecret, "code": code, "code_verifier": verifier,
             "redirect_uri": redirect, "grant_type": "authorization_code"
         ])
-        guard let refresh = response.refresh_token else { throw SyncFailure.googleSignInRequired }
+        guard let refresh = response.refresh_token else { throw AuthorizationError.refreshTokenMissing }
         try saveRefreshToken(refresh)
+        let saved = readRefreshToken()
+        guard saved.status == errSecSuccess, saved.token != nil else {
+            throw AuthorizationError.keychain(saved.status)
+        }
         currentToken = response.access_token
         expiresAt = Date().addingTimeInterval(TimeInterval(response.expires_in) - 60)
     }
 
     func accessToken() async throws -> String {
         if let currentToken, Date() < expiresAt { return currentToken }
-        guard let clientID else { throw SyncFailure.googleNotConfigured }
+        guard let clientID, let clientSecret else { throw SyncFailure.googleNotConfigured }
         guard let refreshToken else { throw SyncFailure.googleSignInRequired }
         let response = try await exchange([
-            "client_id": clientID, "refresh_token": refreshToken, "grant_type": "refresh_token"
+            "client_id": clientID, "client_secret": clientSecret,
+            "refresh_token": refreshToken, "grant_type": "refresh_token"
         ])
         if let replacement = response.refresh_token { try saveRefreshToken(replacement) }
         currentToken = response.access_token
@@ -80,15 +114,19 @@ final class GoogleDriveAuthorization: GoogleDriveCredentialProvider {
     }
 
     private var refreshToken: String? {
+        readRefreshToken().token
+    }
+
+    private func readRefreshToken() -> (token: String?, status: OSStatus) {
         let query: [String: Any] = [kSecClass as String: kSecClassGenericPassword,
                                     kSecAttrService as String: keychainService,
                                     kSecAttrAccount as String: "refresh-token",
                                     kSecReturnData as String: true,
                                     kSecMatchLimit as String: kSecMatchLimitOne]
         var item: CFTypeRef?
-        guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+        let status = SecItemCopyMatching(query as CFDictionary, &item)
+        guard status == errSecSuccess, let data = item as? Data else { return (nil, status) }
+        return (String(data: data, encoding: .utf8), status)
     }
 
     private func saveRefreshToken(_ token: String) throws {
@@ -98,11 +136,12 @@ final class GoogleDriveAuthorization: GoogleDriveCredentialProvider {
         let data = Data(token.utf8)
         let updated = SecItemUpdate(query as CFDictionary, [kSecValueData as String: data] as CFDictionary)
         if updated == errSecSuccess { return }
-        guard updated == errSecItemNotFound else { throw SyncFailure.googleSignInRequired }
+        guard updated == errSecItemNotFound else { throw AuthorizationError.keychain(updated) }
         var item = query
         item[kSecValueData as String] = data
         item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
-        guard SecItemAdd(item as CFDictionary, nil) == errSecSuccess else { throw SyncFailure.googleSignInRequired }
+        let added = SecItemAdd(item as CFDictionary, nil)
+        guard added == errSecSuccess else { throw AuthorizationError.keychain(added) }
     }
 
     private struct TokenResponse: Decodable {
@@ -119,10 +158,23 @@ final class GoogleDriveAuthorization: GoogleDriveCredentialProvider {
         form.queryItems = parameters.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
         request.httpBody = Data((form.percentEncodedQuery ?? "").utf8)
         let (data, response) = try await session.data(for: request)
-        guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw SyncFailure.googleSignInRequired
+        guard let http = response as? HTTPURLResponse else { throw AuthorizationError.tokenResponseInvalid }
+        guard http.statusCode == 200 else {
+            let oauthCode = (try? JSONDecoder().decode(OAuthErrorResponse.self, from: data))?.error
+            let safeCode = oauthCode.flatMap { Self.safeOAuthErrorCode($0) }
+            throw AuthorizationError.tokenExchange(http.statusCode, safeCode)
         }
-        return try JSONDecoder().decode(TokenResponse.self, from: data)
+        guard let token = try? JSONDecoder().decode(TokenResponse.self, from: data) else {
+            throw AuthorizationError.tokenResponseInvalid
+        }
+        return token
+    }
+
+    private struct OAuthErrorResponse: Decodable { let error: String }
+
+    private static func safeOAuthErrorCode(_ code: String) -> String? {
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
+        return code.count <= 64 && code.unicodeScalars.allSatisfy(allowed.contains) ? code : nil
     }
 
     private static func randomURLSafe(count: Int) throws -> String {

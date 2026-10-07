@@ -108,8 +108,13 @@ fi
 
 if [[ "$GOOGLE_DRIVE" == 1 ]]; then
   DRIVE_CLIENT_ID="$(/usr/libexec/PlistBuddy -c 'Print :GoogleDriveClientID' "$APP/Contents/Info.plist")"
+  DRIVE_CLIENT_SECRET="$(/usr/libexec/PlistBuddy -c 'Print :GoogleDriveClientSecret' "$APP/Contents/Info.plist")"
   if [[ ! "$DRIVE_CLIENT_ID" =~ ^[A-Za-z0-9._-]+\.apps\.googleusercontent\.com$ ]] || [[ "$DRIVE_CLIENT_ID" == YOUR_CLIENT_ID* ]]; then
     echo "Google Drive release requires a configured Desktop OAuth client ID in the final app." >&2
+    exit 1
+  fi
+  if [[ ! "$DRIVE_CLIENT_SECRET" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    echo "Google Drive release requires the matching Desktop OAuth client secret in the final app." >&2
     exit 1
   fi
 fi

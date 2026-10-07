@@ -13,15 +13,15 @@ Live authorization and Drive account lookup succeeded, and the Keychain
 connection survived an app restart. The provider stayed on iCloud, so no
 library copy or two-Mac sync has been verified.
 
-On 7 October 2026, the live privacy and terms pages were confirmed and the
-Google consent branding was completed. The external OAuth audience remains in
-Testing pending publication. Kodi Reader 0.4.2 passed 197 Swift package tests
+On 7 October 2026, the live privacy and terms pages were confirmed, Google
+consent branding was completed, and the external OAuth audience moved to
+Production. Kodi Reader 0.4.2 passed 197 Swift package tests
 and 29 Xcode authentication tests. Its Google-enabled, Developer ID signed DMG
 was notarized and passed Gatekeeper assessment. The signed app launched and
-showed its existing Google connection in Sync settings. The DMG is staged in a
-draft GitHub release; public release and Sparkle feed publication are pending
-the Google OAuth audience moving to Production. Two-Mac sync testing remains
-outstanding and is the purpose of this test release.
+showed its existing Google connection in Sync settings. The DMG was published
+as GitHub release `v0.4.2`, and the signed Sparkle feed points to its public
+download. Two-Mac sync testing remains outstanding and is the purpose of this
+test release.
 
 ## Google configuration
 

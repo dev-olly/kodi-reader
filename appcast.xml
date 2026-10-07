@@ -6,6 +6,30 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.2</title>
+            <pubDate>Wed, 07 Oct 2026 23:11:03 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>8</sparkle:version>
+            <sparkle:shortVersionString>0.4.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.2
+
+This update adds optional Google Drive sync alongside iCloud for cross-device testing on Mac.
+
+- In **Settings → Sync**, connect Google Drive separately from Ask AI sign-in, then choose **Notes only** or **Books and notes**. Sync remains off until you select a provider on each Mac.
+- Notes only includes highlights, notes, drawings, bookmarks, reading position, and book details. Import or locate the matching book on each Mac. Books and notes also transfers EPUBs, PDFs, and saved webpages; book files download when opened or when you choose **Download for Offline Reading**.
+- **Sync Ask AI history** is a separate opt-in. Drafts, credentials, credits, and AI settings stay local.
+- Switching between iCloud and Google Drive asks you to confirm a one-time copy. The previous cloud copy remains in its account. Local reading and editing continue offline.
+- The Google Drive connection now completes its desktop authorization and saves the connection in Keychain. Settings shows the connected account, sync status, and **Sync Now**.
+
+Google Drive uses a hidden Kodi app-data folder in your Google account and counts against your Google storage allowance. It checks for changes every five minutes while Kodi is active. Before relying on sync as your only copy, verify your library and notes on both Macs. See the [Google Drive sync guide](https://github.com/dev-olly/kodi-reader/blob/main/docs/google-drive-sync.md).
+
+The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.2/KodiReader.dmg" length="8211324" type="application/octet-stream" sparkle:edSignature="uzq56ccVeR0qxP0sAT0Ji0YVDuDuMWwTtMyg07kWffJU/KlGZC1pjkeLNpvXY6meznOJ5KSBHz4b/Bdqn9xDBw=="/>
+        </item>
+        <item>
             <title>0.4.1</title>
             <pubDate>Wed, 30 Sep 2026 01:19:04 +0200</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -60,7 +84,8 @@ Requires Apple Silicon and macOS 15 or later.
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.3.2/KodiReader.dmg" length="7406089" type="application/octet-stream" sparkle:edSignature="m/ocLqogWPOv5lsah9rcsMq62QyrC/d1JSEI0dZi2xQ6G1EdDx7cLZ6lIXOuLTHQlxwgtSp9eDW08xIM/iszBQ=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: nJOUbqb+z2aRD+kUOekoJdVo4cStDq67pimYayiNvrj05q/a3siq9zBEQGzM0Ao9O2Uj9VzSiWLhh0T4TKYRCg==
-length: 4395
+</rss>
+<!-- sparkle-signatures:
+edSignature: PDdmTk5i/m86fiG4JZTaJSdqlc4U2hAdKRLWkTKJZke2Rw2NmNemb8c9/nSbvq10RzzSaeKwEZA9sku8igKMAg==
+length: 6769
 -->

@@ -178,6 +178,27 @@ public final class LibraryStore: @unchecked Sendable {
         scheduleSave()
     }
 
+    /// Rename the library entry without changing its identity or source file.
+    public func renameBook(_ bookID: String, to title: String) throws {
+        let name = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { throw LibraryStoreError.emptyTitle }
+        ioLock.lock(); defer { ioLock.unlock() }
+        lock.lock()
+        guard var record = payload.books[bookID] else {
+            lock.unlock()
+            throw LibraryStoreError.missingBook
+        }
+        let previous = record
+        record.title = name
+        payload.books[bookID] = record
+        lock.unlock()
+        do { try writeToDisk() }
+        catch {
+            lock.lock(); payload.books[bookID] = previous; lock.unlock()
+            throw error
+        }
+    }
+
     /// Applies a change to a stored book, creating nothing if it is unknown.
     public func update(_ bookID: String, _ transform: (inout BookRecord) -> Void) {
         lock.lock()
@@ -373,11 +394,14 @@ public final class LibraryStore: @unchecked Sendable {
 
 public enum LibraryStoreError: LocalizedError {
     case missingBook
+    case emptyTitle
 
     public var errorDescription: String? {
         switch self {
         case .missingBook:
             return "Could not save because the book is no longer open."
+        case .emptyTitle:
+            return "Enter a name for this document."
         }
     }
 }

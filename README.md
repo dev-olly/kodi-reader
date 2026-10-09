@@ -18,6 +18,10 @@ or the XBMC Foundation.
 ### Book and document reading
 Paginated EPUB rendering with typography, margin, and theme controls, plus native PDF reading with fit-to-page zoom and adaptive two-page spreads. Position and progress survive layout changes and app relaunches.
 
+Rename a document from its library context menu (**Rename…**) or while reading
+with **File → Rename Document…**. The name persists and syncs with book details;
+the original file keeps its name, and reading data stays attached.
+
 ![Book reading](docs/screenshots/app-reading.png)
 
 ### Notes taking

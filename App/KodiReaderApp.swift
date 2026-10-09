@@ -72,6 +72,9 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("s", modifiers: [.command, .shift])
                 .disabled(!model.isBrowsing || model.isSavingWebPage)
 
+            Button("Rename Document…") { model.documentToRename = model.record }
+                .disabled(model.record == nil || model.isBrowsing)
+
             Divider()
 
             Button("Home") { model.goHome() }

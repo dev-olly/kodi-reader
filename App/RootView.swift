@@ -66,6 +66,9 @@ struct RootView: View {
             OpenURLSheet()
                 .environment(model)
         }
+        .sheet(item: $model.documentToRename) { target in
+            RenameDocumentSheet(target: target).environment(model)
+        }
     }
 
     private var needsAuthWelcome: Bool { !authWelcomeSeen && !model.aiAuth.isSignedIn }
@@ -87,5 +90,50 @@ struct RootView: View {
             DispatchQueue.main.async { model.open(url: url) }
         }
         return true
+    }
+}
+
+private struct RenameDocumentSheet: View {
+    @Environment(AppModel.self) private var model
+    @Environment(\.dismiss) private var dismiss
+    let target: BookRecord
+    @State private var name: String
+    @State private var error: String?
+    @FocusState private var nameFocused: Bool
+
+    init(target: BookRecord) {
+        self.target = target
+        _name = State(initialValue: target.title)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Rename Document").font(.headline)
+            TextField("Name", text: $name)
+                .textFieldStyle(.roundedBorder)
+                .focused($nameFocused)
+                .onSubmit { save() }
+            Text("This name appears in your Kodi library and syncs with your book details. The original file keeps its name.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            HStack {
+                Spacer()
+                Button("Cancel", role: .cancel) { dismiss() }
+                    .keyboardShortcut(.cancelAction)
+                Button("Rename") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(24)
+        .frame(width: 420)
+        .onAppear { nameFocused = true }
+    }
+
+    private func save() {
+        do {
+            try model.renameDocument(target, to: name)
+            dismiss()
+        } catch { self.error = error.localizedDescription }
     }
 }

@@ -219,6 +219,7 @@ struct WelcomeView: View {
         .accessibilityValue("\(Int(record.progress * 100)) percent read")
         .accessibilityAddTraits(.isButton)
         .contextMenu {
+            Button("Rename…") { model.documentToRename = record }
             if record.sourceURL != nil {
                 Button("Open Original in Browser") {
                     model.openOriginalInBrowser(record)

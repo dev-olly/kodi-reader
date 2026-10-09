@@ -22,6 +22,7 @@ final class AppModel {
     private(set) var isSavingWebPage = false
     var isShowingOpenURLSheet = false
     var pendingWebURLText = ""
+    var documentToRename: BookRecord?
 
     var isBrowsing: Bool { webBrowser != nil }
 
@@ -150,7 +151,7 @@ final class AppModel {
         chat.onStreamStopped = { [weak self] in self?.sync.resumeDeferredChanges() }
         chat.contextProvider = { [weak self] in
             AIChatService.Context(
-                bookTitle: self?.book?.title ?? self?.record?.title ?? "",
+                bookTitle: self?.record?.title ?? self?.book?.title ?? "",
                 author: self?.book?.author ?? self?.record?.author ?? "",
                 chapterTitle: self?.reader?.chapterTitle
             )
@@ -306,7 +307,9 @@ final class AppModel {
             )
             record.cloudIdentity = sync.isLocalRecovery(localID) ? nil : identity
             record.isHiddenFromRecents = false
-            record.title = sync.isLocalRecovery(localID) ? "Recovered version: " + book.title : book.title
+            if existing == nil, sync.isLocalRecovery(localID) {
+                record.title = "Recovered version: " + book.title
+            }
             record.author = book.author
             record.documentKind = book.kind
             record.lastOpenedAt = Date()
@@ -445,6 +448,12 @@ final class AppModel {
 
     func removeFromRecents(_ record: BookRecord) {
         store.hideFromRecents(record.id)
+        recents = store.recentBooks(limit: .max)
+    }
+
+    func renameDocument(_ target: BookRecord, to title: String) throws {
+        try store.renameBook(target.id, to: title)
+        if record?.id == target.id { record = store.record(for: target.id) }
         recents = store.recentBooks(limit: .max)
     }
 

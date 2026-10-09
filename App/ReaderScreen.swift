@@ -460,7 +460,7 @@ struct ReaderScreen: View {
                             onDelete: { deleteAnnotation($0.id) },
                             onExport: {
                                 NotesExporter.presentSavePanel(
-                                    bookTitle: book.title,
+                                    bookTitle: model.record?.title ?? book.title,
                                     markdown: model.exportNotesMarkdown()
                                 )
                             }
@@ -618,7 +618,7 @@ struct ReaderScreen: View {
 
         ToolbarItem(placement: .principal) {
             VStack(spacing: 1) {
-                Text(book.title)
+                Text(model.record?.title ?? book.title)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

@@ -151,6 +151,21 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertNil(b.existingImportedURL(for: received)); XCTAssertEqual(ta.uploads, 0); XCTAssertEqual(tb.downloads, 0)
         XCTAssertFalse(cloud.entities.values.contains { $0.kind == .chat })
     }
+    func testRenamedTitleSyncsToAnotherLibrary() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let local = try book(in: a, with: note())
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        try a.renameBook(local.id, to: "My reading copy")
+        try await run(sa); try await run(sb)
+        let received = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!))
+        XCTAssertEqual(received.title, "My reading copy")
+        XCTAssertEqual(received.annotations.map(\.id), local.annotations.map(\.id))
+        XCTAssertEqual(received.cloudIdentity, local.cloudIdentity)
+    }
+
     func testStoppedProviderKeepsItsJournalAndNeverUploadsToOldCloud() async throws {
         let originalCloud = TestCloud(), destinationCloud = TestCloud(), local = try store()
         let book = try book(in: local, with: note())

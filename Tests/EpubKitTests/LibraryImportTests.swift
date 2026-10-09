@@ -2,6 +2,50 @@ import XCTest
 @testable import EpubKit
 
 final class LibraryImportTests: XCTestCase {
+    func testRenamePersistsAndPreservesReadingDataAndFile() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = root.appendingPathComponent("library.json")
+        let store = LibraryStore(fileURL: library)
+        let source = root.appendingPathComponent("original.pdf")
+        let bytes = Data("unchanged document".utf8)
+        try bytes.write(to: source)
+        let imported = try store.importBook(from: source, bookID: "book", kind: .pdf)
+        var record = BookRecord(id: "book", title: "Original", author: "Author", documentKind: .pdf,
+            importedRelativePath: LibraryStore.relativeImportedPath(for: "book", kind: .pdf), progress: 0.42)
+        record.cloudIdentity = "identity"
+        let thread = ChatThread(messages: [ChatMessage(role: .user, text: "saved conversation")])
+        record.chats = [thread]
+        record.activeChatID = thread.id
+        store.upsert(record)
+        try store.renameBook(record.id, to: "  My renamed PDF\n")
+        let saved = try XCTUnwrap(LibraryStore(fileURL: library).record(for: record.id))
+        var expected = record
+        expected.title = "My renamed PDF"
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        XCTAssertEqual(try encoder.encode(saved), try encoder.encode(expected))
+        XCTAssertEqual(try Data(contentsOf: imported), bytes)
+        XCTAssertEqual(try Data(contentsOf: source), bytes)
+        XCTAssertThrowsError(try store.renameBook(record.id, to: " \n "))
+        XCTAssertEqual(store.record(for: record.id)?.title, expected.title)
+        XCTAssertThrowsError(try store.renameBook("missing", to: "Name"))
+    }
+
+    func testRenameRollsBackWhenSavingFails() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = root.appendingPathComponent("library.json")
+        let store = LibraryStore(fileURL: library)
+        store.upsert(BookRecord(id: "book", title: "Original", author: ""))
+        try store.checkpoint()
+        try FileManager.default.removeItem(at: library)
+        try FileManager.default.createDirectory(at: library, withIntermediateDirectories: true)
+        XCTAssertThrowsError(try store.renameBook("book", to: "New name"))
+        XCTAssertEqual(store.record(for: "book")?.title, "Original")
+    }
+
     func testImportBookCopiesIntoBooksDirectory() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("kodi-lib-\(UUID().uuidString)", isDirectory: true)

@@ -6,6 +6,24 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.3</title>
+            <pubDate>Fri, 09 Oct 2026 17:39:40 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>9</sparkle:version>
+            <sparkle:shortVersionString>0.4.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.3
+
+- Rename EPUBs, PDFs, and saved webpages in your library: right-click a document and choose **Rename…**, or use **File → Rename Document…** while reading.
+- Your chosen name stays after reopening and appears in the reading toolbar and Ask AI context. With sync enabled, it syncs as part of the book details.
+- Renaming preserves your notes, drawings, bookmarks, conversations, and reading position. The original file keeps its name.
+
+The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.3/KodiReader.dmg" length="8229026" type="application/octet-stream" sparkle:edSignature="1vZ8qSENzY9+Gmhe0ft67mye/f4e1COBl2UJVPKIIjVqY4f4iqQ59c5D9cqG3kESaQDx8TnAQG5PrGEe0vFfDQ=="/>
+        </item>
+        <item>
             <title>0.4.2</title>
             <pubDate>Wed, 07 Oct 2026 23:11:03 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -55,37 +73,9 @@ The app and update feed are signed, and the download is notarized by Apple. Requ
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.1/KodiReader.dmg" length="7922951" type="application/octet-stream" sparkle:edSignature="75scz3RvpjGrc+JhfMGdyqy96mpY4mBpYRJUJzeFpDrjWqY8pZTgjKcgCp/AI5lKv4cFmPV2h5fYzZM/vec7BQ=="/>
         </item>
-        <item>
-            <title>0.3.2</title>
-            <pubDate>Sat, 26 Sep 2026 17:34:22 +0200</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>5</sparkle:version>
-            <sparkle:shortVersionString>0.3.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.3.2
-
-A smoother sign-in experience, a more spacious notes margin, and quieter updates.
-
-- First launch opens a dedicated welcome page with Google, Apple, and email sign-in.
-  Choose **Skip for now** to continue reading without an account.
-- Ask AI requires sign-in. This release has no credit balances, payment prompts, or purchases.
-- Google and Apple sign-in use a browser callback that safely restores the session.
-- Account controls are available from the home screen and Ask AI.
-- Search notes and open entry and chapter filters directly from the redesigned margin.
-- Updates appear in the home and reader toolbars. Download when ready, then choose
-  **Restart to update**; your reading progress is saved before restarting.
-
-Your books, notes, drawings, and conversations remain on your Mac.
-The app and update feed are signed, and the download is notarized by Apple.
-
-Requires Apple Silicon and macOS 15 or later.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.3.2/KodiReader.dmg" length="7406089" type="application/octet-stream" sparkle:edSignature="m/ocLqogWPOv5lsah9rcsMq62QyrC/d1JSEI0dZi2xQ6G1EdDx7cLZ6lIXOuLTHQlxwgtSp9eDW08xIM/iszBQ=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: PDdmTk5i/m86fiG4JZTaJSdqlc4U2hAdKRLWkTKJZke2Rw2NmNemb8c9/nSbvq10RzzSaeKwEZA9sku8igKMAg==
-length: 6769
+edSignature: zFKnTNFpn9gt4tDH1cORMw0uS4hGXIuchP9gHr9OomaT2N6iplnA6R2ma05iKLdNkSIP6Mpt3bTEiTotRaSaDw==
+length: 6416
 -->

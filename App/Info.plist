@@ -72,6 +72,7 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
+#if KODI_DOCUMENT_HANDLERS
 	<key>CFBundleDocumentTypes</key>
 	<array>
 		<dict>
@@ -99,5 +100,6 @@
 			</array>
 		</dict>
 	</array>
+#endif
 </dict>
 </plist>

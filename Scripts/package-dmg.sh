@@ -89,6 +89,7 @@ build_app() {
     CODE_SIGN_STYLE=Manual \
     CODE_SIGN_IDENTITY="$SIGNING_IDENTITY" \
     OTHER_CODE_SIGN_FLAGS="--timestamp" \
+    KODI_DOCUMENT_HANDLERS=1 \
     "$@" \
     build
 }
@@ -222,6 +223,14 @@ hdiutil create \
 
 codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$OUT"
 codesign --verify --verbose=2 "$OUT"
+
+# The DMG is the distribution artifact; loose build/staging apps should never
+# be rediscovered by Finder as additional installed releases.
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+"$LSREGISTER" -u "$APP" "$STAGING/${APP_NAME}.app" || true
+mkdir -p .build
+cp "$STAGING/${APP_NAME}.app/Contents/Info.plist" .build/release-info.plist
+rm -rf "$STAGING" "$APP"
 
 if [[ "$NOTARIZE" -eq 1 ]]; then
   xcrun notarytool submit "$OUT" \

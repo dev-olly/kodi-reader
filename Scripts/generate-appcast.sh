@@ -5,12 +5,16 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP="${KODI_RELEASE_APP:-.build/dmg/Kodi Reader.app}"
+INFO="$APP/Contents/Info.plist"
+if [[ -z "${KODI_RELEASE_APP:-}" && ! -f "$INFO" ]]; then
+  INFO=.build/release-info.plist
+fi
 DMG="${KODI_DMG_PATH:-KodiReader.dmg}"
 DERIVED="${KODI_DERIVED_DATA:-.build/DerivedData}"
 TOOLS="$DERIVED/SourcePackages/artifacts/sparkle/Sparkle/bin"
 ACCOUNT="${KODI_SPARKLE_ACCOUNT:-com.olly.KodiReader}"
-VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
-PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$APP/Contents/Info.plist")"
+VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$INFO")"
+PUBLIC_KEY="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$INFO")"
 ARCHIVES=".build/updates/$VERSION"
 
 if [[ "$("$TOOLS/generate_keys" --account "$ACCOUNT" -p)" != "$PUBLIC_KEY" ]]; then

@@ -43,6 +43,11 @@ settings:
     KODI_ICLOUD_ENABLED: NO
     KODI_PRODUCT_NAME: Kodi Reader
     KODI_BUNDLE_IDENTIFIER: com.olly.KodiReader
+    # Only distribution packaging opts into Finder document registration.
+    KODI_DOCUMENT_HANDLERS: "0"
+    INFOPLIST_PREPROCESS: YES
+    INFOPLIST_OTHER_PREPROCESSOR_FLAGS: "-traditional"
+    INFOPLIST_PREPROCESSOR_DEFINITIONS: KODI_DOCUMENT_HANDLERS=$(KODI_DOCUMENT_HANDLERS)
   configs:
     Debug:
       SPARKLE_INSTALLER_LAUNCHER: "true"

@@ -136,6 +136,14 @@ brew install xcodegen
 
 Debug builds use ad-hoc signing so they run locally without distribution
 credentials. Release builds require the project's Developer ID certificate.
+Ordinary builds omit Finder document handlers, including local Release builds.
+`package-dmg.sh` opts into EPUB/PDF registration for the distributed app and
+removes its loose app copies after creating the DMG. It preserves release metadata
+in `.build/release-info.plist` for appcast generation.
+After an installed release launches (including after a Sparkle update), it
+unregisters older or equal-version Kodi copies and registers itself. Newer copies
+are left alone. Sparkle replaces the previous installed release in place;
+registration cleanup does not delete other installations or reader data.
 On a machine with multiple Xcode versions, point the shell at the Xcode you want:
 
 ```sh

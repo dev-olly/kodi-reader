@@ -179,6 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DocumentRegistration.refreshInstalledRelease()
         if (Bundle.main.object(forInfoDictionaryKey: "iCloudSyncEnabled") as? String) == "YES" {
             NSApp.registerForRemoteNotifications()
         }

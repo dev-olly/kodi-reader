@@ -94,10 +94,12 @@ final class AppModel {
     @ObservationIgnored private let store: LibraryStore
     /// URLs whose security scope we hold open, to be released on close.
     @ObservationIgnored private var scopedURL: URL?
-    /// Live drawing scenes, so switching sheet/sidebar does not wait on disk.
-    @ObservationIgnored private var noteFlushHandlers: [UUID: () -> Void] = [:]
+    /// Editors checkpoint their text and canvas before navigation or sync.
+    @ObservationIgnored private var noteFlushHandlers: [UUID: (@escaping (Result<Void, Error>) -> Void) -> Void] = [:]
+    @ObservationIgnored private var noteEditingSessions: [UUID: UUID] = [:]
     @ObservationIgnored private var openingID: UUID?
-    @ObservationIgnored private var drawingCache: [UUID: Data] = [:]
+    @ObservationIgnored private var sketchUndoArchive: [String: SketchUndoHistory] = [:]
+
     /// Reading position captured before an in-app browser preview, restored on close.
     @ObservationIgnored private var positionBeforeBrowser: Locator?
 
@@ -243,7 +245,12 @@ final class AppModel {
     }
 
     func open(url: URL, sourceURL: URL? = nil, expectedIdentity: String? = nil, preferredLocalID: String? = nil) {
-        closeBook()
+        closeBook { [self] in
+            beginOpening(url: url, sourceURL: sourceURL, expectedIdentity: expectedIdentity, preferredLocalID: preferredLocalID)
+        }
+    }
+
+    private func beginOpening(url: URL, sourceURL: URL?, expectedIdentity: String?, preferredLocalID: String?) {
         let operation = UUID(); openingID = operation
         let scoped = url.startAccessingSecurityScopedResource()
         Task {
@@ -262,7 +269,7 @@ final class AppModel {
     }
 
     private func openPrepared(url: URL, sourceURL: URL?, identity: String, preferredLocalID: String?) {
-        closeBook()
+        completeClosingBook()
 
         let didScope = url.startAccessingSecurityScopedResource()
         do {
@@ -346,7 +353,6 @@ final class AppModel {
             self.record = record
             reader = controller
             recents = store.recentBooks(limit: .max)
-            drawingCache.removeAll()
             errorMessage = nil
             chat.load(threads: record.conversationThreads, activeID: record.activeChatID)
         } catch {
@@ -426,11 +432,22 @@ final class AppModel {
         closeBook()
     }
 
-    func closeBook() {
+    func closeBook(completion: (() -> Void)? = nil) {
+        flush { [self] succeeded in
+            guard succeeded else { return }
+            completeClosingBook()
+            completion?()
+        }
+    }
+
+    private func completeClosingBook() {
+        noteFlushHandlers.removeAll()
+        noteEditingSessions.removeAll()
+        sketchUndoArchive.removeAll()
         openingID = nil
         chat.stop()
         persistChat(chat.threads, activeID: chat.activeThreadID)
-        flush()
+        sync.checkpoint()
         reader?.tearDown()
         reader = nil
         book = nil
@@ -441,7 +458,6 @@ final class AppModel {
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
         recents = store.recentBooks(limit: .max)
-        drawingCache.removeAll()
         positionBeforeBrowser = nil
         closeBrowser()
     }
@@ -461,13 +477,33 @@ final class AppModel {
         store.existingImportedURL(for: record)
     }
 
-    func flush() {
-        for flushEditor in Array(noteFlushHandlers.values) { flushEditor() }
-        sync.checkpoint()
+    func flush(completion: ((Bool) -> Void)? = nil) {
+        let handlers = Array(noteFlushHandlers.values)
+        var remaining = handlers.count
+        var succeeded = true
+        guard remaining > 0 else { sync.checkpoint(); completion?(true); return }
+        for flushEditor in handlers {
+            flushEditor { [self] result in
+                if case .failure = result { succeeded = false }
+                remaining -= 1
+                if remaining == 0 {
+                    if succeeded { sync.checkpoint() }
+                    completion?(succeeded)
+                }
+            }
+        }
     }
 
-    func beginNoteEditing(_ id: UUID, flush: @escaping () -> Void) { noteFlushHandlers[id] = flush }
-    func endNoteEditing(_ id: UUID) {
+    func beginNoteEditing(_ id: UUID, session: UUID, flush: @escaping (@escaping (Result<Void, Error>) -> Void) -> Void) {
+        noteEditingSessions[id] = session
+        noteFlushHandlers[id] = flush
+    }
+    func isNoteEditingSession(_ id: UUID, session: UUID) -> Bool { noteEditingSessions[id] == session }
+
+    func endNoteEditing(_ id: UUID, session: UUID) {
+        guard noteEditingSessions[id] == session else { return }
+        noteEditingSessions[id] = nil
+        if let bookID = book?.bookID { sketchUndoArchive["\(bookID):\(id)"] = nil }
         noteFlushHandlers[id] = nil
         sync.resumeDeferredChanges()
     }
@@ -480,7 +516,6 @@ final class AppModel {
             return
         }
         record = updated
-        drawingCache.removeAll()
         reader?.setAnnotations(updated.annotations)
         if !chat.isStreaming { chat.mergeStoredThreads(updated.conversationThreads) }
     }
@@ -496,18 +531,21 @@ final class AppModel {
     }
 
     func removeDownload(_ record: BookRecord) {
-        do {
-            if self.record?.id == record.id { closeBook() }
-            try sync.removeDownload(record)
-            refreshAfterSync()
-        } catch { errorMessage = error.localizedDescription }
+        let remove = { [self] in
+            do { try sync.removeDownload(record); refreshAfterSync() }
+            catch { errorMessage = error.localizedDescription }
+        }
+        if self.record?.id == record.id { closeBook(completion: remove) }
+        else { remove() }
     }
 
     func deleteEverywhere(_ record: BookRecord) {
-        do {
-            if self.record?.id == record.id { closeBook() }
-            try sync.deleteEverywhere(record)
-        } catch { errorMessage = error.localizedDescription }
+        let remove = { [self] in
+            do { try sync.deleteEverywhere(record) }
+            catch { errorMessage = error.localizedDescription }
+        }
+        if self.record?.id == record.id { closeBook(completion: remove) }
+        else { remove() }
     }
 
     func showHiddenBooks() {
@@ -679,6 +717,7 @@ final class AppModel {
     func updateNote(
         _ note: String,
         for id: UUID,
+        reconcileSketches: Bool = false,
         completion: ((Result<Void, Error>) -> Void)? = nil
     ) {
         guard let bookID = book?.bookID, var record else {
@@ -697,8 +736,19 @@ final class AppModel {
         }
         record.annotations[index].modifiedAt = Date()
         do {
+            var removed: [NoteSketch] = []
+            if reconcileSketches {
+                let key = "\(bookID):\(id)"
+                let history = sketchUndoArchive[key] ?? SketchUndoHistory()
+                sketchUndoArchive[key] = history
+                let before = record.annotations[index]
+                let updated = try history.reconciling(before, note: note, drawings: store.drawingStore, bookID: bookID)
+                removed = before.sketches.filter { sketch in !updated.sketches.contains { $0.id == sketch.id } }
+                record.annotations[index] = updated
+            }
             try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
             self.record = record
+            for sketch in removed { try store.drawingStore.deleteSketch(bookID: bookID, annotationID: id, sketchID: sketch.id) }
             completion?(.success(()))
             // Refresh the note-dot on painted highlights without a full re-resolve.
             reader?.setAnnotations(record.annotations)
@@ -765,43 +815,108 @@ final class AppModel {
         }
     }
 
-    func drawingScene(for id: UUID) -> Data? {
-        if let cached = drawingCache[id] { return cached }
-        guard let bookID = book?.bookID else { return nil }
-        let data = store.drawingStore.loadScene(bookID: bookID, annotationID: id)
-        drawingCache[id] = data
-        return data
+    func migrateDrawing(for id: UUID) throws {
+        guard let bookID = book?.bookID, let annotation = annotation(with: id), annotation.hasDrawing, annotation.sketches.isEmpty else { return }
+        let updated = try store.drawingStore.migratingLegacyDrawing(annotation, bookID: bookID)
+        try store.updateAndFlush(bookID) { record in
+            guard let index = record.annotations.firstIndex(where: { $0.id == id }) else { return }
+            record.annotations[index] = updated
+        }
+        record = store.record(for: bookID)
+        // The legacy scene remains available for rollback and older local backups.
     }
 
-    func updateDrawing(
-        scene: Data,
-        elementCount: Int,
-        for id: UUID,
-        completion: ((Result<Void, Error>) -> Void)? = nil
-    ) {
-        guard let bookID = book?.bookID else {
-            completion?(.failure(DrawingPersistenceError.missingBook))
-            return
-        }
-        let hasDrawing = elementCount > 0
-        do {
-            try store.drawingStore.replaceScene(hasDrawing ? scene : nil, bookID: bookID, annotationID: id)
-            try store.updateAndFlush(bookID) { record in
-                var annotations = record.annotations
-                guard let index = annotations.firstIndex(where: { $0.id == id }) else { return }
-                annotations[index].hasDrawing = hasDrawing
-                if hasDrawing, annotations[index].color == .underline {
-                    annotations[index].color = .yellow
-                    lastAppliedHighlightColor = .yellow
-                }
-                annotations[index].modifiedAt = Date()
-                record.annotations = annotations
+    func exportNotes(_ format: NoteExportFormat, annotations requested: [Annotation]? = nil) {
+        guard let bookID = book?.bookID else { return }
+        let ids = (requested ?? record?.annotations ?? []).map(\.id)
+        do { for id in ids { try migrateDrawing(for: id) } }
+        catch { showSketchExportError(error); return }
+        let snapshots = ids.compactMap { annotation(with: $0) }
+        let title = record?.title ?? "Untitled"
+        let author = record?.author ?? "Unknown Author"
+        let references = snapshots.flatMap { note in SketchReference.references(in: note.note ?? "").map { (note.id, $0) } }
+        var images: [UUID: Data] = [:]
+        func resolve(_ index: Int) {
+            guard index < references.count else {
+                NotesExporter.presentSavePanel(format: format, bookTitle: title, author: author, annotations: snapshots, sketchImages: images)
+                return
             }
-            drawingCache[id] = hasDrawing ? scene : nil
-            record = store.record(for: bookID)
-            if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
-            completion?(.success(()))
-        } catch { completion?(.failure(error)) }
+            let (annotationID, reference) = references[index]
+            if images[reference.id] != nil { resolve(index + 1); return }
+            let sceneURL = store.drawingStore.sceneURL(bookID: bookID, annotationID: annotationID, sketchID: reference.id)
+            let previewURL = store.drawingStore.previewURL(bookID: bookID, annotationID: annotationID, sketchID: reference.id)
+            let sceneDate = (try? sceneURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantFuture
+            let previewDate = (try? previewURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+            if previewDate >= sceneDate, let image = store.drawingStore.loadPreview(bookID: bookID, annotationID: annotationID, sketchID: reference.id), NSImage(data: image) != nil {
+                images[reference.id] = image; resolve(index + 1); return
+            }
+            guard let scene = store.drawingStore.loadScene(bookID: bookID, annotationID: annotationID, sketchID: reference.id) else {
+                showSketchExportError(NSError(domain: "KodiExport", code: 1, userInfo: [NSLocalizedDescriptionKey: "The drawing for \(reference.title) is missing. Try Sync Now before exporting."]))
+                return
+            }
+            ExcalidrawController.renderPreview(scene: scene) { [self] result in
+                switch result {
+                case .success(let image):
+                    do {
+                        try store.drawingStore.replaceSketch(scene: scene, preview: image, bookID: bookID, annotationID: annotationID, sketchID: reference.id)
+                        images[reference.id] = image
+                        resolve(index + 1)
+                    } catch { showSketchExportError(error) }
+                case .failure(let error): showSketchExportError(error)
+                }
+            }
+        }
+        resolve(0)
+    }
+
+    private func showSketchExportError(_ error: Error) {
+        let alert = NSAlert()
+        alert.messageText = "Couldn’t export sketches"
+        alert.informativeText = error.localizedDescription
+        alert.runModal()
+    }
+
+    func sketchScene(annotationID: UUID, sketchID: UUID) -> Data? {
+        guard let bookID = book?.bookID else { return nil }
+        return store.drawingStore.loadScene(bookID: bookID, annotationID: annotationID, sketchID: sketchID)
+    }
+
+    func sketchPreview(annotationID: UUID, sketchID: UUID) -> Data? {
+        guard let bookID = book?.bookID else { return nil }
+        return store.drawingStore.loadPreview(bookID: bookID, annotationID: annotationID, sketchID: sketchID)
+    }
+
+    func saveSketch(_ sketch: NoteSketch, checkpoint: SketchCheckpoint, note: String, annotationID: UUID) throws {
+        guard let bookID = book?.bookID else { throw DrawingPersistenceError.missingBook }
+        guard annotation(with: annotationID) != nil else { throw NotePersistenceError.missingAnnotation }
+        try store.drawingStore.replaceSketch(scene: checkpoint.scene, preview: checkpoint.preview, bookID: bookID, annotationID: annotationID, sketchID: sketch.id)
+        try store.updateAndFlush(bookID) { record in
+            guard let index = record.annotations.firstIndex(where: { $0.id == annotationID }) else { return }
+            var updated = sketch
+            updated.modifiedAt = Date()
+            record.annotations[index].sketches.removeAll { $0.id == sketch.id }
+            record.annotations[index].sketches.append(updated)
+            record.annotations[index].sketches.sort { $0.createdAt < $1.createdAt }
+            record.annotations[index].note = note.isEmpty ? nil : note
+            record.annotations[index].hasDrawing = true
+            record.annotations[index].modifiedAt = Date()
+            if record.annotations[index].color == .underline { record.annotations[index].color = .yellow }
+        }
+        record = store.record(for: bookID)
+        if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
+    }
+
+    func renameSketch(_ sketchID: UUID, title: String, note: String, annotationID: UUID) throws {
+        guard let bookID = book?.bookID else { throw DrawingPersistenceError.missingBook }
+        try store.updateAndFlush(bookID) { record in
+            guard let index = record.annotations.firstIndex(where: { $0.id == annotationID }),
+                  let sketchIndex = record.annotations[index].sketches.firstIndex(where: { $0.id == sketchID }) else { return }
+            record.annotations[index].sketches[sketchIndex].title = title
+            record.annotations[index].sketches[sketchIndex].modifiedAt = Date()
+            record.annotations[index].note = note
+            record.annotations[index].modifiedAt = Date()
+        }
+        record = store.record(for: bookID)
     }
 
     func changeColor(_ color: HighlightColor, for id: UUID) {
@@ -823,7 +938,6 @@ final class AppModel {
         if case .annotation(id) = aiNoteTarget {
             aiNoteTarget = nil
         }
-        drawingCache[id] = nil
         store.drawingStore.deleteScene(bookID: bookID, annotationID: id)
         mutateAnnotations(bookID: bookID) { $0.removeAll { $0.id == id } }
     }

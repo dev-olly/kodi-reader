@@ -563,7 +563,7 @@ struct AnnotationsInspector: View {
                                 Image(systemName: "scribble")
                                     .font(.caption2)
                                     .foregroundStyle(.secondary)
-                                    .help("Visual note")
+                                    .help(annotation.sketches.isEmpty ? "Visual note" : "\(annotation.sketches.count) sketches")
                             }
                         }
                         if annotation.hasNote {
@@ -636,25 +636,71 @@ extension HighlightColor {
 /// File exports use importable formats without requiring account access.
 @MainActor
 enum NotesExporter {
-    static func data(format: NoteExportFormat, bookTitle: String, author: String, annotations: [Annotation]) throws -> Data {
+    struct Output {
+        var data: Data
+        var assets: [String: Data]
+    }
+
+    static func output(format: NoteExportFormat, bookTitle: String, author: String, annotations: [Annotation], sketchImages: [UUID: Data] = [:], assetDirectory: String = "Sketches") throws -> Output {
+        let references = annotations.flatMap { SketchReference.references(in: $0.note ?? "") }
+        for reference in references where sketchImages[reference.id] == nil {
+            throw NSError(domain: "KodiExport", code: 1, userInfo: [NSLocalizedDescriptionKey: "The image for \(reference.title) is unavailable. Sync the sketch and try again."])
+        }
         switch format {
         case .markdown, .notion:
-            return Data(NoteMarkdown.exportDocument(bookTitle: bookTitle, author: author, annotations: annotations).utf8)
+            var assets: [String: Data] = [:]
+            var notes = annotations
+            for index in notes.indices {
+                notes[index].note = SketchReference.replacing(in: notes[index].note ?? "") { reference in
+                    let path = assetDirectory + "/" + reference.id.uuidString + ".png"
+                    assets[path] = sketchImages[reference.id]
+                    let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? path
+                    let title = reference.title.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "]", with: "\\]").replacingOccurrences(of: "[", with: "\\[")
+                    return "![\(title)](\(encoded))"
+                }
+            }
+            return Output(data: Data(NoteMarkdown.exportDocument(bookTitle: bookTitle, author: author, annotations: notes).utf8), assets: assets)
         case .appleNotes:
-            return Data(NoteExport.html(bookTitle: bookTitle, author: author, annotations: annotations).utf8)
+            return Output(data: Data(NoteExport.html(bookTitle: bookTitle, author: author, annotations: annotations, sketchImages: sketchImages).utf8), assets: [:])
         case .word:
-            let html = Data(NoteExport.html(bookTitle: bookTitle, author: author, annotations: annotations).utf8)
-            let document = try NSAttributedString(data: html, options: [
+            // Keep prose formatting, then embed images directly in the OOXML package.
+            // AppKit's DOCX writer drops native image attachments.
+            var notes = annotations
+            var placeholders: [String: (UUID, String)] = [:]
+            for index in notes.indices {
+                notes[index].note = SketchReference.replacing(in: notes[index].note ?? "") { reference in
+                    let marker = "KODISKETCH" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+                    placeholders[marker] = (reference.id, reference.title)
+                    return marker + "\n\n" + reference.title
+                }
+            }
+            let html = Data(NoteExport.html(bookTitle: bookTitle, author: author, annotations: notes).utf8)
+            let document = try NSMutableAttributedString(data: html, options: [
                 .documentType: NSAttributedString.DocumentType.html,
                 .characterEncoding: String.Encoding.utf8.rawValue,
             ], documentAttributes: nil)
-            return try document.data(from: NSRange(location: 0, length: document.length), documentAttributes: [
+            var embedded: [SketchDOCX.Image] = []
+            for (marker, value) in placeholders.sorted(by: { $0.key < $1.key }) {
+                guard let png = sketchImages[value.0], let image = NSImage(data: png) else {
+                    throw NSError(domain: "KodiExport", code: 2, userInfo: [NSLocalizedDescriptionKey: "A sketch image could not be decoded."])
+                }
+                let range = (document.string as NSString).range(of: marker)
+                guard range.location != NSNotFound else { throw NSError(domain: "KodiExport", code: 3, userInfo: [NSLocalizedDescriptionKey: "A sketch's position was lost while exporting."]) }
+                let scale = min(1, 460 / max(1, image.size.width), 600 / max(1, image.size.height))
+                embedded.append(SketchDOCX.Image(marker: marker, title: value.1, png: png, width: image.size.width * scale, height: image.size.height * scale))
+            }
+            let prose = try document.data(from: NSRange(location: 0, length: document.length), documentAttributes: [
                 .documentType: NSAttributedString.DocumentType.officeOpenXML,
             ])
+            return Output(data: try SketchDOCX.embedding(embedded, in: prose), assets: [:])
         }
     }
 
-    static func presentSavePanel(format: NoteExportFormat, bookTitle: String, author: String, annotations: [Annotation]) {
+    static func data(format: NoteExportFormat, bookTitle: String, author: String, annotations: [Annotation], sketchImages: [UUID: Data] = [:]) throws -> Data {
+        try output(format: format, bookTitle: bookTitle, author: author, annotations: annotations, sketchImages: sketchImages).data
+    }
+
+    static func presentSavePanel(format: NoteExportFormat, bookTitle: String, author: String, annotations: [Annotation], sketchImages: [UUID: Data] = [:]) {
         let panel = NSSavePanel()
         let contentType = UTType(filenameExtension: format.fileExtension) ?? .data
         panel.allowedContentTypes = [contentType]
@@ -667,8 +713,15 @@ enum NotesExporter {
 
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let output = try data(format: format, bookTitle: bookTitle, author: author, annotations: annotations)
-            try output.write(to: url, options: .atomic)
+            let assetDirectory = url.deletingPathExtension().lastPathComponent + "-assets"
+            let output = try output(format: format, bookTitle: bookTitle, author: author, annotations: annotations, sketchImages: sketchImages, assetDirectory: assetDirectory)
+            // Commit companion images before publishing the document that names them.
+            for (path, image) in output.assets {
+                let assetURL = url.deletingLastPathComponent().appendingPathComponent(path)
+                try FileManager.default.createDirectory(at: assetURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                try image.write(to: assetURL, options: .atomic)
+            }
+            try output.data.write(to: url, options: .atomic)
         } catch {
             let alert = NSAlert()
             alert.messageText = "Couldn’t export notes"

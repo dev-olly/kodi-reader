@@ -1,4 +1,5 @@
 import AppKit
+import EpubKit
 import SwiftUI
 
 /// Source editor for advanced Markdown that cannot be safely round-tripped.
@@ -6,7 +7,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
     @Binding var text: String
     @Binding var selectedRange: NSRange
     var isEditable: Bool = true
+    var isActive: Bool = true
+    var isDark: Bool = false
     var placeholder: String? = nil
+    var onCreateSketch: ((NSRange) -> Void)? = nil
+    var onOpenSketch: ((UUID) -> Void)? = nil
 
     private static let containerInset = NSSize(width: 8, height: 10)
 
@@ -22,6 +27,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         let textView = NoteTextView()
         textView.delegate = context.coordinator
+        textView.commandEnabled = isActive
+        textView.commandIsDark = isDark
+        textView.onCreateSketch = onCreateSketch
+        textView.onOpenSketch = onOpenSketch
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = .systemFont(ofSize: NSFont.systemFontSize + 1)
@@ -43,8 +52,10 @@ struct MarkdownTextEditor: NSViewRepresentable {
         applySelection(selectedRange, to: textView)
 
         scroll.documentView = textView
+        scroll.isHidden = !isActive
 
         context.coordinator.textView = textView
+        context.coordinator.wasActive = isActive
         context.coordinator.parent = self
         return scroll
     }
@@ -52,16 +63,26 @@ struct MarkdownTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
-        textView.isEditable = isEditable
-
+        scroll.isHidden = !isActive
+        textView.isEditable = isEditable && isActive
+        textView.commandEnabled = isActive
+        textView.commandIsDark = isDark
+        textView.onCreateSketch = onCreateSketch
+        textView.onOpenSketch = onOpenSketch
         if textView.string != text {
-            textView.string = text
+            context.coordinator.loading = true
+            textView.insertText(text, replacementRange: NSRange(location: 0, length: textView.string.utf16.count))
+            context.coordinator.loading = false
         }
 
         if textView.selectedRange() != selectedRange {
+            context.coordinator.loading = true
             applySelection(selectedRange, to: textView)
+            context.coordinator.loading = false
         }
 
+        if isActive && !context.coordinator.wasActive { textView.window?.makeFirstResponder(textView) }
+        context.coordinator.wasActive = isActive
         context.coordinator.refreshPlaceholder()
     }
 
@@ -90,6 +111,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MarkdownTextEditor
         fileprivate weak var textView: NoteTextView?
+        var loading = false
+        var wasActive = false
 
         init(_ parent: MarkdownTextEditor) {
             self.parent = parent
@@ -101,18 +124,22 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func textDidChange(_ notification: Notification) {
-            guard let textView else { return }
+            guard let textView, !loading else { return }
             parent.text = textView.string
             parent.selectedRange = textView.selectedRange()
+            textView.commandChanged()
             refreshPlaceholder()
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard let textView else { return }
+            guard !loading, parent.isActive else { return }
             parent.selectedRange = textView.selectedRange()
+            self.textView?.commandChanged()
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if let view = self.textView, view.handleSketchCommand(commandSelector) { return true }
             guard commandSelector == #selector(NSResponder.insertNewline(_:)) else {
                 return false
             }
@@ -159,8 +186,179 @@ struct MarkdownTextEditor: NSViewRepresentable {
     }
 }
 
+/// Owns slash suggestions in the native editor so their position and keyboard
+/// handling follow the caret, including inside a SwiftUI sheet with buttons.
+class SketchCommandTextView: NSTextView {
+    var onCreateSketch: ((NSRange) -> Void)?
+    var commandEnabled = true { didSet { if !commandEnabled { hideCommandSuggestion() } } }
+    var commandIsDark = false
+    private var dismissedCommand: NSRange?
+    private var suggestionPanel: NSPanel?
+    var isCommandSuggestionVisible: Bool { suggestionPanel?.isVisible == true }
+
+    func commandCandidate() -> NSRange? {
+        SketchReference.commandSuggestionRange(in: string, selection: selectedRange())
+    }
+
+    func commandChanged() {
+        let candidate = commandCandidate()
+        if candidate != dismissedCommand { dismissedCommand = nil }
+        guard commandEnabled, onCreateSketch != nil, candidate != nil,
+              candidate != dismissedCommand, let window, window.firstResponder === self,
+              !isHiddenOrHasHiddenAncestor else { hideCommandSuggestion(); return }
+        let panel: NSPanel
+        if let existing = suggestionPanel { panel = existing }
+        else {
+            panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 244, height: 44),
+                            styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+            panel.isOpaque = false
+            panel.backgroundColor = .clear
+            panel.hasShadow = true
+            panel.hidesOnDeactivate = true
+            panel.isReleasedWhenClosed = false
+            panel.contentView = NSHostingView(rootView: SketchCommandSuggestion { [weak self] in
+                _ = self?.handleSketchCommand(#selector(NSResponder.insertNewline(_:)))
+            })
+            suggestionPanel = panel
+        }
+        panel.appearance = NSAppearance(named: commandIsDark ? .darkAqua : .aqua)
+        let commandStart = SketchReference.commandSuggestionRange(in: string, selection: selectedRange())?.location ?? selectedRange().location
+        let caret = firstRect(forCharacterRange: NSRange(location: commandStart, length: 0), actualRange: nil)
+        // An insertion caret has zero width; its line height supplies the anchor.
+        guard caret.height > 0 else { hideCommandSuggestion(); return }
+        let localCaret = convert(window.convertFromScreen(caret), from: nil)
+        guard visibleRect.intersects(localCaret.insetBy(dx: -1, dy: 0)) else { hideCommandSuggestion(); return }
+        let screen = window.screen?.visibleFrame ?? caret
+        var origin = NSPoint(x: min(max(caret.minX, screen.minX + 8), screen.maxX - panel.frame.width - 8),
+                             y: caret.minY - panel.frame.height - 6)
+        if origin.y < screen.minY + 8 { origin.y = caret.maxY + 6 }
+        panel.setFrameOrigin(origin)
+        if panel.parent !== window { panel.parent?.removeChildWindow(panel); window.addChildWindow(panel, ordered: .above) }
+        panel.orderFront(nil)
+    }
+
+    func suppressPastedCommand() {
+        dismissedCommand = commandCandidate()
+        hideCommandSuggestion()
+    }
+
+    func handleSketchCommand(_ selector: Selector) -> Bool {
+        guard commandEnabled, let range = commandCandidate(), range != dismissedCommand else { return false }
+        if selector == #selector(NSResponder.cancelOperation(_:)) {
+            dismissedCommand = range
+            hideCommandSuggestion()
+            return true
+        }
+        if selector == #selector(NSResponder.insertNewline(_:)), let onCreateSketch {
+            hideCommandSuggestion()
+            onCreateSketch(range)
+            return true
+        }
+        return false
+    }
+
+    private func handleCommandKey(_ event: NSEvent) -> Bool {
+        guard event.modifierFlags.intersection([.command, .control, .option, .shift]).isEmpty else { return false }
+        switch event.keyCode {
+        case 36, 76: return handleSketchCommand(#selector(NSResponder.insertNewline(_:)))
+        case 53: return handleSketchCommand(#selector(NSResponder.cancelOperation(_:)))
+        default: return false
+        }
+    }
+
+    override func keyDown(with event: NSEvent) {
+        if !handleCommandKey(event) { super.keyDown(with: event) }
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        if window?.firstResponder === self, handleCommandKey(event) { return true }
+        return super.performKeyEquivalent(with: event)
+    }
+
+    override func insertNewline(_ sender: Any?) {
+        if !handleSketchCommand(#selector(NSResponder.insertNewline(_:))) { super.insertNewline(sender) }
+    }
+
+    override func cancelOperation(_ sender: Any?) {
+        if !handleSketchCommand(#selector(NSResponder.cancelOperation(_:))) { super.cancelOperation(sender) }
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned { hideCommandSuggestion() }
+        return resigned
+    }
+
+    override func becomeFirstResponder() -> Bool {
+        let became = super.becomeFirstResponder()
+        if became { DispatchQueue.main.async { [weak self] in self?.commandChanged() } }
+        return became
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        hideCommandSuggestion()
+        NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
+        if let clip = enclosingScrollView?.contentView {
+            clip.postsBoundsChangedNotifications = true
+            NotificationCenter.default.addObserver(self, selector: #selector(commandViewportChanged), name: NSView.boundsDidChangeNotification, object: clip)
+        }
+    }
+
+    @objc private func commandViewportChanged() { commandChanged() }
+
+    private func hideCommandSuggestion() {
+        suggestionPanel?.orderOut(nil)
+        if let panel = suggestionPanel { panel.parent?.removeChildWindow(panel) }
+    }
+}
+
+private struct SketchCommandSuggestion: View {
+    var activate: () -> Void
+
+    var body: some View {
+        Button(action: activate) {
+            HStack(spacing: 10) {
+                Image(systemName: "pencil.tip.crop.circle")
+                Text("Create sketch").fontWeight(.medium)
+                Spacer(minLength: 8)
+                Text("↵ Enter").font(.system(size: 11)).foregroundStyle(.secondary)
+                    .padding(.horizontal, 6).padding(.vertical, 3)
+                    .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+            }
+            .font(.system(size: 13))
+            .padding(.horizontal, 12)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(.primary.opacity(0.12), lineWidth: 1))
+        .accessibilityLabel("Create sketch, Enter")
+    }
+}
+
 /// Draws the placeholder in the extra line fragment so it shares the caret’s line.
-fileprivate final class NoteTextView: NSTextView {
+final class NoteTextView: SketchCommandTextView {
+    var onOpenSketch: ((UUID) -> Void)?
+
+    override func mouseDown(with event: NSEvent) {
+        if event.modifierFlags.contains(.command), let layoutManager, let textContainer {
+            let point = convert(event.locationInWindow, from: nil)
+            let index = layoutManager.characterIndex(for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+            if let reference = SketchReference.references(in: string).first(where: { NSLocationInRange(index, $0.range) }) {
+                onOpenSketch?(reference.id)
+                return
+            }
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func paste(_ sender: Any?) {
+        super.paste(sender)
+        suppressPastedCommand()
+    }
+
     var placeholderString: String = "" {
         didSet {
             if oldValue != placeholderString {
@@ -253,6 +451,11 @@ struct RichNoteEditor: NSViewRepresentable {
     @Binding var text: String
     var isDark: Bool
     var autofocus: Bool
+    var isActive: Bool = true
+    var selectedRange: Binding<NSRange>? = nil
+    var preview: ((UUID) -> Data?)? = nil
+    var onCreateSketch: ((NSRange) -> Void)? = nil
+    var onOpenSketch: ((UUID) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -278,9 +481,11 @@ struct RichNoteEditor: NSViewRepresentable {
         view.setAccessibilityLabel("My note")
         view.delegate = context.coordinator
         scroll.documentView = view
+        scroll.isHidden = !isActive
         context.coordinator.view = view
         context.coordinator.load(text, dark: isDark)
-        if autofocus {
+        context.coordinator.wasActive = isActive
+        if autofocus && isActive {
             DispatchQueue.main.async { [weak view] in
                 guard let view else { return }
                 view.window?.makeFirstResponder(view)
@@ -293,6 +498,23 @@ struct RichNoteEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
+        scroll.isHidden = !isActive
+        if let view = coordinator.view {
+            view.onCreateSketch = onCreateSketch; view.onOpenSketch = onOpenSketch
+            view.commandEnabled = isActive
+            view.commandIsDark = isDark
+            view.textStorage?.enumerateAttribute(.attachment, in: NSRange(location: 0, length: view.string.utf16.count)) { value, _, _ in
+                if let card = value as? SketchTextAttachment, let cell = card.attachmentCell as? SketchAttachmentCell {
+                    cell.preview = preview?(card.id)
+                    let width = max(160, min(280, scroll.contentSize.width - 16))
+                    if cell.cardWidth != width {
+                        cell.cardWidth = width
+                        view.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: view.string.utf16.count), actualCharacterRange: nil)
+                    }
+                }
+            }
+            view.needsDisplay = true
+        }
         if coordinator.lastMarkdown != text {
             coordinator.load(text, dark: isDark)
         } else if let view = coordinator.view, view.dark != isDark {
@@ -303,6 +525,17 @@ struct RichNoteEditor: NSViewRepresentable {
             view.typingAttributes[.foregroundColor] = RichNoteCodec.ink(isDark)
             view.needsDisplay = true
         }
+        if let selection = selectedRange?.wrappedValue, let view = coordinator.view, let storage = view.textStorage {
+            if RichNoteCodec.markdownRange(view.selectedRange(), in: storage) != selection {
+                coordinator.loading = true
+                let range = RichNoteCodec.richRange(selection, in: storage)
+                view.setSelectedRange(range)
+                view.scrollRangeToVisible(range)
+                coordinator.loading = false
+            }
+            if !coordinator.wasActive { view.window?.makeFirstResponder(view) }
+        }
+        coordinator.wasActive = isActive
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
@@ -315,6 +548,8 @@ struct RichNoteEditor: NSViewRepresentable {
         weak var view: RichNoteTextView?
         var lastMarkdown = ""
         var loading = false
+        var hasLoaded = false
+        var wasActive = false
         init(_ parent: RichNoteEditor) { self.parent = parent }
 
         func load(_ markdown: String, dark: Bool) {
@@ -322,7 +557,13 @@ struct RichNoteEditor: NSViewRepresentable {
             loading = true
             let selection = view.selectedRange()
             view.dark = dark
-            view.textStorage?.setAttributedString(RichNoteCodec.decode(markdown, dark: dark))
+            let decoded = RichNoteCodec.decode(markdown, dark: dark, preview: parent.preview)
+            if hasLoaded { view.insertText(decoded, replacementRange: NSRange(location: 0, length: view.string.utf16.count)) }
+            else { view.textStorage?.setAttributedString(decoded); hasLoaded = true }
+            view.onOpenSketch = parent.onOpenSketch
+            view.onCreateSketch = parent.onCreateSketch
+            view.commandEnabled = parent.isActive
+            view.commandIsDark = dark
             view.typingAttributes = RichNoteCodec.attributes(dark: dark)
             view.insertionPointColor = RichNoteCodec.ink(dark)
             view.setSelectedRange(NSRange(location: min(selection.location, view.string.utf16.count), length: 0))
@@ -334,12 +575,57 @@ struct RichNoteEditor: NSViewRepresentable {
             guard !loading, let view, let storage = view.textStorage else { return }
             lastMarkdown = RichNoteCodec.encode(storage)
             parent.text = lastMarkdown
+            updateSelection()
+            view.commandChanged()
             view.needsDisplay = true
+        }
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard !loading else { return }
+            updateSelection()
+            view?.commandChanged()
+        }
+
+        func updateSelection() {
+            guard let view, let storage = view.textStorage else { return }
+            parent.selectedRange?.wrappedValue = RichNoteCodec.markdownRange(view.selectedRange(), in: storage)
+        }
+
+        func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
+            view?.handleSketchCommand(selector) ?? false
         }
     }
 }
 
-final class RichNoteTextView: NSTextView {
+final class RichNoteTextView: SketchCommandTextView {
+    var onOpenSketch: ((UUID) -> Void)?
+
+    override func commandCandidate() -> NSRange? {
+        guard let storage = textStorage, let range = SketchReference.commandSuggestionRange(in: string, selection: selectedRange()),
+              storage.attribute(.noteCode, at: range.location, effectiveRange: nil) as? Bool != true else { return nil }
+        return RichNoteCodec.markdownRange(range, in: storage)
+    }
+
+    override func handleSketchCommand(_ selector: Selector) -> Bool {
+        let selection = selectedRange()
+        if selector == #selector(NSResponder.insertNewline(_:)), selection.length == 1,
+           selection.location < (textStorage?.length ?? 0),
+           let card = textStorage?.attribute(.attachment, at: selection.location, effectiveRange: nil) as? SketchTextAttachment,
+           let onOpenSketch { onOpenSketch(card.id); return true }
+        return super.handleSketchCommand(selector)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard let layoutManager, let textContainer else { super.mouseDown(with: event); return }
+        let point = convert(event.locationInWindow, from: nil)
+        let index = layoutManager.characterIndex(for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
+        if index < (textStorage?.length ?? 0), let attachment = textStorage?.attribute(.attachment, at: index, effectiveRange: nil) as? SketchTextAttachment {
+            let glyph = layoutManager.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
+            let rect = layoutManager.boundingRect(forGlyphRange: glyph, in: textContainer).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            if rect.contains(point) { onOpenSketch?(attachment.id); return }
+        }
+        super.mouseDown(with: event)
+    }
+
     var dark = false
 
     override func draw(_ dirtyRect: NSRect) {
@@ -484,6 +770,7 @@ final class RichNoteTextView: NSTextView {
     }
 
     override func insertNewline(_ sender: Any?) {
+        if handleSketchCommand(#selector(NSResponder.insertNewline(_:))) { return }
         let ns = string as NSString
         let selected = selectedRange()
         let lineRange = ns.lineRange(for: NSRange(location: selected.location, length: 0))
@@ -503,9 +790,38 @@ final class RichNoteTextView: NSTextView {
         typingAttributes = RichNoteCodec.attributes(dark: dark)
     }
 
+    private static let sketchPasteboardType = NSPasteboard.PasteboardType("com.olly.kodi.sketch-markdown")
+
+    private var selectedSketchContent: NSAttributedString? {
+        guard selectedRange().length > 0, let storage = textStorage else { return nil }
+        let value = storage.attributedSubstring(from: selectedRange())
+        var containsSketch = false
+        value.enumerateAttribute(.attachment, in: NSRange(location: 0, length: value.length)) { attachment, _, _ in
+            if attachment is SketchTextAttachment { containsSketch = true }
+        }
+        return containsSketch ? value : nil
+    }
+
+    override func copy(_ sender: Any?) {
+        guard let value = selectedSketchContent else { super.copy(sender); return }
+        let markdown = RichNoteCodec.encode(value)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(markdown, forType: .string)
+        NSPasteboard.general.setString(markdown, forType: Self.sketchPasteboardType)
+    }
+
+    override func cut(_ sender: Any?) {
+        guard selectedSketchContent != nil else { super.cut(sender); return }
+        copy(sender)
+        insertText("", replacementRange: selectedRange())
+    }
+
     // Keep pasted formatting within the same portable vocabulary as typing.
     override func paste(_ sender: Any?) {
-        if let raw = NSPasteboard.general.string(forType: .string) {
+        defer { suppressPastedCommand() }
+        if let markdown = NSPasteboard.general.string(forType: Self.sketchPasteboardType) {
+            insertText(RichNoteCodec.decode(markdown, dark: dark), replacementRange: selectedRange())
+        } else if let raw = NSPasteboard.general.string(forType: .string) {
             insertText(NSAttributedString(string: raw, attributes: typingAttributes), replacementRange: selectedRange())
         }
     }
@@ -542,10 +858,42 @@ enum RichNoteCodec {
         return checks.first { markdown.range(of: $0.0, options: .regularExpression) != nil }?.1
     }
 
-    static func decode(_ markdown: String, dark: Bool) -> NSAttributedString {
+    static func markdownRange(_ selection: NSRange, in value: NSAttributedString) -> NSRange {
+        let start = min(selection.location, value.length)
+        let end = min(NSMaxRange(selection), value.length)
+        let before = encode(value.attributedSubstring(from: NSRange(location: 0, length: start))).utf16.count
+        let through = encode(value.attributedSubstring(from: NSRange(location: 0, length: end))).utf16.count
+        return NSRange(location: before, length: max(0, through - before))
+    }
+
+    static func richRange(_ selection: NSRange, in value: NSAttributedString) -> NSRange {
+        var start = value.length
+        var end = value.length
+        var index = 0
+        let ns = value.string as NSString
+        while index <= value.length {
+            let offset = encode(value.attributedSubstring(from: NSRange(location: 0, length: index))).utf16.count
+            if offset >= selection.location, start == value.length { start = index }
+            if offset >= NSMaxRange(selection) { end = index; break }
+            if index == value.length { break }
+            index = NSMaxRange(ns.rangeOfComposedCharacterSequence(at: index))
+        }
+        return NSRange(location: start, length: max(0, end - start))
+    }
+
+    static func decode(_ markdown: String, dark: Bool, preview: ((UUID) -> Data?)? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         let lines = markdown.components(separatedBy: "\n")
+        let sketchOffsets = Set(SketchReference.references(in: markdown).map { $0.range.location })
+        var lineOffset = 0
         for (index, original) in lines.enumerated() {
+            defer { lineOffset += original.utf16.count + 1 }
+            if sketchOffsets.contains(lineOffset), let (id, title) = SketchReference.parseLine(original) {
+                let attachment = SketchTextAttachment(id: id, title: title, preview: preview?(id))
+                result.append(NSAttributedString(attachment: attachment))
+                if index < lines.count - 1 { result.append(NSAttributedString(string: "\n", attributes: attributes(dark: dark))) }
+                continue
+            }
             var line = original
             var heading = 0
             if let prefix = line.range(of: #"^#{1,6} "#, options: .regularExpression) {
@@ -596,6 +944,10 @@ enum RichNoteCodec {
         var tokens: [Token] = []
         let ns = value.string as NSString
         value.enumerateAttributes(in: NSRange(location: 0, length: value.length)) { attrs, range, _ in
+            if let attachment = attrs[.attachment] as? SketchTextAttachment {
+                tokens.append(Token(text: SketchReference.markdown(id: attachment.id, title: attachment.title), marks: []))
+                return
+            }
             var marks: [Mark] = []
             if let link = attrs[.link] {
                 let destination = String(describing: link).replacingOccurrences(of: " ", with: "%20")
@@ -663,5 +1015,45 @@ enum RichNoteCodec {
             index = NSMaxRange(line)
         }
         return output
+    }
+}
+
+/// The attachment carries identity independently of its rendered image.
+final class SketchTextAttachment: NSTextAttachment {
+    let id: UUID
+    let title: String
+    init(id: UUID, title: String, preview: Data?) {
+        self.id = id; self.title = title
+        super.init(data: nil, ofType: nil)
+        attachmentCell = SketchAttachmentCell(title: title, preview: preview)
+    }
+    required init?(coder: NSCoder) { return nil }
+}
+
+final class SketchAttachmentCell: NSTextAttachmentCell {
+    let sketchTitle: String
+    var preview: Data?
+    var cardWidth: CGFloat = 280
+    init(title: String, preview: Data?) {
+        self.sketchTitle = title; self.preview = preview
+        super.init(imageCell: nil)
+        self.title = title
+    }
+    required init(coder: NSCoder) { fatalError("Sketch cards are decoded from Markdown") }
+    override func cellSize() -> NSSize { NSSize(width: cardWidth, height: 182) }
+    override func draw(withFrame frame: NSRect, in controlView: NSView?) {
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: frame.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8).fill()
+        NSColor.separatorColor.setStroke()
+        NSBezierPath(roundedRect: frame.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8).stroke()
+        let imageRect = NSRect(x: frame.minX + 10, y: frame.minY + 10, width: frame.width - 20, height: frame.height - 44)
+        if let preview, let image = NSImage(data: preview) {
+            let ratio = min(imageRect.width / image.size.width, imageRect.height / image.size.height)
+            let size = NSSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            image.draw(in: NSRect(x: imageRect.midX - size.width / 2, y: imageRect.midY - size.height / 2, width: size.width, height: size.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        } else {
+            ("Preview unavailable · Click to open" as NSString).draw(in: imageRect, withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+        }
+        (sketchTitle as NSString).draw(in: NSRect(x: frame.minX + 10, y: frame.maxY - 28, width: frame.width - 20, height: 22), withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.labelColor])
     }
 }

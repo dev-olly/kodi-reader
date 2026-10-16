@@ -601,6 +601,87 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertTrue(store.recentBooks().isEmpty); XCTAssertEqual(store.allBooks().count, 1)
         XCTAssertEqual(store.record(for: local.id)?.annotations.count, 1)
     }
+    func testMissingSketchAssetStillSyncsItsNoteAndReference() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let sketch = NoteSketch(title: "Recoverable sketch")
+        var original = note("Kept text\n\n" + sketch.markdown)
+        original.sketches = [sketch]; original.hasDrawing = true
+        let local = try book(in: a, with: original)
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud)), sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let received = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!)?.annotations.first)
+        XCTAssertEqual(received.note, original.note)
+        XCTAssertEqual(received.sketches, original.sketches)
+        XCTAssertEqual(sa.status.phase, .synced)
+        XCTAssertEqual(sb.status.phase, .synced)
+    }
+
+    func testMultipleSketchesSyncAndDeleteAsOneNote() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let first = NoteSketch(title: "Sketch 1"), second = NoteSketch(title: "Sketch 2")
+        var original = note(first.markdown + "\n\n" + second.markdown)
+        original.sketches = [first, second]; original.hasDrawing = true
+        let local = try book(in: a, with: original)
+        for (index, sketch) in original.sketches.enumerated() {
+            try a.drawingStore.replaceSketch(scene: Data("scene-\(index)".utf8), preview: Data("preview-\(index)".utf8), bookID: local.id, annotationID: original.id, sketchID: sketch.id)
+        }
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud)), sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!)?.id)
+        let received = try XCTUnwrap(b.record(for: bID)?.annotations.first)
+        XCTAssertEqual(received.sketches, original.sketches)
+        XCTAssertEqual(received.note, original.note)
+        for (index, sketch) in original.sketches.enumerated() {
+            XCTAssertEqual(b.drawingStore.loadScene(bookID: bID, annotationID: original.id, sketchID: sketch.id), Data("scene-\(index)".utf8))
+            XCTAssertEqual(b.drawingStore.loadPreview(bookID: bID, annotationID: original.id, sketchID: sketch.id), Data("preview-\(index)".utf8))
+        }
+        let entity = try XCTUnwrap(cloud.entities.values.first { $0.kind == .annotation })
+        XCTAssertEqual(try entity.value(SyncedAnnotation.self).sketches?.count, 2)
+        a.drawingStore.deleteScene(bookID: local.id, annotationID: original.id)
+        a.update(local.id) { $0.annotations.removeAll() }; try a.checkpoint()
+        sa.checkpoint(); try await run(sa); try await run(sb)
+        XCTAssertTrue(b.record(for: bID)!.annotations.isEmpty)
+        for sketch in original.sketches {
+            XCTAssertNil(b.drawingStore.loadScene(bookID: bID, annotationID: original.id, sketchID: sketch.id))
+            XCTAssertNil(b.drawingStore.loadPreview(bookID: bID, annotationID: original.id, sketchID: sketch.id))
+        }
+    }
+
+    func testMultipleSketchConflictRecoversIndependentIDsAndEveryAsset() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let first = NoteSketch(title: "Edited"), second = NoteSketch(title: "Unchanged")
+        var original = note(first.markdown + "\n\n" + second.markdown)
+        original.sketches = [first, second]; original.hasDrawing = true
+        let local = try book(in: a, with: original)
+        for sketch in original.sketches {
+            try a.drawingStore.replaceSketch(scene: Data(sketch.title.utf8), preview: Data("preview".utf8), bookID: local.id, annotationID: original.id, sketchID: sketch.id)
+        }
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud)), sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = b.record(cloudIdentity: local.cloudIdentity!)!.id
+        try a.drawingStore.replaceSketch(scene: Data("remote".utf8), preview: Data("remote-preview".utf8), bookID: local.id, annotationID: original.id, sketchID: first.id)
+        sa.checkpoint(); try await run(sa)
+        try b.drawingStore.replaceSketch(scene: Data("local".utf8), preview: Data("local-preview".utf8), bookID: bID, annotationID: original.id, sketchID: first.id)
+        sb.checkpoint(); try await run(sb)
+        let copies = b.record(for: bID)!.annotations
+        XCTAssertEqual(copies.count, 2)
+        XCTAssertEqual(Set(copies.flatMap { $0.sketches.map(\.id) }).count, 4, "Recovery must give sketches independent identities")
+        var editedScenes = Set<String>()
+        for copy in copies {
+            XCTAssertEqual(Set(SketchReference.references(in: copy.note ?? "").map(\.id)), Set(copy.sketches.map(\.id)))
+            for sketch in copy.sketches {
+                let scene = try XCTUnwrap(b.drawingStore.loadScene(bookID: bID, annotationID: copy.id, sketchID: sketch.id))
+                XCTAssertNotNil(b.drawingStore.loadPreview(bookID: bID, annotationID: copy.id, sketchID: sketch.id))
+                if sketch.title == "Edited" { editedScenes.insert(String(data: scene, encoding: .utf8)!) }
+                else { XCTAssertEqual(scene, Data("Unchanged".utf8)) }
+            }
+        }
+        XCTAssertEqual(editedScenes, ["remote", "local"])
+    }
+
     func testIdentityIgnoresFilenameAndDistinguishesContents() throws {
         let store = try store(), root = store.rootDirectory
         let a = root.appendingPathComponent("a.epub"), b = root.appendingPathComponent("renamed.epub")

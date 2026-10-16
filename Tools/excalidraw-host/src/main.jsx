@@ -3,6 +3,7 @@ import { createRoot } from "react-dom/client";
 import {
   CaptureUpdateAction,
   Excalidraw,
+  exportToBlob,
   convertToExcalidrawElements,
 } from "@excalidraw/excalidraw";
 import "@excalidraw/excalidraw/index.css";
@@ -12,6 +13,7 @@ const apiRef = { current: null };
 const themeRef = { current: "light" };
 const applyingRef = { current: false };
 const loadVersionRef = { current: 0 };
+const sessionRef = { current: 0 };
 const loadedOnceRef = { current: false };
 
 const DEFAULTS = {
@@ -100,6 +102,8 @@ function applyScene(parsed) {
   if (!api) return;
   const version = ++loadVersionRef.current;
   applyingRef.current = true;
+  api.resetScene();
+  api.history.clear();
   const files = parsed.files ? Object.values(parsed.files) : [];
   if (files.length) {
     api.addFiles(files);
@@ -374,7 +378,8 @@ function StrokeWidthIcon({ width }) {
 }
 
 window.__excalidraw = {
-  load(scene) {
+  load(scene, session = 0) {
+    sessionRef.current = session;
     const parsed = typeof scene === "string" ? JSON.parse(scene) : scene;
     loadedOnceRef.current = true;
     applyScene(parsed);
@@ -392,16 +397,49 @@ window.__excalidraw = {
       applyingRef.current = false;
     });
   },
-  clear() {
+  clear(session = 0) {
+    sessionRef.current = session;
     loadedOnceRef.current = true;
     applyScene({ elements: [], appState: {}, files: {} });
+  },
+  async renderScene(scene) {
+    const parsed = typeof scene === "string" ? JSON.parse(scene) : scene;
+    await document.fonts.ready;
+    const elements = (parsed.elements ?? []).filter((element) => !element.isDeleted);
+    if (!elements.length) {
+      const canvas = document.createElement("canvas");
+      canvas.width = 400; canvas.height = 200;
+      const context = canvas.getContext("2d");
+      context.fillStyle = "#ffffff"; context.fillRect(0, 0, 400, 200);
+      return canvas.toDataURL("image/png").split(",")[1];
+    }
+    const blob = await exportToBlob({
+      elements,
+      appState: { ...(parsed.appState ?? {}), exportBackground: true, viewBackgroundColor: "#ffffff", exportWithDarkMode: false },
+      files: parsed.files ?? {},
+      mimeType: "image/png",
+      maxWidthOrHeight: 1600,
+    });
+    if (!blob) throw new Error("Could not render this sketch.");
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result.split(",")[1]);
+      reader.onerror = () => reject(new Error("Could not read the sketch preview."));
+      reader.readAsDataURL(blob);
+    });
+  },
+  async checkpoint() {
+    const value = this.getScene();
+    const preview = value.elementCount > 0 ? await this.renderScene(value.scene) : null;
+    if (this.getScene().scene !== value.scene) return this.checkpoint();
+    return { ...value, preview };
   },
   getScene() {
     const api = apiRef.current;
     if (!api) {
       return { elementCount: 0, scene: "{\"elements\":[],\"files\":{}}" };
     }
-    return serialize(api);
+    return { ...serialize(api), session: sessionRef.current };
   },
 };
 
@@ -434,7 +472,7 @@ function Host() {
     timerRef.current = window.setTimeout(() => {
       const api = apiRef.current;
       if (!api) return;
-      post({ type: "sceneChanged", elementCount: liveCount });
+      post({ type: "sceneChanged", elementCount: liveCount, session: sessionRef.current });
     }, 300);
   }, []);
 

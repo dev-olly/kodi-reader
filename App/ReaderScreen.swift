@@ -54,8 +54,8 @@ struct ReaderScreen: View {
                     annotation: model.annotation(with: annotation.id) ?? annotation,
                     autofocus: noteEditorAutofocus,
                     isDark: model.settings.theme.isDark,
-                    onSave: { note, completion in
-                        model.updateNote(note, for: annotation.id, completion: completion)
+                    onSave: { note, reconcile, completion in
+                        model.updateNote(note, for: annotation.id, reconcileSketches: reconcile, completion: completion)
                     },
                     onChangeColor: { model.changeColor($0, for: annotation.id) },
                     onDelete: { deleteAnnotation(annotation.id) },
@@ -423,18 +423,9 @@ struct ReaderScreen: View {
                             annotation: model.annotation(with: annotation.id) ?? annotation,
                             autofocus: noteEditorAutofocus,
                             presentation: .sidebar,
-                            drawingScene: model.drawingScene(for: annotation.id),
                             isDark: model.settings.theme.isDark,
-                            onSave: { note, completion in
-                                model.updateNote(note, for: annotation.id, completion: completion)
-                            },
-                            onSaveDrawing: { scene, elementCount, completion in
-                                model.updateDrawing(
-                                    scene: scene,
-                                    elementCount: elementCount,
-                                    for: annotation.id,
-                                    completion: completion
-                                )
+                            onSave: { note, reconcile, completion in
+                                model.updateNote(note, for: annotation.id, reconcileSketches: reconcile, completion: completion)
                             },
                             onChangeColor: { model.changeColor($0, for: annotation.id) },
                             onDelete: { deleteAnnotation(annotation.id) },
@@ -459,12 +450,7 @@ struct ReaderScreen: View {
                             onEdit: { openNoteEditor($0, autofocus: !$0.hasContent) },
                             onDelete: { deleteAnnotation($0.id) },
                             onExport: { format in
-                                NotesExporter.presentSavePanel(
-                                    format: format,
-                                    bookTitle: model.record?.title ?? book.title,
-                                    author: model.record?.author ?? book.author,
-                                    annotations: model.record?.annotations ?? []
-                                )
+                                model.exportNotes(format)
                             }
                         )
                     }
@@ -498,6 +484,13 @@ struct ReaderScreen: View {
     }
 
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
+        model.flush { succeeded in
+            guard succeeded else { return }
+            showNoteEditor(annotation, autofocus: autofocus)
+        }
+    }
+
+    private func showNoteEditor(_ annotation: Annotation, autofocus: Bool) {
         noteEditorAutofocus = autofocus
         model.aiNoteTarget = .annotation(annotation.id)
         editingAnnotation = annotation

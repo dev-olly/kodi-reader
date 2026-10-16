@@ -75,6 +75,13 @@ struct SyncedBook: Codable, Equatable {
 struct SyncedAnnotation: Codable, Equatable {
     var annotation: Annotation
     var drawing: BlobManifest?
+    var sketches: [SyncedSketch]? = nil
+}
+
+struct SyncedSketch: Codable, Equatable {
+    var id: UUID
+    var scene: BlobManifest?
+    var preview: BlobManifest?
 }
 
 struct SyncedPosition: Codable, Equatable {

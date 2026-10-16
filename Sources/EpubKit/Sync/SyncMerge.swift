@@ -86,6 +86,24 @@ enum SyncMerge {
             var value = try source.value(SyncedAnnotation.self)
             value.annotation.recoveredFrom = value.annotation.id
             value.annotation.id = id
+            // Recovered drawings are independent copies, including when both
+            // versions are exported together from the same book.
+            let remapping = Dictionary(uniqueKeysWithValues: value.annotation.sketches.map {
+                ($0.id, SyncCoding.uuid("recovered-sketch:\(id):\($0.id)"))
+            })
+            value.annotation.note = value.annotation.note.map { note in
+                SketchReference.replacing(in: note) { reference in
+                    SketchReference.markdown(id: remapping[reference.id] ?? reference.id, title: reference.title)
+                }
+            }
+            for index in value.annotation.sketches.indices {
+                let oldID = value.annotation.sketches[index].id
+                value.annotation.sketches[index].id = remapping[oldID] ?? oldID
+            }
+            if var assets = value.sketches {
+                for index in assets.indices { assets[index].id = remapping[assets[index].id] ?? assets[index].id }
+                value.sketches = assets
+            }
             copy.body = try SyncCoding.encode(value)
         case .chat:
             var value = try source.value(ChatThread.self)

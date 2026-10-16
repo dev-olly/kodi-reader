@@ -4,12 +4,16 @@ import SwiftUI
 /// SwiftUI note preview: explicit blocks for lists/code, inline markdown for bold/italic/links.
 struct NoteMarkdownPreview: View {
     let text: String
+    var sketchPreview: ((UUID) -> Data?)? = nil
+    var onOpenSketch: ((UUID) -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(NoteMarkdown.previewBlocks(of: text).enumerated()), id: \.offset) { _, block in
                 switch block {
+                case let .sketch(id, title):
+                    SketchPreviewCard(title: title, preview: sketchPreview?(id)) { onOpenSketch?(id) }
                 case let .paragraph(markdown):
                     inlineText(markdown)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -134,5 +138,33 @@ struct NoteMarkdownPreview: View {
                     .textSelection(.enabled)
             }
         }
+    }
+}
+
+struct SketchPreviewCard: View {
+    let title: String
+    let preview: Data?
+    let onOpen: () -> Void
+
+    var body: some View {
+        Button(action: onOpen) {
+            VStack(alignment: .leading, spacing: 8) {
+                if let preview, let image = NSImage(data: preview) {
+                    Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 180)
+                        .padding(8).background(Color.white)
+                } else {
+                    Label("Preview unavailable · Open sketch", systemImage: "scribble")
+                        .foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 100)
+                }
+                Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Color.primary.opacity(0.04))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open sketch: " + title)
     }
 }

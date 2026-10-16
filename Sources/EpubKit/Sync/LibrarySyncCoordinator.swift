@@ -407,10 +407,26 @@ public final class LibrarySyncCoordinator {
             for var note in book.annotations {
                 note.anchorStatus = .unknown
                 let drawingFile = store.drawingStore.sceneURL(bookID: book.id, annotationID: note.id)
-                var drawing = note.hasDrawing && FileManager.default.fileExists(atPath: drawingFile.path) ? try manifest(for: drawingFile) : nil
+                var drawing = note.sketches.isEmpty && note.hasDrawing && FileManager.default.fileExists(atPath: drawingFile.path) ? try manifest(for: drawingFile) : nil
                 drawing?.generation = journal.assetGenerations?["annotation:\(identity):\(note.id.uuidString)"]
                 // Keep remote drawing references while an asset hydration is deferred.
-                try add(SyncedAnnotation(annotation: note, drawing: drawing), identity, .annotation, note.id.uuidString)
+                let entityID = "annotation:\(identity):\(note.id.uuidString)"
+                let remembered = try journal.local[entityID].flatMap { $0.deleted ? nil : try $0.value(SyncedAnnotation.self) }
+                var assets: [SyncedSketch] = []
+                for sketch in note.sketches {
+                    let sceneURL = store.drawingStore.sceneURL(bookID: book.id, annotationID: note.id, sketchID: sketch.id)
+                    let previewURL = store.drawingStore.previewURL(bookID: book.id, annotationID: note.id, sketchID: sketch.id)
+                    let previous = remembered?.sketches?.first { $0.id == sketch.id }
+                    let hasScene = FileManager.default.fileExists(atPath: sceneURL.path)
+                    var scene = hasScene ? try manifest(for: sceneURL) : previous?.scene
+                    var preview = FileManager.default.fileExists(atPath: previewURL.path) ? try manifest(for: previewURL) : (hasScene ? nil : previous?.preview)
+                    if let generation = journal.assetGenerations?[entityID] {
+                        scene?.generation = generation; preview?.generation = generation
+                    }
+                    assets.append(SyncedSketch(id: sketch.id, scene: scene, preview: preview))
+                }
+                if note.sketches.isEmpty && note.hasDrawing { drawing = drawing ?? remembered?.drawing }
+                try add(SyncedAnnotation(annotation: note, drawing: drawing, sketches: assets.isEmpty ? nil : assets), identity, .annotation, note.id.uuidString)
             }
             for bookmark in book.bookmarks { try add(bookmark, identity, .bookmark, bookmark.id.uuidString) }
             if preferences.syncAIHistory || journal.local.values.contains(where: { $0.bookID == identity && $0.kind == .chat }) {
@@ -499,6 +515,11 @@ public final class LibrarySyncCoordinator {
             original.importedRelativePath = LibraryStore.relativeImportedPath(for: recoveredID, kind: original.documentKind)
         }
         for note in original.annotations where note.hasDrawing {
+            for sketch in note.sketches {
+                guard let scene = store.drawingStore.loadScene(bookID: oldID, annotationID: note.id, sketchID: sketch.id) else { throw SyncFailure.missingFile }
+                let preview = store.drawingStore.loadPreview(bookID: oldID, annotationID: note.id, sketchID: sketch.id)
+                try store.drawingStore.replaceSketch(scene: scene, preview: preview, bookID: recoveredID, annotationID: note.id, sketchID: sketch.id)
+            }
             if let scene = store.drawingStore.loadScene(bookID: oldID, annotationID: note.id) {
                 let destination = store.drawingStore.sceneURL(bookID: recoveredID, annotationID: note.id)
                 try FileManager.default.createDirectory(at: destination.deletingLastPathComponent(), withIntermediateDirectories: true)
@@ -542,6 +563,21 @@ public final class LibrarySyncCoordinator {
             if !entity.deleted, let drawing = value.drawing {
                 try await materialize(drawing, to: store.drawingStore.sceneURL(bookID: book.id, annotationID: id), token: token, scope: entity.id)
             }
+            for sketch in value.sketches ?? [] {
+                if let scene = sketch.scene {
+                    try await materialize(scene, to: store.drawingStore.sceneURL(bookID: book.id, annotationID: id, sketchID: sketch.id), token: token, scope: entity.id)
+                }
+                if let preview = sketch.preview {
+                    try await materialize(preview, to: store.drawingStore.previewURL(bookID: book.id, annotationID: id, sketchID: sketch.id), token: token, scope: entity.id)
+                } else {
+                    let url = store.drawingStore.previewURL(bookID: book.id, annotationID: id, sketchID: sketch.id)
+                    if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+                }
+            }
+            let incoming = Set(value.annotation.sketches.map(\.id))
+            for sketch in book.annotations.first(where: { $0.id == id })?.sketches ?? [] where !incoming.contains(sketch.id) {
+                try store.drawingStore.deleteSketch(bookID: book.id, annotationID: id, sketchID: sketch.id)
+            }
             book.annotations.removeAll { $0.id == id }
             if !entity.deleted { book.annotations.append(value.annotation) }
             else { store.drawingStore.deleteScene(bookID: book.id, annotationID: id) }
@@ -566,7 +602,9 @@ public final class LibrarySyncCoordinator {
         guard !entity.deleted else { return [] }
         switch entity.kind {
         case .book: return try entity.value(SyncedBook.self).file.map { [$0] } ?? []
-        case .annotation: return try entity.value(SyncedAnnotation.self).drawing.map { [$0] } ?? []
+        case .annotation:
+            let note = try entity.value(SyncedAnnotation.self)
+            return (note.drawing.map { [$0] } ?? []) + (note.sketches ?? []).flatMap { ($0.scene.map { [$0] } ?? []) + ($0.preview.map { [$0] } ?? []) }
         default: return []
         }
     }

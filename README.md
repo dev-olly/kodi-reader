@@ -32,13 +32,22 @@ Export all notes from the notes sidebar’s export menu, or one note from its
 (`.html`), or Notion (`.md`). Each export includes the referenced passage,
 chapter, book title, author, and note body. Import the HTML file through
 Apple Notes’ **File → Import to Notes**, or the Markdown file through Notion’s
-**Settings → Import → Text & Markdown**. Drawing notes include their passage
-and a notice; the drawing itself is not embedded.
+**Settings → Import → Text & Markdown**. Sketches are embedded in Word and HTML;
+Markdown and Notion exports include a companion assets folder that must stay
+beside the document.
 
 ![Highlight with a note](docs/screenshots/app-note-editor.png)
 
 ### Visual notes
-Freeform sketches per highlight via a bundled, offline [Excalidraw](https://excalidraw.com/) editor.
+Multiple freeform sketches in each note via a bundled, offline [Excalidraw](https://excalidraw.com/) editor.
+Type `/` at the start of a paragraph to show a **Create sketch · ↵ Enter** suggestion
+beside the cursor. Both `/sketch` and `/draw` work; press Enter or click the suggestion
+to open the canvas, or Escape to dismiss it. Command–Enter finishes editing the note.
+The first saved drawing inserts a preview
+card at that position. Click a card to edit its sketch, or use **… → Draw · Sketches**
+to browse and rename sketches. Removing the last reference deletes the sketch;
+Undo restores its drawing while the note is open. Existing drawings become the
+first sketch automatically. Use the updated app on all Macs when syncing sketches.
 
 ![Visual notes with Excalidraw](docs/screenshots/app-draw.png)
 

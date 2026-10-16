@@ -28,6 +28,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     public var anchorStatus: AnchorStatus
     /// True when a drawing sidecar exists for this highlight.
     public var hasDrawing: Bool
+    public var sketches: [NoteSketch]
     public var recoveredFrom: UUID? = nil
 
     public init(
@@ -40,7 +41,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         createdAt: Date = Date(),
         modifiedAt: Date = Date(),
         anchorStatus: AnchorStatus = .unknown,
-        hasDrawing: Bool = false
+        hasDrawing: Bool = false,
+        sketches: [NoteSketch] = []
     ) {
         self.id = id
         self.locator = locator
@@ -51,7 +53,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.modifiedAt = modifiedAt
         self.anchorStatus = anchorStatus
-        self.hasDrawing = hasDrawing
+        self.hasDrawing = hasDrawing || !sketches.isEmpty
+        self.sketches = sketches
     }
 
     public var hasNote: Bool {
@@ -59,7 +62,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     }
 
     /// Markdown, a drawing, or both.
-    public var hasContent: Bool { hasNote || hasDrawing }
+    public var hasContent: Bool { hasNote || hasDrawing || !sketches.isEmpty }
 
     /// Notes must always paint their quote with a background highlight. This
     /// also repairs older notes that were saved with the underline-only style.
@@ -99,7 +102,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing, recoveredFrom
+        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing, sketches, recoveredFrom
     }
 
     public init(from decoder: Decoder) throws {
@@ -115,6 +118,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         // Older library files omit this field.
         anchorStatus = try container.decodeIfPresent(AnchorStatus.self, forKey: .anchorStatus) ?? .unknown
         hasDrawing = try container.decodeIfPresent(Bool.self, forKey: .hasDrawing) ?? false
+        sketches = try container.decodeIfPresent([NoteSketch].self, forKey: .sketches) ?? []
+        hasDrawing = hasDrawing || !sketches.isEmpty
         recoveredFrom = try container.decodeIfPresent(UUID.self, forKey: .recoveredFrom)
     }
 }
@@ -146,6 +151,7 @@ public enum NoteMarkdown {
     /// Structural blocks for the SwiftUI note preview renderer.
     public enum PreviewBlock: Equatable, Sendable {
         case paragraph(String)
+        case sketch(UUID, String)
         case unorderedList([String])
         case orderedList([String])
         case taskList([TaskItem])
@@ -173,6 +179,18 @@ public enum NoteMarkdown {
     /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.
     public static func previewBlocks(of markdown: String) -> [PreviewBlock] {
         var blocks: [PreviewBlock] = []
+        let references = SketchReference.references(in: markdown)
+        if !references.isEmpty {
+            let ns = markdown as NSString
+            var cursor = 0
+            for reference in references {
+                blocks += previewBlocks(of: ns.substring(with: NSRange(location: cursor, length: reference.range.location - cursor)))
+                blocks.append(.sketch(reference.id, reference.title))
+                cursor = NSMaxRange(reference.range)
+            }
+            blocks += previewBlocks(of: ns.substring(from: cursor))
+            return blocks
+        }
         for segment in previewSegments(of: markdown) {
             switch segment {
             case let .code(code):
@@ -580,7 +598,7 @@ public enum NoteMarkdown {
                 parts.append(annotation.note ?? "")
                 parts.append("")
             }
-            if annotation.hasDrawing {
+            if annotation.hasDrawing && annotation.sketches.isEmpty {
                 parts.append("_Visual note attached in Kodi Reader; drawing is not included in this export._")
                 parts.append("")
             }

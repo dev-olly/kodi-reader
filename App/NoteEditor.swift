@@ -14,10 +14,8 @@ struct NoteEditor: View {
     let annotation: Annotation
     var autofocus: Bool = false
     var presentation: Presentation = .sheet
-    var drawingScene: Data? = nil
     var isDark: Bool = false
-    let onSave: (String, @escaping (Result<Void, Error>) -> Void) -> Void
-    var onSaveDrawing: ((Data, Int, @escaping (Result<Void, Error>) -> Void) -> Void)? = nil
+    let onSave: (String, Bool, @escaping (Result<Void, Error>) -> Void) -> Void
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     let onClose: () -> Void
@@ -33,20 +31,32 @@ struct NoteEditor: View {
     @State private var saveWork: DispatchWorkItem?
     @State private var drawingWork: DispatchWorkItem?
     @State private var didLoad = false
-    @State private var didOpenDraw = false
-    @State private var didLoadDrawingScene = false
     @State private var lastSavedText = ""
     @State private var saveRevision = 0
     @State private var sourceModeReason: String?
     @State private var saveStatus: SaveStatus = .saved
     @State private var drawingController = ExcalidrawController()
-    @State private var latestDrawing: (Data, Int)?
+    @State private var activeSketch: NoteSketch?
+    @State private var draftRange: NSRange?
+    @State private var returnMode: EditorMode = .edit
+    @State private var sceneDirty = false
+    @State private var checkpointInFlight = false
+    @State private var pendingCheckpoint = false
+    @State private var shouldDiscardEmptyDraft = false
+    @State private var canvasWaiters: [(Result<Void, Error>) -> Void] = []
+    @State private var sceneRevision = 0
+    @State private var editorSession = UUID()
+    @State private var noteSession = UUID()
+    @State private var previewRevision = 0
+    @State private var didDelete = false
+    @State private var errorMessage: String?
 
     private enum EditorMode {
         case edit
         case source
         case preview
         case draw
+        case sketches
     }
 
     private enum SaveStatus: Equatable {
@@ -109,7 +119,9 @@ struct NoteEditor: View {
             )
             .padding(presentation == .sheet ? 28 : 0)
         }
-        .onAppear { load(); model.beginNoteEditing(annotation.id, flush: { flush(teardown: false) }) }
+        .onAppear { load(); model.beginNoteEditing(annotation.id, session: noteSession, flush: { finished in
+            flush(teardown: false, onFailure: { finished(.failure($0)) }) { finished(.success(())) }
+        }) }
         .background(theme.surface)
         .foregroundStyle(theme.uiForeground)
         .colorScheme(theme.colorScheme)
@@ -118,7 +130,7 @@ struct NoteEditor: View {
             scheduleAutosave(newValue)
         }
         .onChange(of: mode) { _, newValue in
-            handleModeChange(newValue)
+            onDrawActiveChanged?(newValue == .draw)
         }
         .onChange(of: isDark) { _, newValue in
             drawingController.setTheme(newValue ? "dark" : "light")
@@ -129,11 +141,21 @@ struct NoteEditor: View {
         .onChange(of: annotation.note) { _, newValue in
             applyPersistedNote(newValue ?? "")
         }
+        .interactiveDismissDisabled(mode == .draw || checkpointInFlight)
+        .alert("Couldn’t save sketch", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: { Text(errorMessage ?? "") }
         .onDisappear {
-            flush {
-                model.sync.checkpoint()
-                model.endNoteEditing(annotation.id)
+            guard !didDelete, model.annotation(with: annotation.id) != nil,
+                  model.isNoteEditingSession(annotation.id, session: noteSession) else {
+                drawingController.tearDown()
+                model.endNoteEditing(annotation.id, session: noteSession)
+                return
             }
+            flush(completion: {
+                model.sync.checkpoint()
+                model.endNoteEditing(annotation.id, session: noteSession)
+            })
         }
     }
 
@@ -143,7 +165,7 @@ struct NoteEditor: View {
         VStack(alignment: .leading, spacing: presentation == .sidebar ? 14 : 26) {
             HStack(alignment: .center, spacing: 12) {
                 if presentation == .sidebar, let onBack {
-                    Button(action: onBack) {
+                    Button { flush(completion: { onBack() }) } label: {
                         Label("Notes", systemImage: "chevron.left")
                             .labelStyle(.titleAndIcon)
                             .font(.subheadline.weight(.medium))
@@ -173,7 +195,7 @@ struct NoteEditor: View {
                 noteMenu
 
                 if let onTogglePlacement {
-                    Button(action: onTogglePlacement) {
+                    Button { flush(teardown: false, completion: { onTogglePlacement() }) } label: {
                         Image(systemName: dockSymbol)
                             .font(.body.weight(.medium))
                             .frame(width: 30, height: 30)
@@ -285,14 +307,12 @@ struct NoteEditor: View {
         Menu {
             Button("Write") {
                 sourceModeReason = sourceModeFallbackReason(for: text)
-                mode = sourceModeReason == nil ? .edit : .source
+                switchMode(sourceModeReason == nil ? .edit : .source)
             }
-            if presentation == .sidebar, onSaveDrawing != nil {
-                Button("Draw") { mode = .draw }
-            }
+            Button("Draw · Sketches") { switchMode(.sketches) }
             Divider()
-            Button("Markdown Source") { mode = .source }
-            Button("Preview") { mode = .preview }
+            Button("Markdown Source") { switchMode(.source) }
+            Button("Preview") { switchMode(.preview) }
             Divider()
             Menu("Export Note") {
                 ForEach(NoteExportFormat.allCases, id: \.self) { format in
@@ -316,39 +336,71 @@ struct NoteEditor: View {
         .accessibilityLabel("Note options")
     }
 
-    @ViewBuilder
     private var bodyEditor: some View {
-        Group {
-            switch mode {
-            case .edit:
-                writingSurface(source: false)
-            case .source:
-                VStack(alignment: .leading, spacing: 12) {
-                    if let sourceModeReason {
-                        unsupportedMarkdownBanner(sourceModeReason)
-                    }
-                    writingSurface(source: true)
-                }
-            case .preview:
+        ZStack {
+            writingSurface(source: false)
+                .opacity(mode == .edit ? 1 : 0)
+                .allowsHitTesting(mode == .edit)
+                .accessibilityHidden(mode != .edit)
+            VStack(alignment: .leading, spacing: 12) {
+                if let sourceModeReason { unsupportedMarkdownBanner(sourceModeReason) }
+                writingSurface(source: true)
+            }
+            .opacity(mode == .source ? 1 : 0)
+            .allowsHitTesting(mode == .source)
+            .accessibilityHidden(mode != .source)
+            if mode == .preview {
                 ScrollView {
-                    if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                        Text("Nothing to preview yet.")
-                            .foregroundStyle(.tertiary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        NoteMarkdownPreview(text: text)
-                    }
+                    NoteMarkdownPreview(text: text, sketchPreview: { model.sketchPreview(annotationID: annotation.id, sketchID: $0) }, onOpenSketch: openSketch)
+                        .padding(.horizontal, horizontalPadding)
+                        .padding(.vertical, 16)
                 }
-                .scrollContentBackground(.hidden)
-                .background(Color.clear)
-                .padding(.horizontal, horizontalPadding)
-                .padding(.vertical, presentation == .sheet ? 26 : 16)
-            case .draw:
-                ExcalidrawWebView(controller: drawingController)
-                    .onAppear { drawingController.focusCanvas() }
+            }
+            if mode == .sketches { sketchBrowser }
+            if mode == .draw {
+                VStack(spacing: 0) {
+                    HStack {
+                        Button("Back to note", systemImage: "chevron.left") { switchMode(returnMode) }
+                        Spacer()
+                        Text(activeSketch?.title ?? "New sketch").font(.subheadline)
+                        Spacer()
+                        Button("Sketches") { switchMode(.sketches) }
+                    }
+                    .padding(12)
+                    ExcalidrawWebView(controller: drawingController)
+                        .id(editorSession)
+                        .onAppear { drawingController.focusCanvas() }
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var sketches: [NoteSketch] { (model.annotation(with: annotation.id) ?? annotation).sketches }
+
+    private var sketchBrowser: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 16) {
+                HStack {
+                    Text("SKETCHES").font(.caption).foregroundStyle(theme.muted)
+                    Spacer()
+                    Button("New sketch", systemImage: "plus") { createSketch(at: NSRange(location: text.utf16.count, length: 0)) }
+                }
+                if sketches.isEmpty { Text("Draw a thought with /sketch or /draw in your note.").foregroundStyle(.secondary) }
+                ForEach(sketches) { sketch in
+                    VStack(alignment: .leading, spacing: 8) {
+                        SketchPreviewCard(title: sketch.title, preview: model.sketchPreview(annotationID: annotation.id, sketchID: sketch.id)) { openSketch(sketch.id) }
+                        HStack {
+                            Button("Rename") { renameSketch(sketch) }
+                            Spacer()
+                            Button("Delete", role: .destructive) { deleteSketch(sketch.id) }
+                        }
+                        .font(.caption)
+                    }
+                }
+            }.padding(horizontalPadding)
+        }
+        .id(previewRevision)
     }
 
     private func writingSurface(source: Bool) -> some View {
@@ -359,10 +411,14 @@ struct NoteEditor: View {
                 .foregroundStyle(theme.muted.opacity(0.72))
                 .padding(.horizontal, 8)
             if source {
-                MarkdownTextEditor(text: $text, selectedRange: $selectedRange,
-                                   placeholder: "Write your note…")
+                MarkdownTextEditor(text: $text, selectedRange: $selectedRange, isActive: mode == .source, isDark: isDark,
+                                   placeholder: "Write your note…", onCreateSketch: createSketch,
+                                   onOpenSketch: openSketch)
             } else {
-                RichNoteEditor(text: $text, isDark: isDark, autofocus: autofocus)
+                RichNoteEditor(text: $text, isDark: isDark, autofocus: autofocus, isActive: mode == .edit,
+                               selectedRange: mode == .edit ? $selectedRange : nil,
+                               preview: { model.sketchPreview(annotationID: annotation.id, sketchID: $0) },
+                               onCreateSketch: createSketch, onOpenSketch: openSketch)
             }
         }
         .padding(.horizontal, horizontalPadding - 8)
@@ -388,6 +444,10 @@ struct NoteEditor: View {
             Button(role: .destructive) {
                 saveWork?.cancel()
                 drawingWork?.cancel()
+                didDelete = true
+                editorSession = UUID()
+                drawingController.onSceneChanged = nil
+                drawingController.tearDown()
                 onDelete()
                 onClose()
             } label: {
@@ -404,19 +464,17 @@ struct NoteEditor: View {
                 .lineLimit(1)
             if case .failed = saveStatus {
                 Button("Retry") {
-                    persistNote(text)
-                    flushDrawingBeforeClose(teardown: false)
+                    flush(teardown: false)
                 }
                 .font(.caption)
             }
             Button("Done") {
-                flush()
-                onClose()
+                flush(completion: { onClose() })
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.regular)
             .tint(theme.accent)
-            .keyboardShortcut(.defaultAction)
+            .keyboardShortcut(.return, modifiers: .command)
         }
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, presentation == .sheet ? 18 : 14)
@@ -437,7 +495,9 @@ struct NoteEditor: View {
     }
 
     private func load() {
-        text = annotation.note ?? ""
+        do { try model.migrateDrawing(for: annotation.id) }
+        catch { saveStatus = .failed(error.localizedDescription) }
+        text = (model.annotation(with: annotation.id) ?? annotation).note ?? ""
         lastSavedText = text
         sourceModeReason = sourceModeFallbackReason(for: text)
         selectedColor = annotation.visibleHighlightColor
@@ -446,10 +506,6 @@ struct NoteEditor: View {
             mode = .source
         } else if autofocus {
             mode = .edit
-        }
-        wireDrawing()
-        if mode == .draw {
-            handleModeChange(.draw)
         }
         didLoad = true
     }
@@ -464,45 +520,202 @@ struct NoteEditor: View {
         saveStatus = .saved
     }
 
-    private func handleModeChange(_ newValue: EditorMode) {
-        onDrawActiveChanged?(newValue == .draw)
-        guard newValue == .draw else { return }
-        didOpenDraw = true
-        drawingController.setTheme(isDark ? "dark" : "light")
-        guard !didLoadDrawingScene else { return }
-        didLoadDrawingScene = true
-        drawingController.load(scene: drawingScene)
+    private func createSketch(at range: NSRange) {
+        guard !checkpointInFlight else { return }
+        saveWork?.cancel()
+        persistNote(text) { result in
+            guard case .success = result else { return }
+            returnMode = mode == .source ? .source : .edit
+            draftRange = range
+            shouldDiscardEmptyDraft = false
+            let next = (sketches.compactMap { Int($0.title.replacingOccurrences(of: "Sketch ", with: "")) }.max() ?? 0) + 1
+            activateSketch(NoteSketch(title: "Sketch \(next)"), scene: nil)
+        }
     }
 
-    private func wireDrawing() {
-        drawingController.onSceneChanged = { count, data in
-            latestDrawing = (data, count)
-            scheduleDrawingSave(data, elementCount: count)
+    private func openSketch(_ id: UUID) {
+        guard let sketch = sketches.first(where: { $0.id == id }) else {
+            errorMessage = "This sketch is unavailable. Wait for sync or restore its note from a backup."
+            return
+        }
+        flush(teardown: false, completion: {
+            guard let scene = model.sketchScene(annotationID: annotation.id, sketchID: id) else {
+                errorMessage = "This sketch's drawing has not been downloaded or is missing. Try Sync Now."
+                return
+            }
+            returnMode = mode == .source ? .source : .edit
+            draftRange = nil
+            if let reference = SketchReference.references(in: text).first(where: { $0.id == id }) { selectedRange = reference.range }
+            activateSketch(sketch, scene: scene)
+        })
+    }
+
+    private func activateSketch(_ sketch: NoteSketch, scene: Data?) {
+        drawingWork?.cancel()
+        drawingController.tearDown()
+        drawingController = ExcalidrawController()
+        let session = UUID()
+        editorSession = session
+        activeSketch = sketch
+        sceneDirty = false
+        pendingCheckpoint = false
+        shouldDiscardEmptyDraft = false
+        sceneRevision = 0
+        drawingController.setTheme(isDark ? "dark" : "light")
+        drawingController.load(scene: scene)
+        drawingController.onSceneChanged = { _, _ in
+            guard editorSession == session, !didDelete, mode == .draw, activeSketch?.id == sketch.id,
+                  model.isNoteEditingSession(annotation.id, session: noteSession) else { return }
+            sceneRevision += 1
+            sceneDirty = true
+            scheduleDrawingSave()
         }
         drawingController.onError = { message in
+            guard editorSession == session else { return }
             saveStatus = .failed(message)
+        }
+        mode = .draw
+    }
+
+    private func switchMode(_ target: EditorMode) {
+        flush(teardown: false, discardEmptyDraft: true, completion: {
+            if mode == .draw {
+                activeSketch = nil
+                drawingController.tearDown()
+            }
+            mode = target
+        })
+    }
+
+    private func renameSketch(_ sketch: NoteSketch) {
+        let alert = NSAlert()
+        alert.messageText = "Name this sketch"
+        let field = NSTextField(string: sketch.title)
+        field.frame = NSRect(x: 0, y: 0, width: 280, height: 24)
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Save"); alert.addButton(withTitle: "Cancel")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let title = field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { return }
+        let updated = SketchReference.replacing(in: text) { $0.id == sketch.id ? SketchReference.markdown(id: sketch.id, title: title) : SketchReference.markdown(id: $0.id, title: $0.title) }
+        do {
+            try model.renameSketch(sketch.id, title: title, note: updated, annotationID: annotation.id)
+            text = updated; lastSavedText = updated; previewRevision += 1
+        } catch { saveStatus = .failed(error.localizedDescription) }
+    }
+
+    private func deleteSketch(_ id: UUID) {
+        let updated = SketchReference.replacing(in: text) { $0.id == id ? "" : SketchReference.markdown(id: $0.id, title: $0.title) }
+        model.updateNote(updated, for: annotation.id, reconcileSketches: true) { result in
+            switch result {
+            case .success: text = updated; lastSavedText = updated; previewRevision += 1
+            case .failure(let error): saveStatus = .failed(error.localizedDescription)
+            }
         }
     }
 
-    private func flush(teardown: Bool = true, completion: (() -> Void)? = nil) {
+    private func flush(teardown: Bool = true, discardEmptyDraft: Bool = false, onFailure: ((Error) -> Void)? = nil, completion: (() -> Void)? = nil) {
+        guard !didDelete else { completion?(); return }
         saveWork?.cancel()
-        persistNote(text)
         drawingWork?.cancel()
-        if let latestDrawing { onSaveDrawing?(latestDrawing.0, latestDrawing.1) { _ in } }
-        if teardown { onDrawActiveChanged?(false) }
-        flushDrawingBeforeClose(teardown: teardown, completion: completion)
+        saveCanvas(discardEmptyDraft: teardown || discardEmptyDraft) { canvasResult in
+            if case .failure(let error) = canvasResult { onFailure?(error); return }
+            persistNote(text, reconcile: true) { result in
+                if case .failure(let error) = result { onFailure?(error); return }
+                if teardown { onDrawActiveChanged?(false); drawingController.tearDown(); activeSketch = nil }
+                completion?()
+            }
+        }
+    }
+
+    private func saveCanvas(discardEmptyDraft: Bool = false, completion: ((Result<Void, Error>) -> Void)? = nil) {
+        guard mode == .draw, let sketch = activeSketch else { completion?(.success(())); return }
+        shouldDiscardEmptyDraft = shouldDiscardEmptyDraft || discardEmptyDraft
+        guard !checkpointInFlight else {
+            pendingCheckpoint = true
+            if let completion { canvasWaiters.append(completion) }
+            return
+        }
+        checkpointInFlight = true
+        let revision = sceneRevision
+        let session = editorSession
+        saveStatus = .saving
+        drawingController.checkpoint { result in
+            guard session == editorSession, !didDelete else { return }
+            checkpointInFlight = false
+            guard model.isNoteEditingSession(annotation.id, session: noteSession) else {
+                completeCanvasSave(completion, result: .failure(NSError(domain: "KodiSketch", code: 1, userInfo: [NSLocalizedDescriptionKey: "The note moved to another editor."])))
+                return
+            }
+            switch result {
+            case .success(let checkpoint):
+                if checkpoint.elementCount == 0, draftRange != nil {
+                    sceneDirty = false
+                    if shouldDiscardEmptyDraft { discardDraft() }
+                    shouldDiscardEmptyDraft = false
+                    pendingCheckpoint = false
+                    saveStatus = .saved
+                    completeCanvasSave(completion)
+                    return
+                }
+                var note = text
+                if let range = draftRange {
+                    let value = NSMutableString(string: text)
+                    let location = min(range.location, value.length)
+                    let length = min(range.length, value.length - location)
+                    let before = location > 0 && value.substring(with: NSRange(location: location - 1, length: 1)) != "\n" ? "\n\n" : ""
+                    let end = location + length
+                    let after = end < value.length && value.substring(with: NSRange(location: end, length: 1)) != "\n" ? "\n\n" : "\n"
+                    value.replaceCharacters(in: NSRange(location: location, length: length), with: before + sketch.markdown + after)
+                    note = value as String
+                }
+                do {
+                    try model.saveSketch(sketch, checkpoint: checkpoint, note: note, annotationID: annotation.id)
+                    text = note; lastSavedText = note
+                    if let reference = SketchReference.references(in: note).first(where: { $0.id == sketch.id }) {
+                        selectedRange = NSRange(location: NSMaxRange(reference.range), length: 0)
+                    }
+                    draftRange = nil
+                    shouldDiscardEmptyDraft = false
+                    sceneDirty = sceneRevision != revision
+                    previewRevision += 1
+                    saveStatus = .saved
+                    if sceneDirty || pendingCheckpoint {
+                        pendingCheckpoint = false
+                        saveCanvas(completion: completion)
+                    } else { completeCanvasSave(completion) }
+                } catch {
+                    saveStatus = .failed(error.localizedDescription); errorMessage = error.localizedDescription
+                    completeCanvasSave(completion, result: .failure(error))
+                }
+            case .failure(let error):
+                saveStatus = .failed(error.localizedDescription)
+                errorMessage = error.localizedDescription
+                completeCanvasSave(completion, result: .failure(error))
+            }
+        }
+    }
+
+    private func discardDraft() {
+        guard let range = draftRange else { return }
+        let value = NSMutableString(string: text)
+        if NSMaxRange(range) <= value.length { value.replaceCharacters(in: range, with: "") }
+        text = value as String
+        selectedRange = NSRange(location: min(range.location, text.utf16.count), length: 0)
+        draftRange = nil
+    }
+
+    private func completeCanvasSave(_ completion: ((Result<Void, Error>) -> Void)?, result: Result<Void, Error> = .success(())) {
+        let waiters = canvasWaiters
+        canvasWaiters.removeAll()
+        completion?(result)
+        for waiter in waiters { waiter(result) }
     }
 
     private func exportNote(_ format: NoteExportFormat) {
-        // Export the current editor buffer, including changes awaiting autosave.
-        var snapshot = annotation
-        snapshot.note = text
-        NotesExporter.presentSavePanel(
-            format: format,
-            bookTitle: model.book?.title ?? model.record?.title ?? "Untitled",
-            author: model.book?.author ?? model.record?.author ?? "Unknown Author",
-            annotations: [snapshot]
-        )
+        flush(teardown: false, completion: {
+            if let snapshot = model.annotation(with: annotation.id) { model.exportNotes(format, annotations: [snapshot]) }
+        })
     }
 
     private func askAIAboutHighlight() {
@@ -511,35 +724,6 @@ struct NoteEditor: View {
         persistNote(text) { result in
             if case .success = result {
                 onAskAI()
-            }
-        }
-    }
-
-    private func flushDrawingBeforeClose(teardown: Bool, completion: (() -> Void)? = nil) {
-        guard didOpenDraw, let onSaveDrawing else {
-            if teardown { drawingController.tearDown() }
-            completion?()
-            return
-        }
-        saveStatus = .saving
-        drawingController.pullScene { count, data in
-            if let data {
-                onSaveDrawing(data, count) { result in
-                    switch result {
-                    case .success:
-                        saveStatus = .saved
-                        if teardown { drawingController.tearDown() }
-                        completion?()
-                    case .failure(let error):
-                        saveStatus = .failed(error.localizedDescription)
-                        if teardown { drawingController.tearDown() }
-                        completion?()
-                    }
-                }
-            } else {
-                saveStatus = .failed("The drawing surface was not ready.")
-                if teardown { drawingController.tearDown() }
-                completion?()
             }
         }
     }
@@ -560,9 +744,12 @@ struct NoteEditor: View {
 
     private func persistNote(
         _ value: String,
+        reconcile: Bool = false,
         completion: ((Result<Void, Error>) -> Void)? = nil
     ) {
-        guard value != lastSavedText else {
+        let referenceIDs = Set(SketchReference.references(in: value).map(\.id))
+        let sketchIDs = Set(sketches.map(\.id))
+        guard value != lastSavedText || (reconcile && referenceIDs != sketchIDs) else {
             saveStatus = .saved
             completion?(.success(()))
             return
@@ -570,7 +757,7 @@ struct NoteEditor: View {
         saveRevision += 1
         let revision = saveRevision
         saveStatus = .saving
-        onSave(value) { result in
+        onSave(value, reconcile || mode == .edit) { result in
             guard revision == saveRevision else {
                 completion?(result)
                 return
@@ -596,22 +783,14 @@ struct NoteEditor: View {
         return "This note contains \(labels), so it opens in Markdown source mode to preserve the original text."
     }
 
-    private func scheduleDrawingSave(_ data: Data, elementCount: Int) {
+    private func scheduleDrawingSave() {
         saveStatus = .saving
         drawingWork?.cancel()
-        let work = DispatchWorkItem {
-            onSaveDrawing?(data, elementCount) { result in
-                switch result {
-                case .success:
-                    saveStatus = .saved
-                case .failure(let error):
-                    saveStatus = .failed(error.localizedDescription)
-                }
-            }
-        }
+        let work = DispatchWorkItem { saveCanvas() }
         drawingWork = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
+
 }
 
 private struct QuietIconButtonStyle: ButtonStyle {
@@ -642,7 +821,7 @@ struct NoteSheet: View {
     let annotation: Annotation
     var autofocus: Bool = false
     var isDark: Bool = false
-    let onSave: (String, @escaping (Result<Void, Error>) -> Void) -> Void
+    let onSave: (String, Bool, @escaping (Result<Void, Error>) -> Void) -> Void
     let onChangeColor: (HighlightColor) -> Void
     let onDelete: () -> Void
     var onAskAI: (() -> Void)? = nil

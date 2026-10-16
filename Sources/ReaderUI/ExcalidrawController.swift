@@ -6,6 +6,12 @@ import AppKit
 #endif
 
 /// Owns the Excalidraw `WKWebView` and the JS bridge.
+public struct SketchCheckpoint {
+    public let scene: Data
+    public let preview: Data?
+    public let elementCount: Int
+}
+
 public final class ExcalidrawController {
     public var onReady: (() -> Void)?
     public var onSceneChanged: ((Int, Data) -> Void)?
@@ -17,6 +23,7 @@ public final class ExcalidrawController {
     private var navigationProxy: ExcalidrawNavigationProxy?
     private var isReady = false
     private var pendingScene: Data?
+    private var session = 0
     private var pendingTheme = "light"
 
     public init() {}
@@ -57,6 +64,7 @@ public final class ExcalidrawController {
     }
 
     public func tearDown() {
+        session += 1
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "excalidraw")
         webView?.navigationDelegate = nil
         webView = nil
@@ -75,6 +83,7 @@ public final class ExcalidrawController {
     }
 
     public func load(scene: Data?) {
+        session += 1
         pendingScene = scene
         applyPendingIfReady()
     }
@@ -86,16 +95,73 @@ public final class ExcalidrawController {
         evaluate("__excalidraw.setTheme(\(jsString(pendingTheme)))")
     }
 
-    /// Reads the live scene, then tears the web view down.
+    /// Reads the live scene and retains it for recovery after a WebKit restart.
     public func pullScene(completion: @escaping (Int, Data?) -> Void) {
         guard webView != nil, isReady else {
             completion(0, nil)
             return
         }
-        evaluate("__excalidraw.getScene()") { result in
+        let token = session
+        evaluate("__excalidraw.getScene()") { [weak self] result in
+            guard let self, self.session == token else { completion(0, nil); return }
             let decoded = Self.decodeScene(result)
+            if let data = decoded.1 { self.pendingScene = data }
             completion(decoded.0, decoded.1)
         }
+    }
+
+    public func checkpoint(completion: @escaping (Result<SketchCheckpoint, Error>) -> Void) {
+        guard let webView, isReady else { completion(.failure(Self.error("The drawing surface is not ready."))); return }
+        let token = session
+        var completed = false
+        let finish: (Result<SketchCheckpoint, Error>) -> Void = { result in
+            guard !completed else { return }
+            completed = true
+            completion(result)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { finish(.failure(Self.error("Saving the sketch timed out. Try again."))) }
+        webView.callAsyncJavaScript("return await window.__excalidraw.checkpoint();", arguments: [:], in: nil, in: .page) { [weak self] result in
+            guard !completed else { return }
+            guard let self, self.session == token else { finish(.failure(Self.error("The active sketch changed."))); return }
+            finish(result.flatMap { value in
+                guard let body = value as? [String: Any], (body["session"] as? Int) == token else { return .failure(Self.error("Invalid drawing checkpoint.")) }
+                let decoded = Self.decodeScene(body)
+                guard let scene = decoded.1 else { return .failure(Self.error("Could not read the drawing.")) }
+                let preview = (body["preview"] as? String).flatMap { Data(base64Encoded: $0) }
+                guard decoded.0 == 0 || preview != nil else { return .failure(Self.error("Could not render the drawing.")) }
+                self.pendingScene = scene
+                return .success(SketchCheckpoint(scene: scene, preview: preview, elementCount: decoded.0))
+            })
+        }
+    }
+
+    /// A separate host renders assets without touching the user's canvas or undo history.
+    public static func renderPreview(scene: Data, completion: @escaping (Result<Data, Error>) -> Void) {
+        let renderer = ExcalidrawController()
+        var finished = false
+        let finish: (Result<Data, Error>) -> Void = { result in
+            guard !finished else { return }
+            finished = true
+            renderer.onReady = nil; renderer.onError = nil
+            renderer.tearDown()
+            completion(result)
+        }
+        renderer.onError = { finish(.failure(error($0))) }
+        renderer.onReady = {
+            guard let view = renderer.webView, let json = String(data: scene, encoding: .utf8) else { finish(.failure(error("Invalid sketch scene."))); return }
+            view.callAsyncJavaScript("return await window.__excalidraw.renderScene(scene);", arguments: ["scene": json], in: nil, in: .page) { result in
+                finish(result.flatMap { value in
+                    guard let encoded = value as? String, let data = Data(base64Encoded: encoded) else { return .failure(error("Could not render the sketch preview.")) }
+                    return .success(data)
+                })
+            }
+        }
+        renderer.makeWebView().frame = CGRect(x: 0, y: 0, width: 800, height: 600)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20) { finish(.failure(error("Sketch rendering timed out. Try exporting again."))) }
+    }
+
+    private static func error(_ message: String) -> NSError {
+        NSError(domain: "KodiSketch", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
     fileprivate func handle(message body: [String: Any]) {
@@ -106,6 +172,7 @@ public final class ExcalidrawController {
             applyPendingIfReady()
             onReady?()
         case "sceneChanged":
+            guard (body["session"] as? Int) == session else { return }
             pullScene { [weak self] count, data in
                 guard let data else { return }
                 self?.onSceneChanged?(count, data)
@@ -131,9 +198,9 @@ public final class ExcalidrawController {
         guard isReady else { return }
         evaluate("__excalidraw.setTheme(\(jsString(pendingTheme)))")
         if let scene = pendingScene, let json = String(data: scene, encoding: .utf8), !json.isEmpty {
-            evaluate("__excalidraw.load(\(jsString(json)))")
+            evaluate("__excalidraw.load(\(jsString(json)), \(session))")
         } else {
-            evaluate("__excalidraw.clear()")
+            evaluate("__excalidraw.clear(\(session))")
         }
     }
 

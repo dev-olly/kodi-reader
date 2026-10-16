@@ -35,6 +35,64 @@ public final class DrawingStore: @unchecked Sendable {
         return try? Data(contentsOf: url)
     }
 
+    public func sketchDirectory(bookID: String, annotationID: UUID) -> URL {
+        bookDirectory(for: bookID).appendingPathComponent(annotationID.uuidString, isDirectory: true)
+    }
+
+    public func sceneURL(bookID: String, annotationID: UUID, sketchID: UUID) -> URL {
+        sketchDirectory(bookID: bookID, annotationID: annotationID).appendingPathComponent("\(sketchID.uuidString).excalidraw.json")
+    }
+
+    public func previewURL(bookID: String, annotationID: UUID, sketchID: UUID) -> URL {
+        sketchDirectory(bookID: bookID, annotationID: annotationID).appendingPathComponent("\(sketchID.uuidString).png")
+    }
+
+    public func loadScene(bookID: String, annotationID: UUID, sketchID: UUID) -> Data? {
+        try? Data(contentsOf: sceneURL(bookID: bookID, annotationID: annotationID, sketchID: sketchID))
+    }
+
+    public func loadPreview(bookID: String, annotationID: UUID, sketchID: UUID) -> Data? {
+        try? Data(contentsOf: previewURL(bookID: bookID, annotationID: annotationID, sketchID: sketchID))
+    }
+
+    public func replaceSketch(scene: Data, preview: Data?, bookID: String, annotationID: UUID, sketchID: UUID) throws {
+        try queue.sync {
+            let url = sceneURL(bookID: bookID, annotationID: annotationID, sketchID: sketchID)
+            try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try scene.write(to: url, options: .atomic)
+            let image = previewURL(bookID: bookID, annotationID: annotationID, sketchID: sketchID)
+            if let preview { try preview.write(to: image, options: .atomic) }
+            else if FileManager.default.fileExists(atPath: image.path) { try FileManager.default.removeItem(at: image) }
+        }
+    }
+
+    public func deleteSketch(bookID: String, annotationID: UUID, sketchID: UUID) throws {
+        try queue.sync {
+            for url in [sceneURL(bookID: bookID, annotationID: annotationID, sketchID: sketchID), previewURL(bookID: bookID, annotationID: annotationID, sketchID: sketchID)] {
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
+            }
+        }
+    }
+
+    public func deleteSketches(bookID: String, annotationID: UUID) {
+        queue.sync { _ = try? FileManager.default.removeItem(at: sketchDirectory(bookID: bookID, annotationID: annotationID)) }
+    }
+
+    /// Prepare a repeatable migration; the caller commits the returned metadata.
+    /// Keep the legacy file until its replacement and library checkpoint succeed.
+    public func migratingLegacyDrawing(_ annotation: Annotation, bookID: String) throws -> Annotation {
+        guard annotation.hasDrawing, annotation.sketches.isEmpty else { return annotation }
+        var updated = annotation
+        let sketch = NoteSketch(id: annotation.id, title: "Sketch 1", createdAt: annotation.createdAt, modifiedAt: annotation.modifiedAt)
+        if let scene = loadScene(bookID: bookID, annotationID: annotation.id) {
+            try replaceSketch(scene: scene, preview: nil, bookID: bookID, annotationID: annotation.id, sketchID: sketch.id)
+        }
+        updated.sketches = [sketch]
+        let note = annotation.note ?? ""
+        updated.note = note + (note.isEmpty ? "" : "\n\n") + sketch.markdown
+        return updated
+    }
+
     /// Debounced atomic write. Call `flush()` before quitting or closing a note.
     public func saveScene(
         _ data: Data,
@@ -103,6 +161,7 @@ public final class DrawingStore: @unchecked Sendable {
         pendingSaves[annotationID]?.work.cancel()
         pendingSaves[annotationID] = nil
         lock.unlock()
+        deleteSketches(bookID: bookID, annotationID: annotationID)
         let url = sceneURL(bookID: bookID, annotationID: annotationID)
         let result = Result {
             if FileManager.default.fileExists(atPath: url.path) {
@@ -139,5 +198,40 @@ public final class DrawingStore: @unchecked Sendable {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let url = sceneURL(bookID: bookID, annotationID: annotationID)
         try data.write(to: url, options: .atomic)
+    }
+}
+
+/// Retain deleted resources for the lifetime of the note's native undo manager.
+/// Restoration writes assets before the caller publishes restored references.
+public final class SketchUndoHistory {
+    private struct ArchivedSketch {
+        var sketch: NoteSketch
+        var scene: Data?
+        var preview: Data?
+    }
+    private var archived: [UUID: ArchivedSketch] = [:]
+    public init() {}
+
+    public func reconciling(_ annotation: Annotation, note: String, drawings: DrawingStore, bookID: String) throws -> Annotation {
+        let references = Set(SketchReference.references(in: note).map(\.id))
+        var updated = annotation
+        for sketch in annotation.sketches where !references.contains(sketch.id) {
+            archived[sketch.id] = ArchivedSketch(sketch: sketch,
+                scene: drawings.loadScene(bookID: bookID, annotationID: annotation.id, sketchID: sketch.id),
+                preview: drawings.loadPreview(bookID: bookID, annotationID: annotation.id, sketchID: sketch.id))
+        }
+        updated.sketches.removeAll { !references.contains($0.id) }
+        for id in references where !updated.sketches.contains(where: { $0.id == id }) {
+            if let saved = archived[id] {
+                if let scene = saved.scene {
+                    try drawings.replaceSketch(scene: scene, preview: saved.preview, bookID: bookID, annotationID: annotation.id, sketchID: id)
+                }
+                updated.sketches.append(saved.sketch)
+            }
+        }
+        updated.sketches.sort { $0.createdAt < $1.createdAt }
+        updated.hasDrawing = !updated.sketches.isEmpty
+        updated.note = note.isEmpty ? nil : note
+        return updated
     }
 }

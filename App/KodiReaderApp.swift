@@ -23,6 +23,7 @@ struct KodiReaderApp: App {
                         if model.sync.provider == .iCloud { model.sync.syncNow() }
                     }
                     appDelegate.onWillTerminate = { model.flush() }
+                    appDelegate.onPrepareToTerminate = { finished in model.flush(completion: finished) }
                     model.sync.syncNow()
                     model.sync.setActive(true)
                 }
@@ -168,6 +169,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowObserver: NSObjectProtocol?
     var onCloudNotification: (() -> Void)?
     var onWillTerminate: (() -> Void)?
+    var onPrepareToTerminate: ((@escaping (Bool) -> Void) -> Void)?
 
     func application(_ application: NSApplication, didReceiveRemoteNotification userInfo: [String: Any]) {
         onCloudNotification?()
@@ -196,6 +198,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         true
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard let onPrepareToTerminate else { return .terminateNow }
+        onPrepareToTerminate { succeeded in
+            // Reply after returning terminateLater, even for synchronous text saves.
+            DispatchQueue.main.async { sender.reply(toApplicationShouldTerminate: succeeded) }
+        }
+        return .terminateLater
     }
 
     func applicationWillTerminate(_ notification: Notification) {

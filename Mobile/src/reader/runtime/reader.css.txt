@@ -1,0 +1,299 @@
+/*
+ * Reader chrome injected into every spine document.
+ *
+ * Pagination is a CSS multi-column layout: the body becomes a column box one
+ * viewport tall, content overflows sideways into further columns, and turning
+ * a page scrolls the document by exactly one viewport width.
+ *
+ * The stride equals the viewport width only when body padding is the page
+ * margin and the column gap is twice that margin. reader.js always derives
+ * --column-gap that way, and the page-box properties below are !important
+ * so author class rules (Calibre `.calibre`, Kindle conversions) cannot
+ * zero the padding or pin the type size. With that invariant enforced, one
+ * and two column layouts both advance by 100vw.
+ */
+
+:root {
+  --page-margin-x: 128px;
+  --page-margin-y: 76px;
+  --column-gap: 256px; /* kept at 2 * --page-margin-x by reader.js */
+  --column-width: 600px;
+
+  --font-size: 19px;
+  --line-height: 1.8;
+  --font-family: -apple-system, "SF Pro Text", "Iowan Old Style", Georgia, serif;
+  --paragraph-spacing: 0.75em;
+  --text-align: start;
+  --hyphens: auto;
+
+  --color-text: #192a24;
+  --color-background: #ffffff;
+  --color-surface: #f0f5f1;
+  --color-link: #245744;
+  --color-selection: rgba(114, 165, 124, 0.25);
+}
+
+html {
+  /* Programmatic scrollLeft still works with hidden overflow, which gives us
+     paging without ever showing a scrollbar. */
+  overflow: hidden;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  /* !important: Gutenberg (and others) set body { background: white } which
+     otherwise flashes through on every horizontal page scroll. */
+  background-color: var(--color-background) !important;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+}
+
+body {
+  /* !important: Calibre/Kindle class rules outrank a bare `body` selector
+     and would otherwise zero padding, pin 1em type, and break paging. */
+  box-sizing: border-box !important;
+  height: 100vh !important;
+  width: auto !important;
+  max-width: none !important;
+  min-width: 0 !important;
+  margin: 0 !important;
+  padding: var(--page-margin-y) var(--page-margin-x) !important;
+  float: none !important;
+  position: static !important;
+  overflow: visible !important;
+
+  column-width: var(--column-width) !important;
+  column-gap: var(--column-gap) !important;
+  column-fill: auto !important;
+  column-count: var(--column-count, auto) !important;
+
+  font-family: var(--font-family) !important;
+  font-size: var(--font-size) !important;
+  line-height: var(--line-height) !important;
+  color: var(--color-text) !important;
+  background-color: var(--color-background) !important;
+  /* Fill the multicol canvas, including column gaps, with the theme. */
+  background-clip: border-box;
+  text-align: var(--text-align);
+  hyphens: var(--hyphens);
+  -webkit-hyphens: var(--hyphens);
+  word-wrap: break-word;
+
+  /* Selection is driven by our own popover, so suppress the callout. */
+  -webkit-touch-callout: none;
+}
+
+/* Beat Project Gutenberg / ebookmaker body paper fills (body.x-ebookmaker). */
+html body.x-ebookmaker,
+html body.tei,
+html body.tei-text {
+  color: var(--color-text) !important;
+  background-color: var(--color-background) !important;
+}
+
+::selection {
+  background-color: var(--color-selection);
+}
+
+/*
+ * The book's own colours and absolute font sizes rarely suit a reader chrome,
+ * so descendants take ours instead.
+ *
+ * `body` must not be in this list: it would inherit from <html>, which has no
+ * colour of its own, and so override the theme colour set above. That reads
+ * fine on a light theme, where the default black is what you wanted anyway,
+ * and turns a dark theme into black text on a black page.
+ *
+ * Font size is `1em` (not `inherit` on every node) so Text Size changes to
+ * `--font-size` on body actually scale the page; EPUB stylesheets that pin
+ * `12pt` / `14px` on paragraphs would otherwise ignore the slider.
+ */
+body p,
+body div,
+body span,
+body li,
+body td,
+body th,
+body blockquote,
+body h1,
+body h2,
+body h3,
+body h4,
+body h5,
+body h6 {
+  /* Beat EPUB text colours; leave backgrounds non-!important so dark-mode
+     JS can still see author callout fills and remap them to --color-surface. */
+  color: var(--color-text) !important;
+  background-color: transparent;
+  font-family: inherit;
+}
+
+body a {
+  color: var(--color-link) !important;
+  background-color: transparent;
+  font-family: inherit;
+}
+
+body p,
+body div,
+body span,
+body li,
+body td,
+body th,
+body blockquote,
+body a {
+  font-size: 1em;
+  /* Author `.calibreN { line-height: 1.2 }` would otherwise pin leading. */
+  line-height: inherit !important;
+}
+
+/* Relative heading scale, still tied to the reader's body font size. */
+body h1 { font-size: 1.6em; line-height: 1.25; }
+body h2 { font-size: 1.4em; line-height: 1.25; }
+body h3 { font-size: 1.25em; line-height: 1.25; }
+body h4 { font-size: 1.15em; line-height: 1.25; }
+body h5 { font-size: 1.1em; line-height: 1.25; }
+body h6 { font-size: 1.05em; line-height: 1.25; }
+
+/* Figure captions: small italic secondary text (beat EPUB h5/bold rules). */
+body figcaption,
+body .figure-container-h5,
+body .figure-container > h5 {
+  font-size: 0.78em !important;
+  line-height: 1.4 !important;
+  font-weight: normal !important;
+  font-style: italic !important;
+}
+
+p {
+  margin-top: 0;
+  margin-bottom: var(--paragraph-spacing);
+  orphans: 2;
+  widows: 2;
+}
+
+a {
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/* Headings must not straddle a page boundary. */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  break-inside: avoid;
+  break-after: avoid;
+}
+
+/* Nothing may exceed one page, or content would be clipped between columns. */
+img,
+svg,
+video,
+canvas,
+table,
+pre {
+  max-width: 100%;
+  max-height: calc(100vh - 2 * var(--page-margin-y));
+  break-inside: avoid;
+}
+
+img,
+svg {
+  height: auto;
+  object-fit: contain;
+}
+
+pre,
+code {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* Block code on theme surface so dark mode never keeps EPUB light paper. */
+body pre {
+  color: var(--color-text) !important;
+  background-color: var(--color-surface) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  box-sizing: border-box;
+  padding: 0.9em 1.1em !important;
+  margin: 0.85em 0 !important;
+}
+
+body pre code {
+  color: var(--color-text) !important;
+  background-color: transparent !important;
+  font-family: inherit;
+  padding: 0 !important;
+}
+
+body code {
+  color: var(--color-text) !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+/* Page-break hints from the book itself. */
+.page-break,
+[style*="page-break-before"] {
+  break-before: column;
+}
+
+/*
+ * Highlight overlay.
+ *
+ * Rects are absolutely positioned in document coordinates and painted over
+ * the text. Compositing them with multiply (or screen on dark themes) keeps
+ * the glyphs legible through the tint, the way a real highlighter behaves,
+ * and painting on top is what lets a click reach the rect to open its note.
+ * The layer itself ignores pointer events so only the rects are targets.
+ */
+#reader-highlight-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  z-index: 2;
+  pointer-events: none;
+}
+
+.reader-highlight-rect {
+  position: absolute;
+  pointer-events: auto;
+  cursor: pointer;
+  border-radius: 2px;
+  mix-blend-mode: var(--highlight-blend-mode, multiply);
+  transition: filter 120ms ease;
+}
+
+.reader-highlight-rect:hover {
+  filter: brightness(0.94);
+}
+
+.reader-highlight-rect[data-style="underline"] {
+  background-color: transparent !important;
+  border-bottom: 2px solid var(--highlight-underline-color, #e5a50a);
+  border-radius: 0;
+}
+
+.reader-highlight-rect[data-has-note="true"]::after {
+  content: "";
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: #e5a50a;
+  mix-blend-mode: normal;
+}

@@ -1,0 +1,122 @@
+/*
+ * Touch bridge for the mobile reader. Loaded after reader.js in every spine
+ * document. Adds swipe paging and a centre-tap that the app uses to toggle
+ * its chrome. Edge-tap paging in reader.js is disabled in favour of this.
+ */
+(function () {
+  "use strict";
+
+  function post(message) {
+    try {
+      message.documentToken = window.__kodiBoot && window.__kodiBoot.documentToken;
+      window.ReactNativeWebView.postMessage(JSON.stringify(message));
+    } catch (error) {
+      /* not hosted */
+    }
+  }
+
+  var startX = 0;
+  var startY = 0;
+  var startTime = 0;
+  var touchMoved = false;
+
+  function hasSelection() {
+    var selection = window.getSelection();
+    return selection && !selection.isCollapsed && selection.toString().trim().length > 0;
+  }
+
+  function turn(forward) {
+    if (!window.__reader) return;
+    if (forward) {
+      if (!window.__reader.nextPage()) post({ type: "reachedEnd" });
+    } else {
+      if (!window.__reader.previousPage()) post({ type: "reachedStart" });
+    }
+  }
+
+  document.addEventListener(
+    "touchstart",
+    function (event) {
+      var touch = event.touches[0];
+      if (!touch) return;
+      startX = touch.clientX;
+      startY = touch.clientY;
+      startTime = Date.now();
+      touchMoved = false;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchmove",
+    function (event) {
+      var touch = event.touches[0];
+      if (!touch) return;
+      if (Math.abs(touch.clientX - startX) > 10 || Math.abs(touch.clientY - startY) > 10) touchMoved = true;
+    },
+    { passive: true }
+  );
+
+  document.addEventListener(
+    "touchend",
+    function (event) {
+      var touch = event.changedTouches[0];
+      if (!touch || hasSelection()) return;
+      var dx = touch.clientX - startX;
+      var dy = touch.clientY - startY;
+      var elapsed = Date.now() - startTime;
+      if (Math.abs(dx) > 48 && Math.abs(dx) > Math.abs(dy) * 1.4 && elapsed < 700) {
+        turn(dx < 0);
+      }
+    },
+    { passive: true }
+  );
+
+  document.addEventListener("click", function (event) {
+    if (touchMoved || hasSelection()) return;
+    var target = event.target;
+    if (target && target.closest && target.closest("a")) return;
+    var layer = document.getElementById("reader-highlight-layer");
+    if (layer && layer.contains(target)) return;
+    var width = window.innerWidth;
+    var x = event.clientX;
+    if (x < width * 0.22) {
+      turn(false);
+    } else if (x > width * 0.78) {
+      turn(true);
+    } else {
+      post({ type: "tap" });
+    }
+  });
+
+  // Long-press selection: iOS fires selectionchange as handles move. reader.js
+  // reports those; nothing more is needed here.
+  /*
+   * Self-boot: the app writes window.__kodiBoot into each chapter's <head>, so
+   * the page lays itself out, restores its position and paints highlights on
+   * DOMContentLoaded without waiting on round trips through the app.
+   */
+  function boot() {
+    var config = window.__kodiBoot;
+    var reader = window.__reader;
+    if (!config || !reader) return;
+    reader.start(config.options);
+    var target = config.target || {};
+    if (target.goToEnd) {
+      reader.goToEnd();
+    } else if (target.fragment) {
+      reader.goToFragment(target.fragment, false);
+    } else if (target.position && target.position.elementPath && target.position.elementPath.length) {
+      reader.goToPosition(target.position, false);
+    }
+    if (config.highlights && config.highlights.length) reader.setHighlights(config.highlights);
+    reader.notifyState();
+    post({ type: "booted" });
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", boot);
+  } else {
+    boot();
+  }
+})();

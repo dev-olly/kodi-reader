@@ -69,6 +69,13 @@ Download for Offline Reading. Switching providers requires a confirmed copy of
 this Mac's library; the old cloud copy remains. See [iCloud help](docs/icloud-sync.md),
 [Google Drive help](docs/google-drive-sync.md), and their release setup guides.
 
+## iOS app
+
+[`Mobile/`](Mobile/README.md) holds an iOS-first port built with Expo SDK 57,
+Expo Router, `@expo/ui` SwiftUI components and Liquid Glass. It hosts the same
+`reader.js`/`reader.css` engine in a `WKWebView`, so positions and highlights
+share the Mac app's anchor format. See its README for building with Xcode 26.
+
 ## Status
 
 Source is public under MIT. Issues are welcome for bugs. **Pull requests are

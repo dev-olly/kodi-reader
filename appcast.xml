@@ -6,6 +6,27 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.5</title>
+            <pubDate>Fri, 16 Oct 2026 13:03:23 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>11</sparkle:version>
+            <sparkle:shortVersionString>0.4.5</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.5
+
+- Add multiple sketches among the paragraphs of a note. Type `/sketch` or `/draw` at the start of a paragraph, then press **Enter** or click **Create sketch** in the cursor suggestion. **Escape** dismisses the suggestion.
+- Saved sketches appear as preview cards. Click a card to edit its drawing, or use **Draw · Sketches** to browse, rename, create, and delete sketches. **Back to note** returns to your writing; **Command–Enter** finishes editing the note.
+- Use sketches in both sidebar and window notes, with support for Write, Markdown Source, and Preview modes. Existing drawings migrate into the first sketch automatically.
+- Keep sketch scenes separate, refresh previews after edits, and retain unsaved changes for retry when saving fails. Removing the last reference deletes its sketch; Undo restores it while the note is open.
+- Include sketch images in Word and Apple Notes HTML exports. Markdown and Notion exports include a companion assets folder; keep it beside the exported document.
+- Sync individual sketches and their previews with their notes. Update Kodi Reader on every Mac before editing notes with multiple sketches across devices.
+
+The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.5/KodiReader.dmg" length="8448511" type="application/octet-stream" sparkle:edSignature="pgyWn2VliTlUehktGbsjNAqIMT7WgDxvsBvXuRkPZw8Gh0mmMNT9M9hv9pQl82v01lvXwXQT2kq8xFsL2/IICw=="/>
+        </item>
+        <item>
             <title>0.4.4</title>
             <pubDate>Sun, 11 Oct 2026 23:33:12 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -45,33 +66,9 @@ The app and update feed are signed, and the download is notarized by Apple. Requ
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.3/KodiReader.dmg" length="8229026" type="application/octet-stream" sparkle:edSignature="1vZ8qSENzY9+Gmhe0ft67mye/f4e1COBl2UJVPKIIjVqY4f4iqQ59c5D9cqG3kESaQDx8TnAQG5PrGEe0vFfDQ=="/>
         </item>
-        <item>
-            <title>0.4.2</title>
-            <pubDate>Wed, 07 Oct 2026 23:11:03 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>8</sparkle:version>
-            <sparkle:shortVersionString>0.4.2</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.2
-
-This update adds optional Google Drive sync alongside iCloud for cross-device testing on Mac.
-
-- In **Settings → Sync**, connect Google Drive separately from Ask AI sign-in, then choose **Notes only** or **Books and notes**. Sync remains off until you select a provider on each Mac.
-- Notes only includes highlights, notes, drawings, bookmarks, reading position, and book details. Import or locate the matching book on each Mac. Books and notes also transfers EPUBs, PDFs, and saved webpages; book files download when opened or when you choose **Download for Offline Reading**.
-- **Sync Ask AI history** is a separate opt-in. Drafts, credentials, credits, and AI settings stay local.
-- Switching between iCloud and Google Drive asks you to confirm a one-time copy. The previous cloud copy remains in its account. Local reading and editing continue offline.
-- The Google Drive connection now completes its desktop authorization and saves the connection in Keychain. Settings shows the connected account, sync status, and **Sync Now**.
-
-Google Drive uses a hidden Kodi app-data folder in your Google account and counts against your Google storage allowance. It checks for changes every five minutes while Kodi is active. Before relying on sync as your only copy, verify your library and notes on both Macs. See the [Google Drive sync guide](https://github.com/dev-olly/kodi-reader/blob/main/docs/google-drive-sync.md).
-
-The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.2/KodiReader.dmg" length="8211324" type="application/octet-stream" sparkle:edSignature="uzq56ccVeR0qxP0sAT0Ji0YVDuDuMWwTtMyg07kWffJU/KlGZC1pjkeLNpvXY6meznOJ5KSBHz4b/Bdqn9xDBw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: n8CIdRpSEKLVbiJ1uyW38yNA8hTp4k/O92oW9dn8bV+m5d0DWaT7XB8IWV+am4b+vxe63aNZOsOiEHfPCWmqAA==
-length: 5913
+edSignature: BM7KenOdN3wKGYBEPVufXRKcJA+RnaxtPeEep19KDH9LtvbILfPyO35rpvF7IVaPoShycfsDfozITmqxf0JMBw==
+length: 5655
 -->

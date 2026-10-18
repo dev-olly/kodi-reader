@@ -6,6 +6,25 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.6</title>
+            <pubDate>Sun, 18 Oct 2026 18:48:38 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>12</sparkle:version>
+            <sparkle:shortVersionString>0.4.6</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.6
+
+- Save one movable reading marker in each EPUB, PDF, or saved webpage. Click the beginning of a line, or press **M** and click the text where you stopped.
+- In EPUBs, a faint flag appears at line starts on hover. The saved marker follows its text when typography changes.
+- Press **Shift+M** or click **Return to marker** to jump back. Remove it from the marker toolbar menu; **Esc** cancels placement.
+- Keep markers after reopening a document and, with sync enabled, across Macs. Reading progress and ordinary bookmarks stay independent, while links and text selection keep working normally.
+
+The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.6/KodiReader.dmg" length="8497993" type="application/octet-stream" sparkle:edSignature="7gJ36W7Okju/e1Vyg08vaspnwNC+bkx+Ff7OWvpaGlTwINpL/tGPD089W6k/Jj2R4fU/Nn9jtFXl6WhHp7rsAw=="/>
+        </item>
+        <item>
             <title>0.4.5</title>
             <pubDate>Fri, 16 Oct 2026 13:03:23 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -48,27 +67,9 @@ The app and update feed are signed, and the download is notarized by Apple. Requ
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.4/KodiReader.dmg" length="8253843" type="application/octet-stream" sparkle:edSignature="O05p7FOzCTSzrVEGf5B0WNHxsnnKB0ye0wiPQ4wBKuy1PEzBjdarUPMMOxU6mMjWZ+H+UsHClsfw/kTXKw0jDw=="/>
         </item>
-        <item>
-            <title>0.4.3</title>
-            <pubDate>Fri, 09 Oct 2026 17:39:40 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>9</sparkle:version>
-            <sparkle:shortVersionString>0.4.3</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.3
-
-- Rename EPUBs, PDFs, and saved webpages in your library: right-click a document and choose **Rename…**, or use **File → Rename Document…** while reading.
-- Your chosen name stays after reopening and appears in the reading toolbar and Ask AI context. With sync enabled, it syncs as part of the book details.
-- Renaming preserves your notes, drawings, bookmarks, conversations, and reading position. The original file keeps its name.
-
-The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.3/KodiReader.dmg" length="8229026" type="application/octet-stream" sparkle:edSignature="1vZ8qSENzY9+Gmhe0ft67mye/f4e1COBl2UJVPKIIjVqY4f4iqQ59c5D9cqG3kESaQDx8TnAQG5PrGEe0vFfDQ=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: BM7KenOdN3wKGYBEPVufXRKcJA+RnaxtPeEep19KDH9LtvbILfPyO35rpvF7IVaPoShycfsDfozITmqxf0JMBw==
-length: 5655
+edSignature: kBEq1ZpfZw3KQpFp9EE1XUnCU2JeJZLw3dvkbmxJ3xckX8DBGSz1dqTXVurZyX0vO0I45rQuoyuHAIOBbYwfAg==
+length: 5811
 -->

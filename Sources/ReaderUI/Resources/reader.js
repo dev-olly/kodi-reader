@@ -20,6 +20,7 @@
     twoPageMinWidth: 1100,
     edgeTapPaging: true,
     animatePageTurns: true,
+    markerClickDelay: 500,
   };
 
   var state = {
@@ -29,6 +30,8 @@
     stride: 0,
     columns: 1,
     highlights: [],
+    readingMarker: null,
+    placingReadingMarker: false,
     ready: false,
   };
 
@@ -381,6 +384,9 @@
   }
 
   function relayout(preservedPosition) {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
     rememberRestore(preservedPosition);
     applyLayout();
     // Flush pending custom properties so column metrics match the new viewport.
@@ -585,6 +591,9 @@
   }
 
   function notifyPageChanged() {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
     if (pendingPageTarget == null) {
       syncPageFromScroll();
     }
@@ -890,6 +899,11 @@
   var selectionTimer = null;
 
   function handleSelectionChange() {
+    var selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      cancelDirectReadingMarkerClick();
+      clearReadingMarkerCue();
+    }
     if (selectionTimer) clearTimeout(selectionTimer);
     selectionTimer = setTimeout(reportSelection, 120);
   }
@@ -941,6 +955,236 @@
   }
 
   // ------------------------------------------------------------ highlights
+
+  var markerHoverTimer = null;
+  var markerPointerDown = null;
+  var markerClickTimer = null;
+
+  function cancelDirectReadingMarkerClick() {
+    if (markerClickTimer != null) clearTimeout(markerClickTimer);
+    markerClickTimer = null;
+  }
+
+  function clearReadingMarkerCue() {
+    if (markerHoverTimer != null) clearTimeout(markerHoverTimer);
+    markerHoverTimer = null;
+    var cue = document.getElementById("reader-reading-marker-cue");
+    if (cue) cue.remove();
+    document.documentElement.classList.remove("reader-hovering-line-start");
+  }
+
+  // Highlights remain clickable normally; geometry probes look through just
+  // the rectangle under the pointer to find the book's real text.
+  function markerCaretAtPoint(x, y) {
+    var hidden = [], hit, highlight;
+    while (hidden.length < 20) {
+      hit = document.elementFromPoint(x, y);
+      highlight = hit && hit.closest ? hit.closest(".reader-highlight-rect") : null;
+      if (!highlight) break;
+      hidden.push({ element: highlight, value: highlight.style.getPropertyValue("pointer-events"),
+        priority: highlight.style.getPropertyPriority("pointer-events") });
+      highlight.style.setProperty("pointer-events", "none", "important");
+    }
+    try {
+      return document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+    } finally {
+      hidden.forEach(function (entry) {
+        if (entry.value) entry.element.style.setProperty("pointer-events", entry.value, entry.priority);
+        else entry.element.style.removeProperty("pointer-events");
+      });
+    }
+  }
+
+  function markerInteractiveText(node) {
+    var element = node && node.parentElement;
+    return !element || element.closest("a[href],button,input,textarea,select,[contenteditable],[role='button']");
+  }
+
+  // Text fragments, rather than paragraph boxes, distinguish wrapped lines,
+  // inline emphasis, indentation, and the two columns of a spread.
+  function markerLineFragment(node, x, y) {
+    var block = node.parentElement;
+    while (block && block !== document.body &&
+           /^(inline|contents|ruby)/.test(getComputedStyle(block).display)) block = block.parentElement;
+    if (!block) return null;
+    var stride = currentStride() / Math.max(1, state.columns);
+    var column = Math.floor(Math.max(0, x + getScrollLeft()) / stride);
+    var left = column * stride - getScrollLeft(), right = left + stride;
+    var best = null;
+    function inspect(text) {
+      if (!isReadableTextNode(text)) return;
+      var range = document.createRange();
+      range.selectNodeContents(text);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rect = rects[i];
+        if (rect.width <= 0 || rect.height <= 0 || y < rect.top - 2 || y > rect.bottom + 2) continue;
+        if (rect.right <= Math.max(0, left) || rect.left >= Math.min(window.innerWidth, right)) continue;
+        if (!best || rect.left < best.rect.left) best = { node: text, rect: rect };
+      }
+    }
+    if (block === document.body) inspect(node);
+    else {
+      var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), text;
+      while ((text = walker.nextNode())) inspect(text);
+    }
+    return best;
+  }
+
+  function markerLineStartAtPoint(x, y) {
+    if (!state.ready || viewportResizePending || pendingPageTarget != null ||
+        x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return null;
+    var caret = markerCaretAtPoint(x, y);
+    if (!caret || caret.startContainer.nodeType !== Node.TEXT_NODE ||
+        !isReadableTextNode(caret.startContainer) || markerInteractiveText(caret.startContainer)) return null;
+    var fragment = markerLineFragment(caret.startContainer, x, y);
+    if (!fragment || markerInteractiveText(fragment.node)) return null;
+    var rect = fragment.rect;
+    if (x < rect.left - 28 || x > rect.left + Math.min(8, rect.width)) return null;
+    var first = markerCaretAtPoint(rect.left + Math.min(0.5, rect.width / 4), rect.top + rect.height / 2);
+    if (!first || first.startContainer.nodeType !== Node.TEXT_NODE ||
+        !isReadableTextNode(first.startContainer) || markerInteractiveText(first.startContainer)) return null;
+    var position = { elementPath: pathOfNode(first.startContainer),
+      offset: clamp(first.startOffset, 0, Math.max(0, first.startContainer.length - 1)) };
+    var glyph = readingMarkerRect(position);
+    if (!glyph || Math.abs(glyph.top - rect.top) > 3 || Math.abs(glyph.left - rect.left) > 3) return null;
+    return { position: position, rect: rect,
+      text: first.startContainer.textContent.slice(position.offset, position.offset + 120).trim() };
+  }
+
+  function onMarkerPointerMove(event) {
+    if (markerPointerDown && event.buttons) {
+      if (Math.hypot(event.clientX - markerPointerDown.x, event.clientY - markerPointerDown.y) > 4) {
+        markerPointerDown.dragged = true;
+      }
+    }
+    if (state.placingReadingMarker || event.buttons || event.shiftKey || event.metaKey || event.altKey || event.ctrlKey) {
+      clearReadingMarkerCue();
+      return;
+    }
+    if (markerHoverTimer != null) clearTimeout(markerHoverTimer);
+    var x = event.clientX, y = event.clientY;
+    // Coalesce pointer updates even when WebKit suspends animation frames in
+    // background windows.
+    markerHoverTimer = setTimeout(function () {
+      markerHoverTimer = null;
+      clearReadingMarkerCue();
+      var selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+      var target = markerLineStartAtPoint(x, y);
+      if (!target) return;
+      showReadingMarkerCue(target);
+    }, 16);
+  }
+
+  function showReadingMarkerCue(target) {
+    clearReadingMarkerCue();
+    var cue = document.createElement("div");
+    cue.id = "reader-reading-marker-cue";
+    cue.setAttribute("aria-hidden", "true");
+    cue.style.left = Math.max(2, target.rect.left + getScrollLeft() - 24) + "px";
+    cue.style.top = target.rect.top + scrollingRoot().scrollTop + target.rect.height / 2 - 7 + "px";
+    highlightLayer().appendChild(cue);
+    document.documentElement.classList.add("reader-hovering-line-start");
+  }
+
+  function onMarkerPointerDown(event) {
+    cancelDirectReadingMarkerClick();
+    clearReadingMarkerCue();
+    var selection = window.getSelection();
+    markerPointerDown = event.button === 0 && event.detail === 1 &&
+      !event.shiftKey && !event.metaKey && !event.altKey && !event.ctrlKey &&
+      (!selection || selection.isCollapsed)
+      ? { x: event.clientX, y: event.clientY, dragged: false } : null;
+  }
+
+  function commitReadingMarker(position, text, lineStart) {
+    clearReadingMarkerCue();
+    setReadingMarker({ start: position });
+    setReadingMarkerPlacement(false);
+    post({ type: "readingMarkerPlaced", spineIndex: state.spineIndex,
+      position: position, text: text, lineStart: lineStart === true });
+  }
+
+  // Kept inside the existing overlay, so real book child-node paths stay stable.
+  function setReadingMarker(marker) {
+    cancelDirectReadingMarkerClick();
+    clearReadingMarkerCue();
+    state.readingMarker = marker && marker.start ? marker : null;
+    renderReadingMarker();
+  }
+
+  function setReadingMarkerPlacement(active) {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
+    state.placingReadingMarker = active === true;
+    document.documentElement.classList.toggle("reader-placing-marker", state.placingReadingMarker);
+  }
+
+  function readingMarkerRect(position) {
+    var range = rangeFromPosition(position);
+    if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) return null;
+    var node = range.startContainer;
+    var offset = clamp(range.startOffset, 0, Math.max(0, node.length - 1));
+    if (!node.length) return null;
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    var rect = range.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0 ? rect : null;
+  }
+
+  function renderReadingMarker() {
+    var previous = document.getElementById("reader-reading-marker");
+    if (previous) previous.remove();
+    if (!state.readingMarker) return;
+    var rect = readingMarkerRect(state.readingMarker.start);
+    if (!rect) return;
+    var scrollLeft = getScrollLeft();
+    var columnStride = currentStride() / Math.max(1, state.columns);
+    var columnStart = Math.floor(Math.max(0, rect.left + scrollLeft) / columnStride) * columnStride;
+    var margin = parsePx(getComputedStyle(document.body).paddingLeft);
+    var anchorRange = rangeFromPosition(state.readingMarker.start);
+    var line = anchorRange ? markerLineFragment(anchorRange.startContainer, rect.left, rect.top + rect.height / 2) : null;
+    var marker = document.createElement("div");
+    marker.id = "reader-reading-marker";
+    marker.setAttribute("role", "img");
+    marker.setAttribute("aria-label", "Stopped reading here");
+    marker.title = "Stopped reading here";
+    marker.style.left = Math.max(columnStart + 2, line ? line.rect.left + scrollLeft - 24 : columnStart + margin - 24) + "px";
+    marker.style.top = rect.top + scrollingRoot().scrollTop + rect.height / 2 - 7 + "px";
+    highlightLayer().appendChild(marker);
+  }
+
+  function placeReadingMarkerFromClick(event) {
+    if (!document.caretRangeFromPoint) return false;
+    var range = document.caretRangeFromPoint(event.clientX, event.clientY);
+    if (!range || !isReadableTextNode(range.startContainer)) return false;
+    var node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE || !node.length) return false;
+    var offset = clamp(range.startOffset, 0, node.length - 1);
+    var position = { elementPath: pathOfNode(node), offset: offset };
+    var rect = readingMarkerRect(position);
+    // Caret hit-testing rounds the right half of a wide glyph to its end.
+    // Keep the actual clicked glyph when that caret lands at the next one.
+    if (rect && offset > 0 && event.clientX < rect.left) {
+      var previous = { elementPath: position.elementPath, offset: offset - 1 };
+      var previousRect = readingMarkerRect(previous);
+      if (previousRect && event.clientX >= previousRect.left && event.clientX <= previousRect.right &&
+          event.clientY >= previousRect.top && event.clientY <= previousRect.bottom) {
+        position = previous;
+        offset -= 1;
+        rect = previousRect;
+      }
+    }
+    // WebKit's nearest caret can be in another column when clicking padding.
+    if (!rect || rect.right < 0 || rect.left >= window.innerWidth ||
+        rect.bottom < 0 || rect.top >= window.innerHeight ||
+        event.clientX < rect.left - 5 || event.clientX > rect.right + 5 ||
+        event.clientY < rect.top - 3 || event.clientY > rect.bottom + 3) return false;
+    commitReadingMarker(position, node.textContent.slice(offset, offset + 120).trim(), false);
+    return true;
+  }
 
   function highlightLayer() {
     var layer = document.getElementById(LAYER_ID);
@@ -1119,6 +1363,7 @@
     var layer = highlightLayer();
     layer.textContent = "";
     if (state.highlights.length === 0) {
+      renderReadingMarker();
       post({ type: "highlightsResolved", results: [] });
       return;
     }
@@ -1164,6 +1409,7 @@
       }
     }
     layer.appendChild(fragment);
+    renderReadingMarker();
     post({ type: "highlightsResolved", results: results });
   }
 
@@ -1518,12 +1764,54 @@
   // ----------------------------------------------------------------- input
 
   function onClick(event) {
+    var down = markerPointerDown;
+    markerPointerDown = null;
     var target = event.target;
     var link = target && target.closest ? target.closest("a") : null;
     if (link && link.getAttribute("href")) {
       event.preventDefault();
       post({ type: "link", href: link.getAttribute("href") });
       return;
+    }
+
+    if (state.placingReadingMarker) {
+      var activeSelection = window.getSelection();
+      if (activeSelection && !activeSelection.isCollapsed) return;
+      event.preventDefault();
+      event.stopPropagation();
+      placeReadingMarkerFromClick(event);
+      return;
+    }
+
+    var activeSelection = window.getSelection();
+    if (down && !down.dragged && event.button === 0 && event.detail === 1 &&
+        !event.shiftKey && !event.metaKey && !event.altKey && !event.ctrlKey &&
+        Math.hypot(event.clientX - down.x, event.clientY - down.y) <= 4 &&
+        (!activeSelection || activeSelection.isCollapsed)) {
+      var lineStart = markerLineStartAtPoint(event.clientX, event.clientY);
+      if (lineStart) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.clientX < lineStart.rect.left) {
+          commitReadingMarker(lineStart.position, lineStart.text, true);
+        } else {
+          // A first-glyph click may become a word-selecting double click.
+          // The gutter is immediate; text waits for the system click interval.
+          var x = event.clientX, y = event.clientY;
+          showReadingMarkerCue(lineStart);
+          markerClickTimer = setTimeout(function () {
+            markerClickTimer = null;
+            var selection = window.getSelection();
+            var current = markerLineStartAtPoint(x, y);
+            if ((!selection || selection.isCollapsed) && current &&
+                current.position.offset === lineStart.position.offset &&
+                current.position.elementPath.join(",") === lineStart.position.elementPath.join(",")) {
+              commitReadingMarker(current.position, current.text, true);
+            }
+          }, settings.markerClickDelay);
+        }
+        return;
+      }
     }
 
     if (!settings.edgeTapPaging) return;
@@ -1600,6 +1888,9 @@
   }
 
   function onScroll() {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
     if (viewportResizePending) return;
     if (viewportCaptureTimer) clearTimeout(viewportCaptureTimer);
     viewportCaptureTimer = setTimeout(function () {
@@ -1643,6 +1934,10 @@
 
       document.addEventListener("selectionchange", handleSelectionChange);
       document.addEventListener("click", onClick, true);
+      document.addEventListener("mousemove", onMarkerPointerMove, { passive: true });
+      document.addEventListener("mousedown", onMarkerPointerDown, true);
+      document.documentElement.addEventListener("mouseleave", clearReadingMarkerCue);
+      window.addEventListener("blur", clearReadingMarkerCue);
       window.addEventListener("resize", onResize);
       // WebKit can deliver the window resize event after its layout phase.
       // Observe the viewport itself as well, so horizontal compensation is
@@ -1687,6 +1982,8 @@
       goToPage(state.pageCount - 1, false);
     },
     setHighlights: setHighlights,
+    setReadingMarker: setReadingMarker,
+    setReadingMarkerPlacement: setReadingMarkerPlacement,
     clearSelection: clearSelection,
     extractSurroundingPassage: function (start, end) {
       try {

@@ -124,7 +124,7 @@ public enum ReaderKeyTarget {
     }
 }
 
-/// Keyboard handling for page turns.
+/// Keyboard handling for page turns and the reading marker.
 ///
 /// The web view swallows key events, so paging is driven by a local key
 /// monitor rather than the responder chain. Keys pass through when focus is
@@ -304,6 +304,26 @@ struct PageTurnKeyMonitor: NSViewRepresentable {
             let mods = event.modifierFlags.intersection([.shift, .command, .option, .control])
             if !mods.subtracting(.shift).isEmpty {
                 return event
+            }
+
+            if event.charactersIgnoringModifiers?.lowercased() == "m" {
+                // Holding M must not repeatedly enter and leave placement mode.
+                if !event.isARepeat {
+                    if mods.contains(.shift) {
+                        if let controller, !controller.isLoading, let marker = controller.readingMarker {
+                            controller.cancelReadingMarkerPlacement()
+                            controller.clearSelection()
+                            controller.go(to: marker)
+                        }
+                    } else {
+                        controller?.toggleReadingMarkerPlacement()
+                    }
+                }
+                return nil
+            }
+            if event.keyCode == 53, controller?.isPlacingReadingMarker == true {
+                controller?.cancelReadingMarkerPlacement()
+                return nil
             }
 
             switch event.keyCode {

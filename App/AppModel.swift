@@ -517,6 +517,7 @@ final class AppModel {
         }
         record = updated
         reader?.setAnnotations(updated.annotations)
+        reader?.readingMarker = updated.readingMarker?.locator
         if !chat.isStreaming { chat.mergeStoredThreads(updated.conversationThreads) }
     }
 
@@ -577,11 +578,22 @@ final class AppModel {
         controller.onExternalLink = { [weak self] url in
             self?.openWebBrowser(url: url)
         }
+        controller.onReadingMarkerPlaced = { [weak self, weak controller] locator in
+            guard let self, self.record?.id == bookID else { return }
+            let marker = Bookmark(
+                id: Bookmark.readingMarkerID,
+                locator: locator,
+                chapterTitle: controller?.chapterTitle,
+                excerpt: locator.text
+            )
+            self.saveReadingMarker(marker)
+        }
     }
 
     /// Called once the reader view is on screen and able to load content.
     func startReading() {
         guard let reader, let record else { return }
+        reader.readingMarker = record.readingMarker?.locator
         reader.start(at: record.position, annotations: record.annotations)
     }
 
@@ -996,11 +1008,44 @@ final class AppModel {
         }
     }
 
+    // MARK: - Reading marker
+
+    func toggleReadingMarkerPlacement() {
+        guard !isBrowsing else { return }
+        reader?.toggleReadingMarkerPlacement()
+    }
+
+    func goToReadingMarker() {
+        guard !isBrowsing, reader?.isLoading == false, let marker = record?.readingMarker else { return }
+        reader?.cancelReadingMarkerPlacement()
+        reader?.clearSelection()
+        reader?.go(to: marker.locator)
+    }
+
+    func removeReadingMarker() {
+        reader?.cancelReadingMarkerPlacement()
+        saveReadingMarker(nil)
+    }
+
+    private func saveReadingMarker(_ marker: Bookmark?) {
+        guard let bookID = record?.id else { return }
+        let previous = record?.readingMarker
+        do {
+            try store.updateAndFlush(bookID) { $0.readingMarker = marker }
+            record?.readingMarker = marker
+            reader?.readingMarker = marker?.locator
+        } catch {
+            store.update(bookID) { $0.readingMarker = previous }
+            reader?.readingMarker = record?.readingMarker?.locator
+            errorMessage = "Could not save the reading marker: \(error.localizedDescription)"
+        }
+    }
+
     // MARK: - Bookmarks
 
     var isCurrentPageBookmarked: Bool {
         guard let reader, let record else { return false }
-        return record.bookmarks.contains {
+        return record.pageBookmarks.contains {
             $0.locator.spineIndex == reader.spineIndex
                 && $0.locator.start == currentPosition(reader)?.start
         }
@@ -1010,7 +1055,7 @@ final class AppModel {
         guard let reader, var record, let locator = currentPosition(reader) else { return }
 
         if let index = record.bookmarks.firstIndex(where: {
-            $0.locator.spineIndex == locator.spineIndex && $0.locator.start == locator.start
+            !$0.isReadingMarker && $0.locator.spineIndex == locator.spineIndex && $0.locator.start == locator.start
         }) {
             record.bookmarks.remove(at: index)
         } else {

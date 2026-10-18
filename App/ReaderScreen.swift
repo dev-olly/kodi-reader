@@ -87,6 +87,7 @@ struct ReaderScreen: View {
             }
             .onChange(of: windowWidth) { _, _ in reader.pinRestoreCurrentPositionOnce() }
             .onDisappear {
+                reader.cancelReadingMarkerPlacement()
                 model.isNoteEditorOpen = false
                 model.aiNoteTarget = nil
             }
@@ -286,8 +287,34 @@ struct ReaderScreen: View {
                             onSuppressChange: { model.isNoteEditorOpen = $0 }
                         )
                         .overlay(alignment: .topLeading) { selectionPopover }
+                        .overlay(alignment: .bottom) {
+                            if reader.isPlacingReadingMarker {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "mappin")
+                                    Text("Click where you stopped reading")
+                                    Button {
+                                        reader.cancelReadingMarkerPlacement()
+                                    } label: {
+                                        Image(systemName: "xmark.circle.fill")
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Cancel marker placement")
+                                    .help("Cancel (Esc)")
+                                }
+                                .font(.callout)
+                                .padding(.horizontal, 14)
+                                .padding(.vertical, 10)
+                                .background(.regularMaterial, in: .capsule)
+                                .shadow(color: .black.opacity(0.1), radius: 6, y: 2)
+                                .padding(.bottom, 12)
+                            }
+                        }
 
-                    ProgressFooter(reader: reader)
+                    ProgressFooter(
+                        reader: reader,
+                        hasReadingMarker: model.record?.readingMarker != nil,
+                        onReturnToMarker: model.goToReadingMarker
+                    )
                 }
 
                 navRail(systemImage: "chevron.right") {
@@ -444,7 +471,7 @@ struct ReaderScreen: View {
                     .overlay {
                         AnnotationsInspector(
                             annotations: model.record?.annotations ?? [],
-                            bookmarks: model.record?.bookmarks ?? [],
+                            bookmarks: model.record?.pageBookmarks ?? [],
                             chapterTitles: chapterTitles,
                             onSelect: { reader.go(to: $0) },
                             onEdit: { openNoteEditor($0, autofocus: !$0.hasContent) },
@@ -631,6 +658,25 @@ struct ReaderScreen: View {
         ToolbarItemGroup(placement: .primaryAction) {
             UpdateButton()
 
+            Menu {
+                Button(reader.isPlacingReadingMarker ? "Cancel Marker Placement (Esc)" : "Place Reading Marker (M)") {
+                    model.toggleReadingMarkerPlacement()
+                }
+                .disabled(reader.isLoading)
+                Button("Return to Reading Marker (⇧M)") { model.goToReadingMarker() }
+                    .disabled(model.record?.readingMarker == nil)
+                Divider()
+                Button("Remove Reading Marker") { model.removeReadingMarker() }
+                    .disabled(model.record?.readingMarker == nil)
+            } label: {
+                Label("Reading marker", systemImage: "mappin.and.ellipse")
+                    .foregroundStyle(reader.isPlacingReadingMarker ? Color.accentColor : Color.primary)
+            } primaryAction: {
+                model.toggleReadingMarkerPlacement()
+            }
+            .disabled(reader.isLoading)
+            .quickHelp(reader.isPlacingReadingMarker ? "Click the text to place your marker · Esc to cancel" : "Place reading marker (M)")
+
             Button {
                 model.toggleBookmark()
             } label: {
@@ -759,10 +805,23 @@ private struct PageTurnButton: View {
 /// Text-only progress chrome — no scrubber.
 private struct ProgressFooter: View {
     let reader: ReaderController
+    let hasReadingMarker: Bool
+    let onReturnToMarker: () -> Void
 
     var body: some View {
         HStack {
-            Color.clear.frame(width: 1, height: 1)
+            if hasReadingMarker {
+                Button(action: onReturnToMarker) {
+                    Label("Return to marker", systemImage: "mappin")
+                        .font(.caption)
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Return to reading marker (⇧M)")
+                .disabled(reader.isLoading)
+            } else {
+                Color.clear.frame(width: 1, height: 1)
+            }
             Spacer(minLength: 0)
             Text(pageLabel)
                 .font(.caption)
@@ -777,7 +836,6 @@ private struct ProgressFooter: View {
         .padding(.horizontal, 36)
         .padding(.vertical, 14)
         .overlay(alignment: .top) { Divider() }
-        .allowsHitTesting(false)
     }
 
     private var pageLabel: String {

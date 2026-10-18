@@ -18,6 +18,13 @@ or the XBMC Foundation.
 ### Book and document reading
 Paginated EPUB rendering with typography, margin, and theme controls, plus native PDF reading with fit-to-page zoom and adaptive two-page spreads. Position and progress survive layout changes and app relaunches.
 
+Click the beginning of a line to place a reading marker; a faint flag appears
+there on hover. Or press **M**, then click anywhere in the text where you stopped.
+Press **Shift+M** or click **Return to marker** to jump back. Each document keeps
+one movable marker across launches and sync; use the marker toolbar menu to
+remove it. **Esc** cancels placement. These shortcuts leave typing in notes and
+other text fields alone.
+
 Rename a document from its library context menu (**Rename…**) or while reading
 with **File → Rename Document…**. The name persists and syncs with book details;
 the original file keeps its name, and reading data stays attached.

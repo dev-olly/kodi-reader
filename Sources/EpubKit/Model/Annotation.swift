@@ -648,11 +648,18 @@ public struct AnchorResolution: Sendable, Hashable {
 
 /// A saved place in the book, separate from the automatically tracked position.
 public struct Bookmark: Codable, Identifiable, Hashable, Sendable {
+    /// One reserved identity per book keeps the reading marker compatible with
+    /// existing bookmark persistence and sync. UUID() creates version 4 IDs,
+    /// so ordinary page bookmarks never use this reserved version 5 identity.
+    public static let readingMarkerID = UUID(uuidString: "00000000-0000-5000-8000-000000000001")!
+
     public var id: UUID
     public var locator: Locator
     public var chapterTitle: String?
     public var excerpt: String?
     public var createdAt: Date
+
+    public var isReadingMarker: Bool { id == Self.readingMarkerID }
 
     public init(
         id: UUID = UUID(),
@@ -736,6 +743,23 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     }
 
     public var isWebDocument: Bool { sourceURL != nil }
+
+    /// A single explicitly saved stopping point, independent of reading
+    /// progress. Stored as a bookmark so existing clients can preserve it.
+    public var readingMarker: Bookmark? {
+        get { bookmarks.first(where: \.isReadingMarker) }
+        set {
+            bookmarks.removeAll(where: \.isReadingMarker)
+            if var marker = newValue {
+                marker.id = Bookmark.readingMarkerID
+                bookmarks.append(marker)
+            }
+        }
+    }
+
+    public var pageBookmarks: [Bookmark] {
+        bookmarks.filter { !$0.isReadingMarker }
+    }
 
     private enum CodingKeys: String, CodingKey {
         case id, title, author, documentKind, fileBookmark, lastKnownPath

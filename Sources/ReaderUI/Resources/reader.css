@@ -297,3 +297,38 @@ table {
   background-color: #e5a50a;
   mix-blend-mode: normal;
 }
+
+/* A margin flag follows its text anchor without changing pagination. */
+#reader-reading-marker,
+#reader-reading-marker-cue {
+  position: absolute !important;
+  width: 13px !important;
+  height: 14px !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  background: var(--color-link) !important;
+  clip-path: polygon(0 0, 70% 0, 100% 50%, 70% 100%, 0 100%);
+  opacity: 0.85;
+  pointer-events: none !important;
+}
+
+#reader-reading-marker-cue {
+  opacity: 0.3;
+}
+
+.reader-hovering-line-start,
+.reader-hovering-line-start body,
+.reader-hovering-line-start body * {
+  cursor: pointer !important;
+}
+
+.reader-placing-marker,
+.reader-placing-marker body,
+.reader-placing-marker body * {
+  cursor: crosshair !important;
+}
+
+/* Hit-test the book's text while placing, including already highlighted words. */
+.reader-placing-marker .reader-highlight-rect {
+  pointer-events: none !important;
+}

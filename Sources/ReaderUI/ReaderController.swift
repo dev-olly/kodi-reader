@@ -48,6 +48,11 @@ public final class ReaderController {
     public private(set) var annotations: [Annotation] = []
     public private(set) var errorMessage: String?
     public private(set) var visiblePageRange: ClosedRange<Int> = 0...0
+    public private(set) var isPlacingReadingMarker = false
+    /// A single durable place to resume, independent of automatic progress.
+    public var readingMarker: Locator? {
+        didSet { pushReadingMarker() }
+    }
     /// Space needed to retain the current text columns while a workspace is open.
     public private(set) var workspaceMinimumWidth: Double = 0
     @ObservationIgnored private var workspaceLayout: [String: Any]?
@@ -79,6 +84,7 @@ public final class ReaderController {
     public var onAnchorsResolved: (([AnchorResolution]) -> Void)?
     /// Fires when an external web link is tapped, so the app can open it in-app.
     public var onExternalLink: ((URL) -> Void)?
+    public var onReadingMarkerPlaced: ((Locator) -> Void)?
 
     // MARK: - Private
 
@@ -87,6 +93,13 @@ public final class ReaderController {
     @ObservationIgnored private var pdfObserverTokens: [NSObjectProtocol] = []
     @ObservationIgnored private var pdfHighlightAnnotations: [UUID: [PDFAnnotation]] = [:]
     @ObservationIgnored private var pdfLinkProxy: PDFLinkProxy?
+    @ObservationIgnored private var pdfReadingMarkerAnnotation: PDFAnnotation?
+    @ObservationIgnored private var pendingPDFLineStartClick: (point: CGPoint, locator: Locator)?
+    @ObservationIgnored private var pendingPDFMarkerCommit: DispatchWorkItem?
+    @ObservationIgnored private var pdfMarkerCommitGeneration = 0
+    #if os(macOS)
+    @ObservationIgnored private var pdfReadingMarkerMonitor: Any?
+    #endif
     @ObservationIgnored private var schemeHandler: EPUBSchemeHandler?
     @ObservationIgnored private var messageProxy: MessageProxy?
     @ObservationIgnored private var navigationProxy: NavigationProxy?
@@ -183,6 +196,7 @@ public final class ReaderController {
         view.autoScales = true
         pdfView = view
         installPDFObservers(on: view)
+        installPDFReadingMarkerInput()
         configurePDFLayout()
 
         if hasStarted {
@@ -203,6 +217,13 @@ public final class ReaderController {
     }
 
     private func tearDownViews() {
+        cancelReadingMarkerPlacement()
+        if let marker = pdfReadingMarkerAnnotation { marker.page?.removeAnnotation(marker) }
+        pdfReadingMarkerAnnotation = nil
+        #if os(macOS)
+        if let pdfReadingMarkerMonitor { NSEvent.removeMonitor(pdfReadingMarkerMonitor) }
+        pdfReadingMarkerMonitor = nil
+        #endif
         webView?.configuration.userContentController.removeScriptMessageHandler(forName: "reader")
         webView?.navigationDelegate = nil
         webView = nil
@@ -283,6 +304,7 @@ public final class ReaderController {
         guard order.indices.contains(index) else { return }
 
         // Drop any live selection chip before the document changes.
+        cancelReadingMarkerPlacement()
         clearSelection()
 
         isLoading = true
@@ -366,7 +388,7 @@ public final class ReaderController {
 
     public func go(to locator: Locator) {
         if locator.kind == .pdf {
-            goToPDFPage(locator.spineIndex)
+            goToPDFPage(locator.spineIndex, point: pdfDestinationPoint(for: locator))
             return
         }
         if locator.spineIndex == spineIndex {
@@ -403,6 +425,44 @@ public final class ReaderController {
     }
 
     // MARK: - Annotations
+
+    /// The next text click places the marker; pressing the shortcut again cancels.
+    public func toggleReadingMarkerPlacement() {
+        pendingPDFLineStartClick = nil
+        cancelPendingPDFMarkerCommit()
+        guard hasStarted, !isLoading, webView != nil || pdfView != nil else { return }
+        if isPlacingReadingMarker {
+            cancelReadingMarkerPlacement()
+        } else {
+            clearSelection()
+            isPlacingReadingMarker = true
+            evaluate("__reader.setReadingMarkerPlacement(true)")
+        }
+    }
+
+    public func cancelReadingMarkerPlacement() {
+        pendingPDFLineStartClick = nil
+        cancelPendingPDFMarkerCommit()
+        guard isPlacingReadingMarker else { return }
+        isPlacingReadingMarker = false
+        evaluate("__reader.setReadingMarkerPlacement(false)")
+    }
+
+    private func placeReadingMarker(_ locator: Locator) {
+        cancelReadingMarkerPlacement()
+        readingMarker = locator
+        onReadingMarkerPlaced?(locator)
+    }
+
+    private func pushReadingMarker() {
+        if pdfView != nil {
+            pushPDFReadingMarker()
+        } else if let marker = readingMarker, marker.kind == .epub, marker.spineIndex == spineIndex {
+            evaluate("__reader.setReadingMarker({start: \(json(marker.start))})")
+        } else {
+            evaluate("__reader.setReadingMarker(null)")
+        }
+    }
 
     public func setAnnotations(_ annotations: [Annotation]) {
         self.annotations = annotations
@@ -442,7 +502,7 @@ public final class ReaderController {
     /// out of the window (in-app browser preview).
     public func restorePosition(_ locator: Locator) {
         if locator.kind == .pdf {
-            goToPDFPage(locator.spineIndex)
+            goToPDFPage(locator.spineIndex, point: pdfDestinationPoint(for: locator))
             return
         }
         pinRestoreOnce(to: locator.start)
@@ -580,6 +640,7 @@ public final class ReaderController {
         pageCount = max(1, pdfBook.pageCount)
         goToPDFPage(locator?.spineIndex ?? 0)
         pushPDFHighlights()
+        pushPDFReadingMarker()
         isLoading = false
     }
 
@@ -603,6 +664,21 @@ public final class ReaderController {
         return index == NSNotFound ? spineIndex : index
     }
 
+    private func pdfDestinationPoint(for locator: Locator) -> CGPoint? {
+        guard let pdfBook, let range = locator.pdfRanges?.first,
+              range.pageIndex == locator.spineIndex,
+              let page = pdfBook.document.page(at: range.pageIndex),
+              range.location >= 0, range.location < page.numberOfCharacters
+        else { return nil }
+        let character = page.characterBounds(at: range.location)
+        guard !character.isEmpty else { return nil }
+        let crop = page.bounds(for: .cropBox)
+        // PDF destinations align this point to the viewport's upper-left.
+        // Leave a little room around the anchored text when zoomed in.
+        return CGPoint(x: max(crop.minX, character.minX - 36),
+                       y: min(crop.maxY, character.maxY + 36))
+    }
+
     private func goToPDFPage(_ requestedIndex: Int, point: CGPoint? = nil, report: Bool = true) {
         guard let pdfBook, let view = pdfView else { return }
         let index = min(max(0, requestedIndex), pdfBook.pageCount - 1)
@@ -617,6 +693,7 @@ public final class ReaderController {
 
     private func handlePDFPageChanged() {
         guard let pdfBook else { return }
+        cancelReadingMarkerPlacement()
         updatePDFVisibleRange()
         let index = visiblePageRange.lowerBound
         spineIndex = index
@@ -625,6 +702,195 @@ public final class ReaderController {
         chapterTitle = pdfBook.sectionTitle(forPageIndex: index)
         progress = pageCount <= 1 ? 0 : Double(index) / Double(pageCount - 1)
         onPositionChanged?(.pdfPage(index, totalProgression: progress))
+    }
+
+    private func installPDFReadingMarkerInput() {
+        #if os(macOS)
+        pdfReadingMarkerMonitor = NSEvent.addLocalMonitorForEvents(
+            matching: [.leftMouseDown, .leftMouseUp, .leftMouseDragged, .flagsChanged]
+        ) { [weak self] event in
+            guard let self else { return event }
+            return self.handlePDFReadingMarkerInput(event)
+        }
+        #endif
+    }
+
+    #if os(macOS)
+    /// Direct line-start clicks finish on mouse-up so a text drag keeps its usual behavior.
+    func handlePDFReadingMarkerInput(_ event: NSEvent) -> NSEvent? {
+        if event.type == .leftMouseDown || event.type == .leftMouseDragged || event.type == .flagsChanged {
+            cancelPendingPDFMarkerCommit()
+        }
+        guard hasStarted, !isLoading,
+              event.modifierFlags.intersection([.shift, .command, .option, .control]).isEmpty,
+              let view = pdfView, let window = view.window, event.window === window,
+              let content = window.contentView,
+              let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
+              hit === view || hit.isDescendant(of: view)
+        else {
+            pendingPDFLineStartClick = nil
+            cancelPendingPDFMarkerCommit()
+            return event
+        }
+        let point = view.convert(event.locationInWindow, from: nil)
+        guard view.visibleRect.contains(point) else {
+            pendingPDFLineStartClick = nil
+            cancelPendingPDFMarkerCommit()
+            return event
+        }
+        switch event.type {
+        case .leftMouseDown:
+            pendingPDFLineStartClick = nil
+            guard event.clickCount == 1 else { return event }
+            if isPlacingReadingMarker {
+                return placePDFReadingMarker(at: point) ? nil : event
+            }
+            guard view.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+            else { return event }
+            if let locator = pdfLineStartLocator(at: point) {
+                pendingPDFLineStartClick = (point, locator)
+            }
+        case .leftMouseDragged:
+            if let pending = pendingPDFLineStartClick,
+               hypot(point.x - pending.point.x, point.y - pending.point.y) > 4 {
+                pendingPDFLineStartClick = nil
+            }
+        case .leftMouseUp:
+            let pending = pendingPDFLineStartClick
+            pendingPDFLineStartClick = nil
+            guard let pending, !isPlacingReadingMarker,
+                  hypot(point.x - pending.point.x, point.y - pending.point.y) <= 4,
+                  view.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+                  let locator = pdfLineStartLocator(at: point),
+                  locator.spineIndex == pending.locator.spineIndex,
+                  locator.start == pending.locator.start
+            else { return event }
+            if let pdfBook, let range = locator.pdfRanges?.first,
+               let page = pdfBook.document.page(at: range.pageIndex),
+               point.x >= view.convert(page.characterBounds(at: range.location), from: page).minX {
+                schedulePDFLineStartMarker(locator)
+                return event
+            } else {
+                placeReadingMarker(locator)
+            }
+            return nil
+        default:
+            break
+        }
+        return event
+    }
+
+    private func schedulePDFLineStartMarker(_ locator: Locator) {
+        cancelPendingPDFMarkerCommit()
+        let generation = pdfMarkerCommitGeneration
+        let bookID = pdfBook?.bookID
+        let commit = DispatchWorkItem { [weak self] in
+            guard let self, self.pdfMarkerCommitGeneration == generation,
+                  self.pdfBook?.bookID == bookID, !self.isLoading, !self.isPlacingReadingMarker,
+                  self.pdfView?.currentSelection?.string?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+            else { return }
+            self.pendingPDFMarkerCommit = nil
+            self.placeReadingMarker(locator)
+        }
+        pendingPDFMarkerCommit = commit
+        DispatchQueue.main.asyncAfter(deadline: .now() + NSEvent.doubleClickInterval, execute: commit)
+    }
+    #endif
+
+    private func cancelPendingPDFMarkerCommit() {
+        pendingPDFMarkerCommit?.cancel()
+        pendingPDFMarkerCommit = nil
+        pdfMarkerCommitGeneration += 1
+    }
+
+    /// Only the leading gutter and first glyph are direct marker targets.
+    private func pdfLineStartLocator(at point: CGPoint) -> Locator? {
+        guard let pdfBook, let view = pdfView,
+              let page = view.page(for: point, nearest: false)
+        else { return nil }
+        let pagePoint = view.convert(point, to: page)
+        if pdfLinkContains(pagePoint, on: page) { return nil }
+        let pageIndex = pdfBook.document.index(for: page)
+        guard pageIndex != NSNotFound, let text = page.string else { return nil }
+        let pageText = text as NSString
+        let lines = page.selection(for: page.bounds(for: .cropBox))?.selectionsByLine() ?? []
+        for line in lines {
+            guard line.numberOfTextRanges(on: page) > 0 else { continue }
+            let range = line.range(at: 0, on: page)
+            guard range.location != NSNotFound, range.location < pageText.length else { continue }
+            var offset = range.location
+            let end = min(pageText.length, range.location + range.length)
+            while offset < end,
+                  pageText.substring(with: NSRange(location: offset, length: 1))
+                    .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                offset += 1
+            }
+            guard offset < end else { continue }
+            let first = view.convert(page.characterBounds(at: offset), from: page)
+            let lineBounds = view.convert(line.bounds(for: page), from: page)
+            let target = CGRect(x: first.minX - 22, y: lineBounds.minY - 2,
+                                width: first.width + 22, height: lineBounds.height + 4)
+            guard target.contains(point) else { continue }
+            let progression = pdfBook.pageCount <= 1 ? 0 : Double(pageIndex) / Double(pdfBook.pageCount - 1)
+            return .pdfPage(pageIndex, ranges: [PDFTextRange(pageIndex: pageIndex, location: offset, length: 1)],
+                            totalProgression: progression,
+                            text: pageText.substring(with: NSRange(location: offset, length: end - offset)))
+        }
+        return nil
+    }
+
+    /// Hit-tests actual page text, so clicks in gutters cannot mark another page.
+    @discardableResult
+    func placePDFReadingMarker(at point: CGPoint) -> Bool {
+        guard isPlacingReadingMarker, let pdfBook, let view = pdfView,
+              let page = view.page(for: point, nearest: false)
+        else { return false }
+        let pagePoint = view.convert(point, to: page)
+        if pdfLinkContains(pagePoint, on: page) { return false }
+        let offset = page.characterIndex(at: pagePoint)
+        guard offset != NSNotFound, offset >= 0, offset < page.numberOfCharacters else { return false }
+        let bounds = page.characterBounds(at: offset)
+        guard !bounds.isEmpty, bounds.insetBy(dx: -4, dy: -3).contains(pagePoint) else { return false }
+        let pageIndex = pdfBook.document.index(for: page)
+        guard pageIndex != NSNotFound else { return false }
+        let range = PDFTextRange(pageIndex: pageIndex, location: offset, length: 1)
+        let progression = pdfBook.pageCount <= 1 ? 0 : Double(pageIndex) / Double(pdfBook.pageCount - 1)
+        placeReadingMarker(.pdfPage(pageIndex, ranges: [range], totalProgression: progression,
+                                   text: page.selection(for: NSRange(location: offset, length: 1))?.string))
+        return true
+    }
+
+    private func pdfLinkContains(_ point: CGPoint, on page: PDFPage) -> Bool {
+        page.annotations.contains { annotation in
+            // PDFAnnotation.type is the bare subtype name; other PDFKit subtype
+            // representations may include the PDF name's leading slash. Check
+            // every link because another annotation can be painted on top of it.
+            annotation.type?.trimmingCharacters(in: CharacterSet(charactersIn: "/")) == "Link"
+                && annotation.bounds.contains(point)
+        }
+    }
+
+    private func pushPDFReadingMarker() {
+        if let existing = pdfReadingMarkerAnnotation { existing.page?.removeAnnotation(existing) }
+        pdfReadingMarkerAnnotation = nil
+        guard let pdfBook, let marker = readingMarker, marker.kind == .pdf,
+              let page = pdfBook.document.page(at: marker.spineIndex),
+              let range = marker.pdfRanges?.first,
+              range.pageIndex == marker.spineIndex, range.location >= 0,
+              range.location < page.numberOfCharacters
+        else { return }
+        let character = page.characterBounds(at: range.location)
+        guard !character.isEmpty else { return }
+        let line = page.selectionForLine(at: CGPoint(x: character.midX, y: character.midY))?.bounds(for: page) ?? character
+        let crop = page.bounds(for: .cropBox)
+        let markerBounds = CGRect(x: max(crop.minX + 3, line.minX - 22), y: character.midY - 7,
+                                  width: 13, height: 14)
+        let annotation = ReadingMarkerPDFAnnotation(bounds: markerBounds, forType: .stamp, withProperties: nil)
+        annotation.userName = "kodi-reading-marker"
+        annotation.contents = "Stopped reading here"
+        annotation.shouldPrint = false
+        page.addAnnotation(annotation)
+        pdfReadingMarkerAnnotation = annotation
     }
 
     private func updatePDFVisibleRange() {
@@ -660,6 +926,8 @@ public final class ReaderController {
             selection = nil
             return
         }
+
+        cancelPendingPDFMarkerCommit()
 
         var ranges: [PDFTextRange] = []
         var viewRect = CGRect.null
@@ -815,6 +1083,8 @@ public final class ReaderController {
             handleSelection(body)
         case "selectionCleared":
             selection = nil
+        case "readingMarkerPlaced":
+            handleReadingMarkerPlaced(body)
         case "highlightTapped":
             handleHighlightTapped(body)
         case "highlightsResolved":
@@ -837,6 +1107,9 @@ public final class ReaderController {
     private func startRuntime() {
         var options = settings.runtimeOptions(forWidth: viewportWidth)
         options["spineIndex"] = spineIndex
+        #if os(macOS)
+        options["markerClickDelay"] = NSEvent.doubleClickInterval * 1000
+        #endif
         if let workspaceLayout { options["workspaceLayout"] = workspaceLayout }
         guard let encoded = jsonString(options) else { return }
         evaluate("__reader.start(\(encoded))")
@@ -858,6 +1131,7 @@ public final class ReaderController {
         pendingPosition = nil
 
         pushHighlights()
+        pushReadingMarker()
         pushPinRestore()
         // Evaluations run in order, so this reports the position after any
         // restore above has been applied. Without it, opening a book at its
@@ -904,6 +1178,16 @@ public final class ReaderController {
             locator: Locator(spineIndex: spineIndex, start: start, end: end, text: text),
             rect: rect
         )
+    }
+
+    private func handleReadingMarkerPlaced(_ body: [String: Any]) {
+        guard isPlacingReadingMarker || body["lineStart"] as? Bool == true, !isLoading,
+              body["spineIndex"] as? Int == spineIndex,
+              let raw = body["position"] as? [String: Any],
+              let position = decodePosition(raw), !position.elementPath.isEmpty
+        else { return }
+        placeReadingMarker(Locator(spineIndex: spineIndex, start: position,
+                                   totalProgression: progress, text: body["text"] as? String))
     }
 
     private func handleHighlightTapped(_ body: [String: Any]) {
@@ -1176,6 +1460,22 @@ private final class PDFLinkProxy: NSObject, PDFViewDelegate {
 
     func pdfViewWillClick(onLink sender: PDFView, with url: URL) {
         controller?.handlePDFLink(url)
+    }
+}
+
+/// A transient page annotation scales with the text as PDFKit zooms and pages.
+private final class ReadingMarkerPDFAnnotation: PDFAnnotation {
+    override func draw(with box: PDFDisplayBox, in context: CGContext) {
+        context.saveGState()
+        context.setFillColor(CGColor(red: 0.24, green: 0.52, blue: 0.39, alpha: 0.95))
+        context.move(to: CGPoint(x: bounds.minX, y: bounds.minY))
+        context.addLine(to: CGPoint(x: bounds.maxX - 4, y: bounds.minY))
+        context.addLine(to: CGPoint(x: bounds.maxX, y: bounds.midY))
+        context.addLine(to: CGPoint(x: bounds.maxX - 4, y: bounds.maxY))
+        context.addLine(to: CGPoint(x: bounds.minX, y: bounds.maxY))
+        context.closePath()
+        context.fillPath()
+        context.restoreGState()
     }
 }
 

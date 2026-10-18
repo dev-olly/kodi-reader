@@ -160,6 +160,40 @@ final class PageTurnKeyTests: XCTestCase {
         XCTAssertTrue(monitor.keyEventHandler(otherArrow) === otherArrow)
     }
 
+    func testMarkerShortcutAndEscapeAreScopedToTheReader() throws {
+        let (window, monitor) = makeMonitoredWindow()
+        defer { monitor.tearDown() }
+
+        for modifiers: NSEvent.ModifierFlags in [[], .shift] {
+            let marker = try keyEvent(46, in: window, modifiers: modifiers, characters: "m")
+            XCTAssertNil(monitor.keyEventHandler(marker))
+            let repeated = try keyEvent(46, in: window, modifiers: modifiers, isRepeat: true, characters: "m")
+            XCTAssertNil(monitor.keyEventHandler(repeated))
+        }
+        let escape = try keyEvent(53, in: window)
+        XCTAssertTrue(monitor.keyEventHandler(escape) === escape,
+                      "Escape must remain available to other controls when placement is inactive")
+
+        for modifier: NSEvent.ModifierFlags in [.command, .option, .control] {
+            let marker = try keyEvent(46, in: window, modifiers: modifier, characters: "m")
+            XCTAssertTrue(monitor.keyEventHandler(marker) === marker)
+        }
+
+        let editor = NSTextView(frame: window.contentLayoutRect)
+        window.contentView?.addSubview(editor)
+        XCTAssertTrue(window.makeFirstResponder(editor))
+        let typedM = try keyEvent(46, in: window, characters: "m")
+        XCTAssertTrue(monitor.keyEventHandler(typedM) === typedM,
+                      "Typing in notes or other text fields must never place a marker")
+
+        let otherWindow = makeWindow()
+        let otherM = try keyEvent(46, in: otherWindow, characters: "m")
+        XCTAssertTrue(monitor.keyEventHandler(otherM) === otherM)
+        monitor.enabled = false
+        let disabledM = try keyEvent(46, in: window, characters: "m")
+        XCTAssertTrue(monitor.keyEventHandler(disabledM) === disabledM)
+    }
+
     private func makeMonitoredWindow() -> (NSWindow, PageTurnKeyMonitor.MonitorView) {
         _ = NSApplication.shared
         let window = NSWindow(
@@ -177,12 +211,13 @@ final class PageTurnKeyTests: XCTestCase {
         _ keyCode: UInt16,
         in window: NSWindow,
         modifiers: NSEvent.ModifierFlags = [],
-        isRepeat: Bool = false
+        isRepeat: Bool = false,
+        characters: String = ""
     ) throws -> NSEvent {
         try XCTUnwrap(NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: modifiers,
             timestamp: 0, windowNumber: window.windowNumber, context: nil,
-            characters: keyCode == 49 ? " " : "", charactersIgnoringModifiers: "",
+            characters: keyCode == 49 ? " " : characters, charactersIgnoringModifiers: characters,
             isARepeat: isRepeat, keyCode: keyCode
         ))
     }

@@ -99,6 +99,11 @@ struct KodiReaderApp: App {
             Button("Previous Page") { model.reader?.previousPage() }
                 .disabled(model.reader == nil)
             Divider()
+            Button("Place Reading Marker (M)") { model.toggleReadingMarkerPlacement() }
+                .disabled(model.reader == nil || model.isBrowsing || model.reader?.isLoading == true)
+            Button("Return to Reading Marker (⇧M)") { model.goToReadingMarker() }
+                .disabled(model.record?.readingMarker == nil || model.isBrowsing || model.reader?.isLoading == true)
+            Divider()
             Button(model.book?.kind == .pdf ? "Next Section" : "Next Chapter") {
                 model.reader?.goToNextChapter()
             }

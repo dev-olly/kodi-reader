@@ -166,6 +166,74 @@ final class LibrarySyncTests: XCTestCase {
         XCTAssertEqual(received.cloudIdentity, local.cloudIdentity)
     }
 
+    func testReadingMarkerCreateMoveDeleteSyncsAsOneBookmark() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let local = try book(in: a)
+        let pageBookmark = Bookmark(locator: .startOfBook(), chapterTitle: "Beginning")
+        let first = Bookmark(
+            locator: Locator(spineIndex: 2, start: TextPosition(elementPath: [1, 0], offset: 14)),
+            chapterTitle: "Chapter 3"
+        )
+        a.update(local.id) {
+            $0.bookmarks = [pageBookmark]
+            $0.readingMarker = first
+        }
+        try a.checkpoint()
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let received = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!))
+        XCTAssertEqual(received.readingMarker?.locator, first.locator)
+        XCTAssertEqual(received.pageBookmarks, [pageBookmark])
+
+        let moved = Bookmark(
+            locator: Locator(spineIndex: 5, start: TextPosition(elementPath: [4], offset: 9)),
+            chapterTitle: "Chapter 6"
+        )
+        b.update(received.id) { $0.readingMarker = moved }
+        sb.checkpoint(); try await run(sb); try await run(sa)
+        XCTAssertEqual(a.record(for: local.id)?.readingMarker?.locator, moved.locator)
+        XCTAssertEqual(a.record(for: local.id)?.pageBookmarks, [pageBookmark])
+        let markerID = "bookmark:\(local.cloudIdentity!):\(Bookmark.readingMarkerID.uuidString)"
+        let syncedMarker = try XCTUnwrap(cloud.entities[markerID])
+        XCTAssertEqual(try syncedMarker.value(Bookmark.self).locator, moved.locator)
+        XCTAssertEqual(cloud.entities.values.filter { $0.kind == .bookmark && !$0.deleted }.count, 2)
+
+        a.update(local.id) { $0.readingMarker = nil }
+        sa.checkpoint(); try await run(sa); try await run(sb)
+        XCTAssertNil(b.record(for: received.id)?.readingMarker)
+        XCTAssertEqual(b.record(for: received.id)?.pageBookmarks, [pageBookmark])
+        XCTAssertTrue(try XCTUnwrap(cloud.entities[markerID]).deleted)
+    }
+
+    func testReadingMarkerSyncDoesNotWaitForProgressThrottle() async throws {
+        let cloud = TestCloud(), store = try store(), local = try book(in: store)
+        var time = Date()
+        let sync = LibrarySyncCoordinator(store: store, transport: TestTransport(cloud), now: { time })
+        await sync.setPreferences(.init(mode: .notesOnly)); try await settle(sync)
+        time += 10
+        let stoppingPoint = Locator(spineIndex: 3, start: TextPosition(elementPath: [2], offset: 8))
+        store.update(local.id) {
+            $0.position = .startOfBook()
+            $0.progress = 0.5
+            $0.readingMarker = Bookmark(locator: stoppingPoint)
+        }
+        sync.checkpoint(); sync.syncNow()
+        try await Task.sleep(for: .milliseconds(100))
+        let markerEntity = try XCTUnwrap(cloud.entities.values.first {
+            $0.kind == .bookmark && !$0.deleted && (try? $0.value(Bookmark.self).isReadingMarker) == true
+        })
+        XCTAssertEqual(try markerEntity.value(Bookmark.self).locator, stoppingPoint)
+        let positionEntity = try XCTUnwrap(cloud.entities.values.first { $0.kind == .position })
+        XCTAssertEqual(try positionEntity.value(SyncedPosition.self).progress, 0)
+
+        time += 21
+        try await run(sync)
+        XCTAssertEqual(try cloud.entities[positionEntity.id]?.value(SyncedPosition.self).progress, 0.5)
+        XCTAssertEqual(store.record(for: local.id)?.readingMarker?.locator, stoppingPoint)
+    }
+
     func testStoppedProviderKeepsItsJournalAndNeverUploadsToOldCloud() async throws {
         let originalCloud = TestCloud(), destinationCloud = TestCloud(), local = try store()
         let book = try book(in: local, with: note())

@@ -6,6 +6,28 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.7</title>
+            <pubDate>Tue, 20 Oct 2026 19:16:12 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>0.4.7</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.7
+
+This update restores iCloud sync for installations of 0.4.6 that shipped without iCloud support.
+
+- Existing iCloud sync settings work again, and pending local changes can resume syncing.
+- Release packaging now requires iCloud support and validates Production CloudKit permissions in the final app.
+- Published release checks also verify iCloud support in the downloadable disk image.
+
+Your local books, notes, reading progress, and pending changes are preserved. No library reset or reimport is required.
+
+The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.7/KodiReader.dmg" length="8507363" type="application/octet-stream" sparkle:edSignature="7XfXEsWc8TFjjwRtHGEk4yLVM2PavEEy03aOmi6OjMnxcfU+W+eKmSjfjN0zAs7tbfp9Hb4QAf5Bf+jvQ4KSDA=="/>
+        </item>
+        <item>
             <title>0.4.6</title>
             <pubDate>Sun, 18 Oct 2026 18:48:38 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -45,31 +67,9 @@ The app and update feed are signed, and the download is notarized by Apple. Requ
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.5/KodiReader.dmg" length="8448511" type="application/octet-stream" sparkle:edSignature="pgyWn2VliTlUehktGbsjNAqIMT7WgDxvsBvXuRkPZw8Gh0mmMNT9M9hv9pQl82v01lvXwXQT2kq8xFsL2/IICw=="/>
         </item>
-        <item>
-            <title>0.4.4</title>
-            <pubDate>Sun, 11 Oct 2026 23:33:12 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>10</sparkle:version>
-            <sparkle:shortVersionString>0.4.4</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.4
-
-- Export individual notes or all book notes as Markdown, Word (.docx), Apple Notes import files (.html), or Notion import files (.md).
-- Every export includes the referenced passage, chapter, book title, author, and note text. Individual exports include your latest edits. Drawing notes include a notice; drawings are not embedded.
-- Improve Ask AI text readability with larger message and composer text.
-
-- Clean up older Kodi Reader entries in Finder’s **Open With** menu when the installed app launches, including after an update.
-- Keep development builds and leftover packaging copies out of **Open With**.
-- Updates replace the previous installed release while preserving your books, notes, drawings, bookmarks, conversations, and reading position.
-
-The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.4/KodiReader.dmg" length="8253843" type="application/octet-stream" sparkle:edSignature="O05p7FOzCTSzrVEGf5B0WNHxsnnKB0ye0wiPQ4wBKuy1PEzBjdarUPMMOxU6mMjWZ+H+UsHClsfw/kTXKw0jDw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: kBEq1ZpfZw3KQpFp9EE1XUnCU2JeJZLw3dvkbmxJ3xckX8DBGSz1dqTXVurZyX0vO0I45rQuoyuHAIOBbYwfAg==
-length: 5811
+edSignature: ERVfowpHiw0mY8YEOxvpZZoJvvP1MzU1twr4jTBQX0qDYnJwps1tRdcRTy/rr3BqCtV5A8DcI4Dba/efrPrKDQ==
+length: 5561
 -->

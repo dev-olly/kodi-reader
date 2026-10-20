@@ -241,6 +241,13 @@ For each release:
 5. Commit and push `appcast.xml` **after** the download is public. Installed apps
    can then discover the update. Do not edit the signed feed by hand.
 
+Every DMG uses `Release-iCloud` so an update preserves existing iCloud sync.
+Packaging requires the Developer ID iCloud provisioning profile and checks that
+both the built app and final staged app enable iCloud and carry valid Production
+CloudKit entitlements. The older `--icloud` flag is still accepted. Use Xcode's
+ordinary `Debug` or `Release` configurations for local builds without iCloud;
+see the [iCloud signing setup](docs/icloud-sync-setup.md).
+
 The DMG script signs Sparkle's nested helpers before signing the outer app.
 Debug builds enable Sparkle's sandbox installer service; Release builds are
 unsandboxed and use the normal installer. Development-only library-validation

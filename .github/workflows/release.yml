@@ -34,3 +34,63 @@ jobs:
           printf '%s\n' "$details" | grep -F 'Authority=Developer ID Application: Emmanuel Onyebueke (3FJF74RW5L)'
           xcrun stapler validate KodiReader.dmg
           spctl --assess --type open --context context:primary-signature --verbose=4 KodiReader.dmg
+
+      - name: Verify iCloud in published app
+        shell: bash
+        run: |
+          set -euo pipefail
+          verification_dir="$(mktemp -d)"
+          mount_dir="$verification_dir/mounted"
+          mkdir "$mount_dir"
+          mounted=0
+          cleanup() {
+            local status=$?
+            trap - EXIT
+            if [[ "$mounted" == 1 ]]; then
+              hdiutil detach "$mount_dir" || exit 1
+            fi
+            rm -rf "$verification_dir"
+            exit "$status"
+          }
+          trap cleanup EXIT
+          hdiutil attach -readonly -nobrowse -mountpoint "$mount_dir" KodiReader.dmg
+          mounted=1
+          app="$mount_dir/Kodi Reader.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          /usr/libexec/PlistBuddy -c 'Print :iCloudSyncEnabled' "$app/Contents/Info.plist" | grep -Fxq YES
+          test -f "$app/Contents/embedded.provisionprofile"
+          codesign --display --entitlements - --xml "$app" > "$verification_dir/entitlements.plist"
+          security cms -D -i "$app/Contents/embedded.provisionprofile" > "$verification_dir/profile.plist"
+          python3 - "$verification_dir/entitlements.plist" "$verification_dir/profile.plist" <<'PY'
+          import datetime
+          import plistlib
+          import sys
+
+          with open(sys.argv[1], 'rb') as file:
+              signed = plistlib.load(file)
+          with open(sys.argv[2], 'rb') as file:
+              profile = plistlib.load(file)
+          permitted = profile['Entitlements']
+          for key, value in {
+              'com.apple.application-identifier': '3FJF74RW5L.com.olly.KodiReader',
+              'com.apple.developer.team-identifier': '3FJF74RW5L',
+              'com.apple.developer.icloud-container-environment': 'Production',
+              'com.apple.developer.aps-environment': 'production',
+          }.items():
+              if signed.get(key) != value:
+                  sys.exit('Incorrect distribution entitlement: ' + key)
+              allowance = permitted.get(key)
+              if allowance != value and not (isinstance(allowance, list) and value in allowance):
+                  sys.exit('Provisioning profile does not permit: ' + key)
+          for key, value in {
+              'com.apple.developer.icloud-services': 'CloudKit',
+              'com.apple.developer.icloud-container-identifiers': 'iCloud.com.olly.KodiReader',
+          }.items():
+              allowance = permitted.get(key, [])
+              if value not in signed.get(key, []) or (allowance != '*' and value not in allowance):
+                  sys.exit('Missing container/service permission: ' + key)
+          expiry = profile['ExpirationDate'].replace(tzinfo=datetime.timezone.utc)
+          if expiry <= datetime.datetime.now(datetime.timezone.utc):
+              sys.exit('The Developer ID provisioning profile has expired.')
+          print('Published app has iCloud enabled and valid production CloudKit permissions.')
+          PY

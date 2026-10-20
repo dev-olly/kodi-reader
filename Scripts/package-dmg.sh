@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Release-build Kodi Reader, sign it with Developer ID, and wrap it in a DMG.
+# Build Kodi Reader with Production iCloud support, sign it with Developer ID,
+# and wrap it in a DMG.
 # Pass --notarize to submit the final DMG to Apple and staple the ticket.
 set -euo pipefail
 
@@ -20,12 +21,11 @@ fi
 
 VERSION=""
 NOTARIZE=0
-ICLOUD=0
 GOOGLE_DRIVE=0
 for argument in "$@"; do
   case "$argument" in
     --icloud)
-      ICLOUD=1
+      # Retained for compatibility; every distribution now includes iCloud.
       ;;
     --notarize)
       NOTARIZE=1
@@ -35,6 +35,7 @@ for argument in "$@"; do
       ;;
     -h|--help)
       echo "usage: $0 [version] [--notarize] [--icloud] [--google-drive]"
+      echo "All DMGs include iCloud support; --icloud is accepted for compatibility."
       echo "example: $0 0.1.0 --notarize"
       exit 0
       ;;
@@ -52,10 +53,7 @@ for argument in "$@"; do
   esac
 done
 
-BUILD_CONFIGURATION="Release"
-if [[ "$ICLOUD" == 1 ]]; then
-  BUILD_CONFIGURATION="Release-iCloud"
-fi
+BUILD_CONFIGURATION="Release-iCloud"
 APP_NAME="Kodi Reader"
 SCHEME="KodiReader"
 PROJECT="KodiReader.xcodeproj"
@@ -120,14 +118,20 @@ if [[ "$GOOGLE_DRIVE" == 1 ]]; then
   fi
 fi
 
-if [[ "$ICLOUD" == 1 ]]; then
-  if [[ ! -f "$APP/Contents/embedded.provisionprofile" ]]; then
-    echo "iCloud builds require an embedded Developer ID provisioning profile." >&2
+verify_icloud_app() {
+  local bundle="$1"
+  local sync_enabled
+  if ! sync_enabled="$(/usr/libexec/PlistBuddy -c 'Print :iCloudSyncEnabled' "$bundle/Contents/Info.plist")" || [[ "$sync_enabled" != "YES" ]]; then
+    echo "Distribution app must have iCloudSyncEnabled=YES: $bundle" >&2
     exit 1
   fi
-  codesign --display --entitlements - --xml "$APP" > "$DERIVED/icloud-entitlements.plist" 2>/dev/null
+  if [[ ! -f "$bundle/Contents/embedded.provisionprofile" ]]; then
+    echo "Distribution app requires an embedded Developer ID iCloud provisioning profile: $bundle" >&2
+    exit 1
+  fi
+  codesign --display --entitlements - --xml "$bundle" > "$DERIVED/icloud-entitlements.plist" 2>/dev/null
   /usr/libexec/PlistBuddy -c 'Print :com.apple.developer.icloud-container-identifiers:0' "$DERIVED/icloud-entitlements.plist" | grep -Fxq 'iCloud.com.olly.KodiReader'
-  security cms -D -i "$APP/Contents/embedded.provisionprofile" > "$DERIVED/icloud-profile.plist"
+  security cms -D -i "$bundle/Contents/embedded.provisionprofile" > "$DERIVED/icloud-profile.plist"
   python3 - "$DERIVED/icloud-entitlements.plist" "$DERIVED/icloud-profile.plist" "$TEAM_ID" <<'PY'
 import datetime
 import plistlib
@@ -161,7 +165,8 @@ expiry = profile['ExpirationDate'].replace(tzinfo=datetime.timezone.utc)
 if expiry <= datetime.datetime.now(datetime.timezone.utc):
     sys.exit('The Developer ID provisioning profile has expired.')
 PY
-fi
+}
+verify_icloud_app "$APP"
 
 # A build (unlike archive/export) does not re-sign Sparkle's nested helpers.
 # Sign from the inside out so every executable has our Developer ID and timestamp.
@@ -212,6 +217,9 @@ if [[ "$SIGNATURE_DETAILS" != *"runtime"* ]]; then
   echo "Release app does not have Hardened Runtime enabled." >&2
   exit 1
 fi
+# Recheck the delivered copy after all re-signing and staging. Checking only the
+# Xcode output would miss lost CloudKit entitlements in the final distribution.
+verify_icloud_app "$STAGING/${APP_NAME}.app"
 ln -s /Applications "$STAGING/Applications"
 
 hdiutil create \

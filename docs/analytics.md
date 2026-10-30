@@ -37,16 +37,17 @@ without explicit user approval. Domain promotion was also blocked while this
 database connection is incomplete. The live Kodi website has not been changed.
 The updated Mac client also needs a release before installations can send activity.
 
-Release preparation on 30 October 2026 confirmed that production still has only
-the original one-argument `analytics_ingest(jsonb)` function. Apply
-`003_usage_v2.sql` before deploying the current collector: it calls the new
-two-argument ingestion function and records request outcomes, meaningful editing
-sessions, and approximate upload-country observations. The optional
-`002_server_usage.sql` migration is not required for device telemetry.
-Automatic approval review rejected applying `usage_analytics_v2` during release
-preparation because it requires explicit approval for the production schema
-change. It has not been applied. The local API and isolated PostgreSQL integration
-suite passed all 13 tests, including reapplication and role restrictions.
+On 30 October 2026, the owner approved and applied `003_usage_v2.sql` as
+production migration `20261030162740_usage_analytics_v2`. The current collector
+can now use the two-argument ingestion function for request outcomes, meaningful
+editing sessions, and approximate upload-country observations. Production smoke
+tests passed for both ingestion signatures and the dashboard; their temporary
+events were rolled back. Analytics tables retain RLS, ordinary roles have no
+table or RPC access, and the functions use service-role-only invoker permissions.
+The local API and isolated PostgreSQL integration suite passed all 13 tests,
+including reapplication and role restrictions. The optional
+`002_server_usage.sql` migration is not required for device telemetry and remains
+unapplied.
 
 The local dashboard now also displays real, aggregate account and AI credit-ledger
 history captured through the connected Supabase administrator tool. This saved

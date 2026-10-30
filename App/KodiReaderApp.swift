@@ -18,12 +18,24 @@ struct KodiReaderApp: App {
                 .environment(model)
                 .environmentObject(updater)
                 .task {
+                    appDelegate.readingProgress = model.readingProgress
+                    model.readingProgress.setActive(NSApp.isActive)
                     updater.beforeInstall = { model.flush() }
                     appDelegate.onCloudNotification = {
                         if model.sync.provider == .iCloud { model.sync.syncNow() }
                     }
                     appDelegate.onWillTerminate = { model.flush() }
-                    appDelegate.onPrepareToTerminate = { finished in model.flush(completion: finished) }
+                    appDelegate.onPrepareToTerminate = { finished in
+                        model.flush { succeeded in
+                            guard succeeded else { finished(false); return }
+                            UsageAnalytics.shared.setActive(false)
+                            model.readingProgress.setActive(false)
+                            Task { @MainActor in
+                                await model.analytics.persistPendingEvents()
+                                finished(succeeded)
+                            }
+                        }
+                    }
                     model.sync.syncNow()
                     model.sync.setActive(true)
                 }
@@ -172,6 +184,10 @@ struct KodiReaderApp: App {
 /// so we never resurrect the phantom AppWindow-N scenes from earlier launches.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowObserver: NSObjectProtocol?
+    private var analyticsInputMonitor: Any?
+    private var analyticsSleepObserver: NSObjectProtocol?
+    private var analyticsWakeObserver: NSObjectProtocol?
+    weak var readingProgress: ReadingProgress?
     var onCloudNotification: (() -> Void)?
     var onWillTerminate: (() -> Void)?
     var onPrepareToTerminate: ((@escaping (Bool) -> Void) -> Void)?
@@ -191,6 +207,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.registerForRemoteNotifications()
         }
         disableRestoration(on: NSApp.windows)
+        // Observe input timing only; key values, locations, and content are never retained.
+        analyticsInputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]) { event in
+            UsageAnalytics.shared.recordInteraction()
+            return event
+        }
+        let workspace = NSWorkspace.shared.notificationCenter
+        analyticsSleepObserver = workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                UsageAnalytics.shared.setActive(false)
+                self?.readingProgress?.setSleeping(true)
+            }
+        }
+        analyticsWakeObserver = workspace.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                UsageAnalytics.shared.setActive(NSApp.isActive)
+                self?.readingProgress?.setSleeping(false)
+            }
+        }
+        UsageAnalytics.shared.setActive(NSApp.isActive)
         windowObserver = NotificationCenter.default.addObserver(
             forName: NSWindow.didBecomeKeyNotification,
             object: nil,
@@ -205,6 +240,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         true
     }
 
+    func applicationDidBecomeActive(_ notification: Notification) {
+        UsageAnalytics.shared.setActive(true)
+        readingProgress?.setActive(true)
+    }
+
+    func applicationWillResignActive(_ notification: Notification) {
+        UsageAnalytics.shared.setActive(false)
+        readingProgress?.setActive(false)
+    }
+
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         guard let onPrepareToTerminate else { return .terminateNow }
         onPrepareToTerminate { succeeded in
@@ -215,10 +260,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        UsageAnalytics.shared.setActive(false)
+        readingProgress?.setActive(false)
+        readingProgress?.checkpoint()
         onWillTerminate?()
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
         }
+        if let analyticsInputMonitor { NSEvent.removeMonitor(analyticsInputMonitor) }
+        if let analyticsSleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(analyticsSleepObserver) }
+        if let analyticsWakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(analyticsWakeObserver) }
     }
 
     private func disableRestoration(on windows: [NSWindow]) {

@@ -17,6 +17,7 @@ final class AppModel {
     private(set) var book: ReaderDocument?
     private(set) var record: BookRecord?
     private(set) var reader: ReaderController?
+    private(set) var hasReadyReader = false
     private(set) var recents: [BookRecord] = []
     private(set) var webBrowser: WebBrowserController?
     private(set) var isSavingWebPage = false
@@ -76,6 +77,13 @@ final class AppModel {
     let aiCredits: AICreditsController
     let chat: ChatController
     let savedPrompts: SavedPromptStore
+    let analytics = UsageAnalytics.shared
+    let readingProgress: ReadingProgress
+
+    private var analyticsContentType: AnalyticsContentType? {
+        guard let book else { return nil }
+        return record?.sourceURL != nil ? .web : (book.kind == .pdf ? .pdf : .epub)
+    }
 
     var notesInSidebar: Bool {
         get { settings.noteEditorPlacement == .sidebar }
@@ -97,6 +105,8 @@ final class AppModel {
     /// Editors checkpoint their text and canvas before navigation or sync.
     @ObservationIgnored private var noteFlushHandlers: [UUID: (@escaping (Result<Void, Error>) -> Void) -> Void] = [:]
     @ObservationIgnored private var noteEditingSessions: [UUID: UUID] = [:]
+    @ObservationIgnored private var noteAnalyticsEdits: [UUID: AnalyticsEditToken] = [:]
+    @ObservationIgnored private var sketchAnalyticsEdits: [UUID: [UUID: AnalyticsEditToken]] = [:]
     @ObservationIgnored private var openingID: UUID?
     @ObservationIgnored private var sketchUndoArchive: [String: SketchUndoHistory] = [:]
 
@@ -105,6 +115,7 @@ final class AppModel {
 
     init() {
         let root = AppDataDirectory.prepare()
+        readingProgress = ReadingProgress(directory: root)
         let store = LibraryStore(fileURL: root.appendingPathComponent("library.json"))
         self.store = store
         let iCloudEnabled = (Bundle.main.object(forInfoDictionaryKey: "iCloudSyncEnabled") as? String) == "YES"
@@ -125,6 +136,19 @@ final class AppModel {
         let chat = ChatController(configStore: aiConfig, auth: aiAuth)
         self.chat = chat
         self.savedPrompts = SavedPromptStore()
+        chat.onRequestStarted = { [weak self] requestID in self?.analytics.record(.aiRequestStarted, content: self?.analyticsContentType, requestID: requestID) }
+        chat.onRequestCompleted = { [weak self] requestID in self?.analytics.record(.aiRequestCompleted, content: self?.analyticsContentType, requestID: requestID) }
+        chat.onRequestCancelled = { [weak self] requestID in self?.analytics.record(.aiRequestCancelled, content: self?.analyticsContentType, requestID: requestID) }
+        chat.onRequestFailed = { [weak self] requestID, error in
+            let category: AnalyticsErrorCategory
+            switch error {
+            case AIChatError.authRequired: category = .authentication
+            case AIChatError.insufficientCredits: category = .credits
+            case is URLError: category = .network
+            default: category = .service
+            }
+            self?.analytics.record(.aiRequestFailed, content: self?.analyticsContentType, error: category, requestID: requestID)
+        }
         aiAuth.onWillSignOut = { [weak chat, weak aiCredits] in chat?.stop(); aiCredits?.reset() }
         chat.onInsufficientCredits = { [weak aiCredits] in
             guard AIFeatureFlags.paymentsEnabled else { return }
@@ -190,6 +214,7 @@ final class AppModel {
     }
 
     func openWebBrowser(url: URL) {
+        analytics.record(.webOpened, content: .web)
         positionBeforeBrowser = record?.position
         reader?.pinRestoreCurrentPositionOnce()
         if let webBrowser {
@@ -355,6 +380,7 @@ final class AppModel {
             recents = store.recentBooks(limit: .max)
             errorMessage = nil
             chat.load(threads: record.conversationThreads, activeID: record.activeChatID)
+            if existing == nil { analytics.record(.bookImported, content: analyticsContentType) }
         } catch {
             if didScope { url.stopAccessingSecurityScopedResource() }
             errorMessage = error.localizedDescription
@@ -441,6 +467,16 @@ final class AppModel {
     }
 
     private func completeClosingBook() {
+        analytics.setReadingContent(nil)
+        for token in noteAnalyticsEdits.values { analytics.endEditing(token: token) }
+        for edits in sketchAnalyticsEdits.values {
+            for token in edits.values { analytics.endEditing(token: token) }
+        }
+        noteAnalyticsEdits.removeAll()
+        sketchAnalyticsEdits.removeAll()
+        analytics.endAllEditing()
+        readingProgress.setReaderEligible(false)
+        hasReadyReader = false
         noteFlushHandlers.removeAll()
         noteEditingSessions.removeAll()
         sketchUndoArchive.removeAll()
@@ -478,6 +514,7 @@ final class AppModel {
     }
 
     func flush(completion: ((Bool) -> Void)? = nil) {
+        readingProgress.checkpoint()
         let handlers = Array(noteFlushHandlers.values)
         var remaining = handlers.count
         var succeeded = true
@@ -495,6 +532,7 @@ final class AppModel {
     }
 
     func beginNoteEditing(_ id: UUID, session: UUID, flush: @escaping (@escaping (Result<Void, Error>) -> Void) -> Void) {
+        if noteEditingSessions[id] != session { endAnalyticsEditing(id) }
         noteEditingSessions[id] = session
         noteFlushHandlers[id] = flush
     }
@@ -502,10 +540,41 @@ final class AppModel {
 
     func endNoteEditing(_ id: UUID, session: UUID) {
         guard noteEditingSessions[id] == session else { return }
+        endAnalyticsEditing(id)
         noteEditingSessions[id] = nil
         if let bookID = book?.bookID { sketchUndoArchive["\(bookID):\(id)"] = nil }
         noteFlushHandlers[id] = nil
         sync.resumeDeferredChanges()
+    }
+
+    /// The editor calls this after its final canvas save when leaving a drawing.
+    func endSketchEditing(_ id: UUID, session: UUID) {
+        guard noteEditingSessions[id] == session else { return }
+        endSketchAnalyticsEditing(id)
+    }
+
+    private func endAnalyticsEditing(_ id: UUID) {
+        if let token = noteAnalyticsEdits.removeValue(forKey: id) { analytics.endEditing(token: token) }
+        endSketchAnalyticsEditing(id)
+    }
+
+    private func endSketchAnalyticsEditing(_ id: UUID) {
+        guard let edits = sketchAnalyticsEdits.removeValue(forKey: id) else { return }
+        for token in edits.values { analytics.endEditing(token: token) }
+    }
+
+    private func beginNoteAnalyticsEdit(bookID: String, annotationID: UUID, isNew: Bool) -> AnalyticsEditToken {
+        let token = analytics.beginEditing(kind: .note, itemKey: "\(bookID):\(annotationID)",
+                                           isNew: isNew, content: analyticsContentType)
+        noteAnalyticsEdits[annotationID] = token
+        return token
+    }
+
+    private func beginSketchAnalyticsEdit(bookID: String, annotationID: UUID, sketchID: UUID, isNew: Bool) -> AnalyticsEditToken {
+        let token = analytics.beginEditing(kind: .sketch, itemKey: "\(bookID):\(annotationID):\(sketchID)",
+                                           isNew: isNew, content: analyticsContentType)
+        sketchAnalyticsEdits[annotationID, default: [:]][sketchID] = token
+        return token
     }
 
     func refreshAfterSync() {
@@ -559,8 +628,19 @@ final class AppModel {
     // MARK: - Reader wiring
 
     private func wire(_ controller: ReaderController, bookID: String) {
-        controller.onPositionChanged = { [weak self] locator in
-            guard let self else { return }
+        var lastPage: (spine: Int, page: Int, count: Int)?
+        controller.onPositionChanged = { [weak self, weak controller] locator in
+            guard let self, let controller, reader === controller else { return }
+            let currentPage = (spine: controller.spineIndex, page: controller.page, count: controller.pageCount)
+            if !controller.isLoading {
+                hasReadyReader = true
+                if let lastPage,
+                   (lastPage.spine != currentPage.spine || lastPage.count == currentPage.count),
+                   (lastPage.spine != currentPage.spine || lastPage.page != currentPage.page) {
+                    analytics.record(.pageTurned, content: analyticsContentType)
+                }
+                lastPage = currentPage
+            }
             record?.position = locator
             record?.progress = locator.totalProgression ?? 0
             store.update(bookID) { stored in
@@ -710,6 +790,7 @@ final class AppModel {
             chapterTitle: reader.chapterTitle
         )
         mutateAnnotations(bookID: bookID) { $0.append(annotation) }
+        analytics.record(.highlightCreated, content: analyticsContentType)
         lastAppliedHighlightColor = color
         reader.clearSelection()
         return annotation
@@ -741,6 +822,10 @@ final class AppModel {
             return
         }
 
+        let noteChanged = (record.annotations[index].note ?? "") != note
+        let analyticsEdit = noteChanged && !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? beginNoteAnalyticsEdit(bookID: bookID, annotationID: id, isNew: !record.annotations[index].hasNote)
+            : nil
         record.annotations[index].note = note.isEmpty ? nil : note
         if record.annotations[index].hasNote, record.annotations[index].color == .underline {
             record.annotations[index].color = .yellow
@@ -761,6 +846,7 @@ final class AppModel {
             try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
             self.record = record
             for sketch in removed { try store.drawingStore.deleteSketch(bookID: bookID, annotationID: id, sketchID: sketch.id) }
+            if let analyticsEdit { analytics.noteSuccessfulEdit(token: analyticsEdit, meaningful: true) }
             completion?(.success(()))
             // Refresh the note-dot on painted highlights without a full re-resolve.
             reader?.setAnnotations(record.annotations)
@@ -814,12 +900,14 @@ final class AppModel {
             chapterTitle: chapterTitle
         )
         record.annotations.append(annotation)
+        let analyticsEdit = beginNoteAnalyticsEdit(bookID: bookID, annotationID: annotation.id, isNew: true)
 
         do {
             try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
             self.record = record
             lastAppliedHighlightColor = color
             aiNoteTarget = .annotation(annotation.id)
+            analytics.noteSuccessfulEdit(token: analyticsEdit, meaningful: true)
             reader?.setAnnotations(record.annotations)
             completion(.success(annotation.id))
         } catch {
@@ -900,7 +988,15 @@ final class AppModel {
 
     func saveSketch(_ sketch: NoteSketch, checkpoint: SketchCheckpoint, note: String, annotationID: UUID) throws {
         guard let bookID = book?.bookID else { throw DrawingPersistenceError.missingBook }
-        guard annotation(with: annotationID) != nil else { throw NotePersistenceError.missingAnnotation }
+        guard let previous = annotation(with: annotationID) else { throw NotePersistenceError.missingAnnotation }
+        let sceneChanged = store.drawingStore.loadScene(bookID: bookID, annotationID: annotationID, sketchID: sketch.id) != checkpoint.scene
+        let isNewSketch = !previous.sketches.contains { $0.id == sketch.id }
+        let sketchEdit = (isNewSketch ? checkpoint.elementCount > 0 : sceneChanged)
+            ? beginSketchAnalyticsEdit(bookID: bookID, annotationID: annotationID, sketchID: sketch.id, isNew: isNewSketch)
+            : nil
+        let noteEdit = (previous.note ?? "") != note && !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            ? beginNoteAnalyticsEdit(bookID: bookID, annotationID: annotationID, isNew: !previous.hasNote)
+            : nil
         try store.drawingStore.replaceSketch(scene: checkpoint.scene, preview: checkpoint.preview, bookID: bookID, annotationID: annotationID, sketchID: sketch.id)
         try store.updateAndFlush(bookID) { record in
             guard let index = record.annotations.firstIndex(where: { $0.id == annotationID }) else { return }
@@ -916,6 +1012,8 @@ final class AppModel {
         }
         record = store.record(for: bookID)
         if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
+        if let sketchEdit { analytics.noteSuccessfulEdit(token: sketchEdit, meaningful: true) }
+        if let noteEdit { analytics.noteSuccessfulEdit(token: noteEdit, meaningful: true) }
     }
 
     func renameSketch(_ sketchID: UUID, title: String, note: String, annotationID: UUID) throws {

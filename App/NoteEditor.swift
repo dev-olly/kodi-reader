@@ -129,7 +129,10 @@ struct NoteEditor: View {
             guard didLoad else { return }
             scheduleAutosave(newValue)
         }
-        .onChange(of: mode) { _, newValue in
+        .onChange(of: mode) { oldValue, newValue in
+            if oldValue == .draw, newValue != .draw {
+                model.endSketchEditing(annotation.id, session: noteSession)
+            }
             onDrawActiveChanged?(newValue == .draw)
         }
         .onChange(of: isDark) { _, newValue in
@@ -551,6 +554,7 @@ struct NoteEditor: View {
     }
 
     private func activateSketch(_ sketch: NoteSketch, scene: Data?) {
+        model.endSketchEditing(annotation.id, session: noteSession)
         drawingWork?.cancel()
         drawingController.tearDown()
         drawingController = ExcalidrawController()

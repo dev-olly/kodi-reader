@@ -20,93 +20,45 @@ struct HighlightPalette: View {
     @State private var copyGeneration = 0
 
     var body: some View {
+        ViewThatFits(in: .horizontal) {
+            palette(compact: false)
+            palette(compact: true)
+        }
+        .shadow(radius: 8, y: 3)
+    }
+
+    private func palette(compact: Bool) -> some View {
         PointerCursorContainer {
-            HStack(spacing: 10) {
-                ForEach(HighlightColor.allCases, id: \.self) { color in
-                    Button { onPick(color) } label: {
-                        swatch(for: color)
-                            .padding(3)
-                            .overlay {
-                                if currentColor == color {
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .strokeBorder(.primary, lineWidth: 1.5)
-                                }
+            Group {
+                if compact {
+                    VStack(spacing: 10) {
+                        HStack(spacing: 10) {
+                            colorButtons
+                            Spacer(minLength: 10)
+                            dismissButton
+                        }
+                        Divider()
+                        HStack(spacing: 10) {
+                            actionButtons
+                            if onDelete != nil {
+                                Divider().frame(height: 20)
+                                removeButton
                             }
+                        }
                     }
-                    .buttonStyle(.plain)
-                    .help(color.displayName)
-                    .accessibilityLabel(color.displayName + " highlight")
-                }
-
-                Divider().frame(height: 20)
-
-                Button(action: onAddNote) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "text.badge.plus")
-                        Text(hasNote ? "Edit Note" : "Note")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .help(currentColor == nil ? "Highlight and add a note" : "Open note for this highlight")
-
-                Button(action: onAskAI) {
-                    HStack(spacing: 4) {
-                        Image(systemName: "sparkles")
-                        Text("Ask AI")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                }
-                .buttonStyle(.plain)
-                .help(currentColor == nil ? "Ask AI about this selection" : "Ask AI about this highlight")
-
-                Button(action: copyTapped) {
-                    HStack(spacing: 4) {
-                        Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                        Text(copied ? "Copied" : "Copy")
-                    }
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(copied ? Color.secondary : Color.primary)
-                }
-                .buttonStyle(.plain)
-                .help(copied ? "Copied to clipboard" : currentColor == nil ? "Copy selected text" : "Copy highlighted text")
-                .overlay(alignment: .bottom) {
-                    if copied {
-                        Text("Copied to clipboard")
-                            .font(.caption)
-                            .foregroundStyle(.primary)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(.regularMaterial, in: .rect(cornerRadius: 6))
-                            .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
-                            .fixedSize()
-                            .offset(y: 22)
-                            .transition(.opacity.combined(with: .scale(scale: 0.96)))
-                            .allowsHitTesting(false)
+                } else {
+                    HStack(spacing: 10) {
+                        colorButtons
+                        Divider().frame(height: 20)
+                        actionButtons
+                        if onDelete != nil {
+                            Divider().frame(height: 20)
+                            removeButton
+                        }
+                        Divider().frame(height: 20)
+                        dismissButton
                     }
                 }
-
-                if let onDelete {
-                    Divider().frame(height: 20)
-
-                    Button(action: onDelete) {
-                        Image(systemName: "trash")
-                            .font(.system(size: 12))
-                    }
-                    .buttonStyle(.plain)
-                    .help(hasAttachedContent ? "Delete highlight and its note or drawing" : "Delete highlight")
-                    .accessibilityLabel(hasAttachedContent ? "Delete highlight and its note or drawing" : "Delete highlight")
-                }
-
-                Divider().frame(height: 20)
-
-                Button { onDismiss() } label: {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .help("Dismiss")
             }
             .padding(.horizontal, 14)
             .padding(.vertical, 10)
@@ -115,7 +67,91 @@ struct HighlightPalette: View {
             .padding(.bottom, copied ? 26 : 0)
             .animation(.easeInOut(duration: 0.15), value: copied)
         }
-        .shadow(radius: 8, y: 3)
+        .fixedSize()
+    }
+
+    private var colorButtons: some View {
+        ForEach(HighlightColor.allCases, id: \.self) { color in
+            Button { onPick(color) } label: {
+                swatch(for: color)
+                    .padding(3)
+                    .overlay {
+                        if currentColor == color {
+                            RoundedRectangle(cornerRadius: 5)
+                                .strokeBorder(.primary, lineWidth: 1.5)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+            .help(color.displayName)
+            .accessibilityLabel(color.displayName + " highlight")
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        Button(action: onAddNote) {
+            Label(hasNote ? "Edit Note" : "Note", systemImage: "text.badge.plus")
+                .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .help(currentColor == nil ? "Highlight and add a note" : "Open note for this highlight")
+
+        Button(action: onAskAI) {
+            Label("Ask AI", systemImage: "sparkles")
+                .font(.system(size: 12, weight: .medium))
+        }
+        .buttonStyle(.plain)
+        .help(currentColor == nil ? "Ask AI about this selection" : "Ask AI about this highlight")
+
+        Button(action: copyTapped) {
+            Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc")
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(copied ? Color.secondary : Color.primary)
+        }
+        .buttonStyle(.plain)
+        .help(copied ? "Copied to clipboard" : currentColor == nil ? "Copy selected text" : "Copy highlighted text")
+        .overlay(alignment: .bottom) {
+            if copied {
+                Text("Copied to clipboard")
+                    .font(.caption)
+                    .foregroundStyle(.primary)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 6))
+                    .shadow(color: .black.opacity(0.12), radius: 3, y: 1)
+                    .fixedSize()
+                    .offset(y: 22)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+                    .allowsHitTesting(false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var removeButton: some View {
+        if let onDelete {
+            Button(action: onDelete) {
+                Label(hasAttachedContent ? "Delete" : "Clear Highlight",
+                      systemImage: hasAttachedContent ? "trash" : "eraser")
+                    .font(.system(size: 12, weight: .medium))
+            }
+            .buttonStyle(.plain)
+            .help(hasAttachedContent ? "Delete highlight and its note or drawing" : "Clear this highlight")
+            .accessibilityLabel(hasAttachedContent ? "Delete highlight and its note or drawing" : "Clear Highlight")
+            .accessibilityIdentifier("remove-highlight")
+        }
+    }
+
+    private var dismissButton: some View {
+        Button(action: onDismiss) {
+            Image(systemName: "xmark")
+                .font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary)
+        }
+        .buttonStyle(.plain)
+        .help("Dismiss")
+        .accessibilityLabel("Dismiss highlight toolbar")
     }
 
     private func copyTapped() {

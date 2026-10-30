@@ -162,6 +162,8 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     public var hyphenated: Bool = true
     public var twoPageSpread: Bool = true
     public var animatePageTurns: Bool = true
+    /// Opt into daily progress on Home and in the reader toolbar.
+    public var showReadingProgress: Bool = false
     /// Sheet keeps the current modal editor; sidebar docks it in the inspector.
     public var noteEditorPlacement: NoteEditorPlacement = .sidebar
 
@@ -236,7 +238,7 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
     enum CodingKeys: String, CodingKey {
         case theme, font, fontSize, lineHeight, marginRatio
         case justified, hyphenated, twoPageSpread, animatePageTurns
-        case noteEditorPlacement
+        case noteEditorPlacement, showReadingProgress
     }
 
     public init(from decoder: Decoder) throws {
@@ -250,6 +252,7 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
         hyphenated = try container.decodeIfPresent(Bool.self, forKey: .hyphenated) ?? true
         twoPageSpread = try container.decodeIfPresent(Bool.self, forKey: .twoPageSpread) ?? true
         animatePageTurns = try container.decodeIfPresent(Bool.self, forKey: .animatePageTurns) ?? true
+        showReadingProgress = try container.decodeIfPresent(Bool.self, forKey: .showReadingProgress) ?? false
         noteEditorPlacement = try container.decodeIfPresent(
             NoteEditorPlacement.self,
             forKey: .noteEditorPlacement
@@ -267,6 +270,7 @@ public struct ReaderSettings: Codable, Equatable, Sendable {
         try container.encode(hyphenated, forKey: .hyphenated)
         try container.encode(twoPageSpread, forKey: .twoPageSpread)
         try container.encode(animatePageTurns, forKey: .animatePageTurns)
+        try container.encode(showReadingProgress, forKey: .showReadingProgress)
         try container.encode(noteEditorPlacement, forKey: .noteEditorPlacement)
     }
 }

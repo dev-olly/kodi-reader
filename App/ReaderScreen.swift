@@ -365,49 +365,45 @@ struct ReaderScreen: View {
     private var selectionPopover: some View {
         if let activeHighlight,
            let annotation = model.annotation(with: activeHighlight.id) {
-            HighlightPalette(
-                onPick: { model.changeColor($0, for: annotation.id) },
-                onAddNote: {
-                    self.activeHighlight = nil
-                    openNoteEditor(annotation, autofocus: !annotation.hasContent)
-                },
-                onAskAI: {
-                    self.activeHighlight = nil
-                    model.addAnnotationToChat(annotation)
-                },
-                onCopy: { copyToPasteboard(annotation.text) },
-                onDismiss: { self.activeHighlight = nil },
-                currentColor: annotation.visibleHighlightColor,
-                hasNote: annotation.hasNote,
-                hasAttachedContent: annotation.hasContent,
-                onDelete: {
-                    self.activeHighlight = nil
-                    deleteAnnotation(annotation.id)
-                }
-            )
-            .id(annotation.id)
-            .offset(
-                x: max(12, activeHighlight.rect.midX - 200),
-                y: max(12, activeHighlight.rect.maxY + 10)
-            )
+            HighlightPopoverLayout(anchor: activeHighlight.rect) {
+                HighlightPalette(
+                    onPick: { model.changeColor($0, for: annotation.id) },
+                    onAddNote: {
+                        self.activeHighlight = nil
+                        openNoteEditor(annotation, autofocus: !annotation.hasContent)
+                    },
+                    onAskAI: {
+                        self.activeHighlight = nil
+                        model.addAnnotationToChat(annotation)
+                    },
+                    onCopy: { copyToPasteboard(annotation.text) },
+                    onDismiss: { self.activeHighlight = nil },
+                    currentColor: annotation.visibleHighlightColor,
+                    hasNote: annotation.hasNote,
+                    hasAttachedContent: annotation.hasContent,
+                    onDelete: {
+                        self.activeHighlight = nil
+                        deleteAnnotation(annotation.id)
+                    }
+                )
+                .id(annotation.id)
+            }
             .transition(.scale(scale: 0.94).combined(with: .opacity))
         } else if let selection = reader.selection {
-            HighlightPalette(
-                onPick: { _ = model.addHighlight(color: $0) },
-                onAddNote: {
-                    addNote(from: selection)
-                },
-                onAskAI: {
-                    editingAnnotation = nil
-                    model.addSelectionToChat()
-                },
-                onCopy: { copyToPasteboard(selection.text) },
-                onDismiss: { reader.clearSelection() }
-            )
-            .offset(
-                x: max(12, selection.rect.midX - 200),
-                y: max(12, selection.rect.maxY + 10)
-            )
+            HighlightPopoverLayout(anchor: selection.rect) {
+                HighlightPalette(
+                    onPick: { _ = model.addHighlight(color: $0) },
+                    onAddNote: {
+                        addNote(from: selection)
+                    },
+                    onAskAI: {
+                        editingAnnotation = nil
+                        model.addSelectionToChat()
+                    },
+                    onCopy: { copyToPasteboard(selection.text) },
+                    onDismiss: { reader.clearSelection() }
+                )
+            }
             .transition(.scale(scale: 0.94).combined(with: .opacity))
         }
     }
@@ -656,6 +652,9 @@ struct ReaderScreen: View {
         }
 
         ToolbarItemGroup(placement: .primaryAction) {
+            if model.settings.showReadingProgress {
+                ReadingProgressToolbarButton()
+            }
             UpdateButton()
 
             Menu {

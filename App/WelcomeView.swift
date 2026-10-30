@@ -38,6 +38,9 @@ struct WelcomeView: View {
             }
             urlField
                 .frame(maxWidth: 520)
+            if model.settings.showReadingProgress {
+                ReadingProgressCard()
+            }
             Divider()
             if !model.recents.isEmpty {
                 recents

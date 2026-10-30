@@ -12,13 +12,112 @@ private final class MemoryAuthStorage: AuthLocalStorage, @unchecked Sendable {
     func remove(key: String) throws { lock.lock(); defer { lock.unlock() }; values[key] = nil }
 }
 
+extension AIAuthenticationTests {
+    func testAnalyticsCallbacksDistinguishCompletedFailedAndSignedOutRequests() async throws {
+        let signedOut = try chat(auth: AIAuthController(client: nil))
+        var signedOutEvents: [String] = []
+        signedOut.onRequestStarted = { _ in signedOutEvents.append("started") }
+        signedOut.onRequestCompleted = { _ in signedOutEvents.append("completed") }
+        signedOut.onRequestFailed = { _, _ in signedOutEvents.append("failed") }
+        signedOut.onRequestCancelled = { _ in signedOutEvents.append("cancelled") }
+        signedOut.input = "Question"
+        signedOut.send()
+        XCTAssertTrue(signedOutEvents.isEmpty)
+
+        let cases: [(Int, String, [String])] = [
+            (200, "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n", ["started", "completed"]),
+            (503, "{}", ["started", "failed"]),
+            (200, "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n", ["started", "failed"]),
+        ]
+        for (status, body, expected) in cases {
+            let auth = AIAuthController(client: try client(session: session()))
+            let controller = try chat(auth: auth, network: network(status: status, body: body))
+            var events: [String] = []
+            var requestIDs: [UUID] = []
+            controller.onRequestStarted = { requestIDs.append($0); events.append("started") }
+            controller.onRequestCompleted = { requestIDs.append($0); events.append("completed") }
+            controller.onRequestFailed = { id, _ in requestIDs.append(id); events.append("failed") }
+            controller.onRequestCancelled = { requestIDs.append($0); events.append("cancelled") }
+            controller.input = "Question"
+            controller.send()
+            try await settle(controller)
+            XCTAssertEqual(events, expected)
+            XCTAssertEqual(requestIDs.count, 2)
+            XCTAssertEqual(Set(requestIDs).count, 1)
+            controller.stop()
+            XCTAssertEqual(events, expected, "Stopping a finished stream must not create a cancellation")
+        }
+    }
+
+    func testAnalyticsDoesNotCountCancellationBeforeRequestStarts() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let controller = try chat(auth: auth, network: network(status: 200))
+        var events: [String] = []
+        controller.onRequestStarted = { _ in events.append("started") }
+        controller.onRequestCompleted = { _ in events.append("completed") }
+        controller.onRequestFailed = { _, _ in events.append("failed") }
+        controller.onRequestCancelled = { _ in events.append("cancelled") }
+        controller.input = "Question"
+        controller.send()
+        controller.stop()
+        try await settle(controller)
+        XCTAssertTrue(events.isEmpty)
+    }
+
+    func testAnalyticsCorrelationIsIndependentOfBillingAndUniquePerSend() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let controller = try chat(auth: auth, network: network(status: 200))
+        var billingIDs = Set<UUID>()
+        MockURLProtocol.handler = { request in
+            billingIDs.insert(try XCTUnwrap(UUID(uuidString: request.value(forHTTPHeaderField: "Idempotency-Key") ?? "")))
+            return (200, "data: {\"choices\":[{\"delta\":{\"content\":\"Answer\"}}]}\n\ndata: [DONE]\n\n")
+        }
+        var started: [UUID] = [], completed: [UUID] = []
+        controller.onRequestStarted = { started.append($0) }
+        controller.onRequestCompleted = { completed.append($0) }
+        controller.input = "Question"; controller.send(); try await settle(controller)
+        controller.input = "Follow up"; controller.send(); try await settle(controller)
+        XCTAssertEqual(started, completed)
+        XCTAssertEqual(Set(started).count, 2)
+        XCTAssertEqual(billingIDs.count, 2)
+        XCTAssertTrue(Set(started).isDisjoint(with: billingIDs), "Telemetry IDs must never join account-linked billing records")
+        XCTAssertTrue(Set(started).isDisjoint(with: Set(controller.messages.map(\.id))))
+        XCTAssertFalse(Set(started).contains(try XCTUnwrap(controller.activeThreadID)))
+    }
+
+    func testStartedRequestCancelledExactlyOnceWhenStoppedAndSwitched() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        let network = network(status: 200)
+        let controller = try chat(auth: auth, network: network)
+        MockURLProtocol.holdResponses = true
+        defer { MockURLProtocol.holdResponses = false }
+        var started: [UUID] = [], cancelled: [UUID] = [], other: [UUID] = []
+        controller.onRequestStarted = { started.append($0) }
+        controller.onRequestCancelled = { cancelled.append($0) }
+        controller.onRequestCompleted = { other.append($0) }
+        controller.onRequestFailed = { id, _ in other.append(id) }
+        controller.input = "Question"; controller.send()
+        let deadline = Date().addingTimeInterval(3)
+        while started.isEmpty && Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+        XCTAssertEqual(started.count, 1)
+        controller.stop()
+        controller.stop()
+        controller.newConversation()
+        try await Task.sleep(for: .milliseconds(20))
+        XCTAssertEqual(cancelled, started)
+        XCTAssertTrue(other.isEmpty)
+    }
+}
+
 private final class MockURLProtocol: URLProtocol, @unchecked Sendable {
     static var handler: ((URLRequest) throws -> (Int, String))?
+    static var holdResponses = false
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
             let (status, body) = try Self.handler!(request)
+            if Self.holdResponses { return }
             let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
                                            headerFields: ["Content-Type": "text/event-stream"])!
             client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)

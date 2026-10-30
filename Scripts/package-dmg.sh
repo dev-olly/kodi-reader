@@ -64,6 +64,34 @@ APP="${DERIVED}/Build/Products/${BUILD_CONFIGURATION}/${APP_NAME}.app"
 TEAM_ID="${KODI_TEAM_ID:-3FJF74RW5L}"
 SIGNING_IDENTITY="${KODI_SIGNING_IDENTITY:-Developer ID Application: Emmanuel Onyebueke (3FJF74RW5L)}"
 NOTARY_PROFILE="${KODI_NOTARY_PROFILE:-KodiReaderNotary}"
+LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
+BUILD_STARTED=0
+STAGING_STARTED=0
+
+# A failed build or packaging step must not leave document-handling apps for
+# Finder to rediscover. Only clean outputs this invocation started replacing;
+# preflight failures must preserve any existing app and staging directory.
+cleanup_loose_apps() {
+  local status=0
+  if [[ "$BUILD_STARTED" == 1 ]]; then
+    "$LSREGISTER" -u "$APP" || true
+    if rm -rf "$APP"; then BUILD_STARTED=0; else status=$?; fi
+  fi
+  if [[ "$STAGING_STARTED" == 1 ]]; then
+    "$LSREGISTER" -u "$STAGING/${APP_NAME}.app" || true
+    if rm -rf "$STAGING"; then STAGING_STARTED=0; else status=$?; fi
+  fi
+  return "$status"
+}
+finish_packaging() {
+  local status=$?
+  local cleanup_status=0
+  trap - EXIT
+  cleanup_loose_apps || cleanup_status=$?
+  if [[ "$status" == 0 ]]; then status=$cleanup_status; fi
+  exit "$status"
+}
+trap finish_packaging EXIT
 
 if ! security find-identity -v -p codesigning | grep -Fq "\"${SIGNING_IDENTITY}\""; then
   echo "Developer ID signing identity not found in the login keychain:" >&2
@@ -75,6 +103,7 @@ fi
 xcodegen generate
 
 build_app() {
+  BUILD_STARTED=1
   xcodebuild \
     -project "$PROJECT" \
     -scheme "$SCHEME" \
@@ -183,6 +212,7 @@ if [[ -d "$SPARKLE" ]]; then
     --preserve-metadata=entitlements "$APP"
 fi
 
+STAGING_STARTED=1
 rm -rf "$STAGING" "$OUT"
 mkdir -p "$STAGING" "$(dirname "$OUT")"
 ditto "$APP" "$STAGING/${APP_NAME}.app"
@@ -232,13 +262,11 @@ hdiutil create \
 codesign --force --timestamp --sign "$SIGNING_IDENTITY" "$OUT"
 codesign --verify --verbose=2 "$OUT"
 
-# The DMG is the distribution artifact; loose build/staging apps should never
-# be rediscovered by Finder as additional installed releases.
-LSREGISTER=/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister
-"$LSREGISTER" -u "$APP" "$STAGING/${APP_NAME}.app" || true
+# Keep metadata for appcast generation before removing the loose apps.
+# Failed DMG creation/signature checks leave the last successful metadata intact.
 mkdir -p .build
 cp "$STAGING/${APP_NAME}.app/Contents/Info.plist" .build/release-info.plist
-rm -rf "$STAGING" "$APP"
+cleanup_loose_apps
 
 if [[ "$NOTARIZE" -eq 1 ]]; then
   xcrun notarytool submit "$OUT" \

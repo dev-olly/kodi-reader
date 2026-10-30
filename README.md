@@ -31,6 +31,16 @@ the original file keeps its name, and reading data stays attached.
 
 ![Book reading](docs/screenshots/app-reading.png)
 
+### Daily reading goals
+Set a daily goal in **Settings → Reading**, from 5 minutes to 24 hours. Your
+goal and streak appear only in Settings by default. Turn on **Show reading goal
+and streak** to display them on Home and in the reader toolbar. Meeting the
+goal completes the day; you can keep reading, and changing the goal never
+removes an earned day. EPUBs, PDFs, and saved articles count while the reader
+is in front. Tracking pauses after five minutes without input, when you leave
+the reader, or when your Mac sleeps. History stays on this Mac and works with
+usage analytics turned off.
+
 ### Notes taking
 Text highlights in multiple colors, each with an attached note, stored alongside the book.
 
@@ -108,7 +118,13 @@ its assets, and the download link on both the apex and `www` domains.
   private iCloud database or hidden Google Drive app-data folder, using their
   respective storage allowance. EPUBs are read directly from their archives and PDFs
   remain byte-for-byte unchanged; Kodi annotations are stored separately.
-- There is no analytics or telemetry.
+- Release builds share limited usage analytics by default. Settings → Privacy
+  lets you turn this off and clear unsent events. A random installation ID,
+  app version, event type, and activity duration help measure active devices,
+  reading, and Ask AI use. Book titles, passages, questions, notes, email
+  addresses, and webpage URLs are not included or linked to these events.
+  Debug builds do not send analytics. See [analytics setup](docs/analytics.md)
+  for the private dashboard and deployment instructions.
 - **Ask AI** is opt-in. Quoted passages and chat are sent to the hosted Kodi AI
   proxy, which forwards requests to OpenAI. The OpenAI API key lives only on the
   server, never in the Mac app. Kodi AI uses a stronger default model tuned for
@@ -169,12 +185,16 @@ Debug builds use ad-hoc signing so they run locally without distribution
 credentials. Release builds require the project's Developer ID certificate.
 Ordinary builds omit Finder document handlers, including local Release builds.
 `package-dmg.sh` opts into EPUB/PDF registration for the distributed app and
-removes its loose app copies after creating the DMG. It preserves release metadata
+removes its loose app copies even if packaging fails. It preserves release metadata
 in `.build/release-info.plist` for appcast generation.
 After an installed release launches (including after a Sparkle update), it
-unregisters older or equal-version Kodi copies and registers itself. Newer copies
+unregisters development copies, missing bundles, and older or equal-version Kodi
+and legacy Folio copies, then registers itself. Newer copies in Applications
 are left alone. Sparkle replaces the previous installed release in place;
 registration cleanup does not delete other installations or reader data.
+Old generated app bundles that still declare EPUB/PDF support must be removed
+or archived as ZIPs once; merely unregistering a loose `.app` allows macOS to
+discover its document handlers again.
 On a machine with multiple Xcode versions, point the shell at the Xcode you want:
 
 ```sh

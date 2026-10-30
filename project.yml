@@ -35,8 +35,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.4.7"
-    CURRENT_PROJECT_VERSION: "13"
+    MARKETING_VERSION: "0.4.8"
+    CURRENT_PROJECT_VERSION: "16"
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
@@ -129,6 +129,8 @@ targets:
     platform: macOS
     sources:
       - path: Tests/AuthTests
+      - path: App/Analytics
+      - path: App/ReadingProgress.swift
       - path: App/AI/AICreditsController.swift
       - path: App/AI/AIFeatureFlags.swift
       - path: App/AI/AIAuthController.swift

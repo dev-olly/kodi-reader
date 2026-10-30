@@ -1,0 +1,10 @@
+{
+  "name": "kodi-reader-website",
+  "private": true,
+  "type": "module",
+  "engines": { "node": "24.x" },
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test server/*.test.mjs"
+  }
+}

@@ -374,6 +374,270 @@ final class ReadingMarkerTests: XCTestCase {
         XCTAssertNil(reader.readingMarker)
     }
 
+    func testEveryVisualLineAtNarrowWidthCanBeHoveredAndMarked() throws {
+        try assertEveryHyphenatedLineCanBeMarked(width: 420)
+    }
+
+    func testEveryVisualLineAtMediumWidthCanBeHoveredAndMarked() throws {
+        try assertEveryHyphenatedLineCanBeMarked(width: 540, plainPassage: true)
+    }
+
+    func testWideFirstGlyphCentersCanBeHoveredAndMarked() throws {
+        let reader = try makeReader(size: CGSize(width: 540, height: 700), fontSize: 32)
+        _ = evaluate(reader, """
+        (() => {
+          const paragraph = document.querySelector('p');
+          paragraph.id = 'marker-regression'; paragraph.style.textIndent = '0';
+          paragraph.innerHTML = 'Widespread appearances.<br/>Mighty heroes continue.';
+        })()
+        """)
+        _ = wait(timeout: 0.2) { false }
+        let lines = try allVisibleLineStarts(in: reader)
+        XCTAssertEqual(lines.count, 2)
+        for line in lines {
+            let x = try XCTUnwrap(line["glyphCenterX"] as? Double)
+            let y = try XCTUnwrap(line["y"] as? Double)
+            let left = try XCTUnwrap(line["left"] as? Double)
+            XCTAssertGreaterThan(x - left, 8, "Fixture must click beyond the previous fixed 8px band")
+            let expected = TextPosition(
+                elementPath: try XCTUnwrap(line["path"] as? [Int]),
+                offset: try XCTUnwrap(line["offset"] as? Int)
+            )
+            hover(reader, x: x, y: y)
+            XCTAssertTrue(wait(timeout: 0.4) { self.cueIsAtLine(reader, y: y) }, "Missing cue at wide glyph: \(line)")
+            click(reader, x: x, y: y)
+            XCTAssertTrue(wait(timeout: max(2, NSEvent.doubleClickInterval + 0.5)) {
+                reader.readingMarker?.start == expected
+            }, "Wide first-glyph center did not mark its line: \(line)")
+            XCTAssertTrue(wait(timeout: 0.3) { self.savedMarkerIsAtLine(reader, y: y) },
+                          "Saved flag must align with the actual wide glyph: \(line)")
+        }
+    }
+
+    func testMPlacementWorksAtEveryHyphenatedFirstGlyph() throws {
+        let reader = try makeHyphenatedReader(width: 540, plainPassage: true)
+        let lines = try allVisibleLineStarts(in: reader).filter { line in
+            guard let rects = line["firstGlyphRects"] as? [[String: Double]] else { return false }
+            return rects.count > 1 && rects.contains { ($0["width"] ?? 0) == 0 }
+        }
+        XCTAssertFalse(lines.isEmpty, "Fixture must include a hyphenated first glyph with a prior-line zero-width fragment")
+        for line in lines {
+            let x = try XCTUnwrap(line["glyphCenterX"] as? Double)
+            let y = try XCTUnwrap(line["y"] as? Double)
+            let expected = TextPosition(
+                elementPath: try XCTUnwrap(line["path"] as? [Int]),
+                offset: try XCTUnwrap(line["offset"] as? Int)
+            )
+            reader.toggleReadingMarkerPlacement()
+            XCTAssertTrue(reader.isPlacingReadingMarker)
+            click(reader, x: x, y: y)
+            XCTAssertTrue(wait(timeout: 0.5) { reader.readingMarker?.start == expected },
+                          "M placement failed at a hyphenated first glyph: \(line)")
+            XCTAssertFalse(reader.isPlacingReadingMarker)
+            XCTAssertTrue(wait(timeout: 0.3) { self.savedMarkerIsAtLine(reader, y: y) },
+                          "M placement flag must align with the actual glyph: \(line)")
+        }
+    }
+
+    func testShiftMReturnsToHyphenatedColumnBoundary() throws {
+        let reader = try makeReader(size: CGSize(width: 540, height: 780), fontSize: 26)
+        _ = evaluate(reader, """
+        (() => {
+          document.documentElement.lang = 'en';
+          const paragraph = document.querySelector('p');
+          paragraph.id = 'marker-regression'; paragraph.style.textIndent = '0';
+          paragraph.textContent = 'extra\\u00adordi\\u00adnary\\u00adap\\u00adpear\\u00adances\\u00adhe\\u00adroes\\u00ad'.repeat(60);
+        })()
+        """)
+        _ = wait(timeout: 0.25) { false }
+        let boundary = try XCTUnwrap(evaluate(reader, """
+        (() => {
+          const node = document.getElementById('marker-regression').firstChild, width = window.innerWidth;
+          let best = null;
+          for (let offset = 0; offset < node.length; offset++) {
+            if (node.textContent[offset] === '\\u00ad') continue;
+            const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
+            for (const rect of Array.from(range.getClientRects())) {
+              if (rect.width <= 0 || rect.height <= 0 || rect.left < width || rect.left >= 2 * width) continue;
+              if (!best || rect.top < best.top - 1 || (Math.abs(rect.top - best.top) < 1 && rect.left < best.left)) {
+                const caret = document.createRange(); caret.setStart(node, offset); caret.collapse(true);
+                const caretRect = caret.getBoundingClientRect();
+                let current = node, path = [];
+                while (current && current !== document.body) {
+                  path.unshift(Array.prototype.indexOf.call(current.parentNode.childNodes, current));
+                  current = current.parentNode;
+                }
+                best = { path: path, offset: offset, top: rect.top, left: rect.left,
+                  x: rect.left - width + rect.width / 3, y: rect.top + rect.height / 2,
+                  afterSoftHyphen: node.textContent[offset - 1] === '\\u00ad',
+                  caretLeft: caretRect.left, caretTop: caretRect.top,
+                  fragments: Array.from(range.getClientRects()).map(part => ({
+                    left: part.left, top: part.top, width: part.width, height: part.height
+                  })) };
+              }
+            }
+          }
+          __reader.state();
+          return best;
+        })()
+        """) as? [String: Any], "Fixture must continue into a second CSS column")
+        XCTAssertEqual(boundary["afterSoftHyphen"] as? Bool, true, "Column must begin after a discretionary hyphen: \(boundary)")
+        let expected = TextPosition(
+            elementPath: try XCTUnwrap(boundary["path"] as? [Int]),
+            offset: try XCTUnwrap(boundary["offset"] as? Int)
+        )
+        let x = try XCTUnwrap(boundary["x"] as? Double)
+        let y = try XCTUnwrap(boundary["y"] as? Double)
+        _ = evaluate(reader, "__reader.goToPage(1, false)")
+        XCTAssertTrue(wait { reader.page == 1 })
+        reader.toggleReadingMarkerPlacement()
+        click(reader, x: x, y: y)
+        XCTAssertTrue(wait(timeout: 0.5) { reader.readingMarker?.start == expected }, "Boundary M placement failed: \(boundary)")
+        XCTAssertTrue(savedMarkerIsAtLine(reader, y: y))
+
+        _ = evaluate(reader, "__reader.goToPage(2, false)")
+        XCTAssertTrue(wait { reader.page == 2 })
+        let window = try XCTUnwrap(window)
+        let monitor = PageTurnKeyMonitor.MonitorView()
+        monitor.controller = reader
+        window.contentView?.addSubview(monitor)
+        defer { monitor.tearDown(); monitor.removeFromSuperview() }
+        window.makeFirstResponder(window.contentView)
+        XCTAssertNil(monitor.keyEventHandler(try keyEvent(46, characters: "m", modifiers: .shift, in: window)))
+        XCTAssertTrue(wait(timeout: 2) { reader.page == 1 }, "Shift+M must use the glyph's column, not prior-column caret affinity: \(boundary)")
+        XCTAssertTrue(savedMarkerIsAtLine(reader, y: y))
+    }
+
+    private func makeHyphenatedReader(width: CGFloat, plainPassage: Bool = false) throws -> ReaderController {
+        let reader = try makeReader(size: CGSize(width: width, height: 780), fontSize: 26)
+        _ = evaluate(reader, """
+        (() => {
+          document.documentElement.lang = 'en';
+          const paragraph = document.querySelector('p');
+          paragraph.id = 'marker-regression'; paragraph.style.textIndent = '0';
+          if (\(plainPassage)) {
+            paragraph.textContent = 'Greatness appeals to the future. If today I can be firm enough to do right and disregard watching eyes, I must have done enough right before to defend me now. However that may be, do right now. Always disregard appearances, and you will always be able to do what is right. Strength of character builds up over time. All the past days of virtue contribute their health to this one. What gives the heroes of the senate and the battlefield that majesty which so fills the imagination? '.repeat(3);
+          } else {
+            paragraph.innerHTML = ('<span>Appear\\u00adances and </span><em>he\\u00adroes</em><span> are extraordinary manifestations of independent character. We recognize their responsibilities and possibilities in every circumstance. </span>').repeat(12);
+          }
+        })()
+        """)
+        _ = wait(timeout: 0.25) { false }
+        return reader
+    }
+
+    private func assertEveryHyphenatedLineCanBeMarked(width: CGFloat, plainPassage: Bool = false) throws {
+        let reader = try makeHyphenatedReader(width: width, plainPassage: plainPassage)
+        let lines = try allVisibleLineStarts(in: reader)
+        XCTAssertGreaterThan(lines.count, 8, "Fixture must exercise many independently chosen lines")
+        XCTAssertTrue(lines.contains { $0["continuesWord"] as? Bool == true }, "Fixture must include a wrapped or hyphenated word")
+        var failures: [String] = []
+        for (index, line) in lines.enumerated() {
+            let x = try XCTUnwrap(line["gutterX"] as? Double)
+            let y = try XCTUnwrap(line["y"] as? Double)
+            let expected = TextPosition(
+                elementPath: try XCTUnwrap(line["path"] as? [Int]),
+                offset: try XCTUnwrap(line["offset"] as? Int)
+            )
+            hover(reader, x: x, y: y)
+            if !wait(timeout: 0.3, { self.cueIsAtLine(reader, y: y) }) {
+                failures.append("Line \(index) has no hover cue: \(line)")
+            }
+            click(reader, x: x, y: y)
+            if !wait(timeout: 0.3, { reader.readingMarker?.start == expected }) {
+                failures.append("Line \(index) did not mark its first visible character: \(line); actual=\(String(describing: reader.readingMarker?.start))")
+            }
+            if !wait(timeout: 0.3, { self.savedMarkerIsAtLine(reader, y: y) }) {
+                failures.append("Line \(index) saved flag is not aligned with its first visible glyph: \(line)")
+            }
+        }
+        XCTAssertTrue(failures.isEmpty, "Line-start failures at width \(width):\n" + failures.joined(separator: "\n"))
+    }
+
+    /// Derive every visible line from actual character rectangles. Unlike the
+    /// original helper, this never skips a line because its caret or full-node
+    /// rectangle disagrees with its first glyph at a discretionary hyphen.
+    private func allVisibleLineStarts(in reader: ReaderController) throws -> [[String: Any]] {
+        try XCTUnwrap(evaluate(reader, """
+        (() => {
+          const paragraph = document.getElementById('marker-regression');
+          const walker = document.createTreeWalker(paragraph, NodeFilter.SHOW_TEXT), lines = [];
+          let node;
+          function pathOf(node) {
+            const path = []; let current = node;
+            while (current && current !== document.body) {
+              path.unshift(Array.prototype.indexOf.call(current.parentNode.childNodes, current));
+              current = current.parentNode;
+            }
+            return path;
+          }
+          function caretAt(x, y) {
+            const caret = document.caretRangeFromPoint(x, y);
+            if (!caret) return null;
+            const node = caret.startContainer, offset = caret.startOffset;
+            let glyph = null;
+            if (node.nodeType === Node.TEXT_NODE && node.length) {
+              const range = document.createRange(), start = Math.min(offset, node.length - 1);
+              range.setStart(node, start); range.setEnd(node, start + 1);
+              const rect = range.getBoundingClientRect();
+              glyph = { left: rect.left, top: rect.top, width: rect.width, height: rect.height };
+            }
+            return { path: pathOf(node), offset: offset, type: node.nodeType,
+              nearby: node.textContent.slice(Math.max(0, offset - 8), offset + 20), glyph: glyph };
+          }
+          while ((node = walker.nextNode())) {
+            for (let offset = 0; offset < node.length; offset++) {
+              if (/[\\s\\u00ad\\u200b]/.test(node.textContent[offset])) continue;
+              const range = document.createRange(); range.setStart(node, offset); range.setEnd(node, offset + 1);
+              for (const rect of Array.from(range.getClientRects())) {
+                if (rect.width <= 0 || rect.height <= 0 || rect.left < 0 || rect.right > window.innerWidth ||
+                    rect.top < 0 || rect.bottom > window.innerHeight) continue;
+                const y = rect.top + rect.height / 2;
+                let line = lines.find(candidate => Math.abs(candidate.y - y) < 2);
+                if (!line) {
+                  line = { left: Infinity, y: y }; lines.push(line);
+                }
+                if (rect.left < line.left - 0.1) {
+                  Object.assign(line, { left: rect.left, y: y, top: rect.top,
+                    gutterX: rect.left - 8, glyphCenterX: rect.left + rect.width / 2,
+                    path: pathOf(node), offset: offset, snippet: node.textContent.slice(offset, offset + 50),
+                    firstGlyphRects: Array.from(range.getClientRects()).map(part => ({
+                      left: part.left, top: part.top, width: part.width, height: part.height
+                    })),
+                    continuesWord: offset > 0 && /[A-Za-z\\u00ad]/.test(node.textContent[offset - 1]) && /[A-Za-z]/.test(node.textContent[offset]) });
+                }
+              }
+            }
+          }
+          return lines.sort((a, b) => a.y - b.y).map(line => Object.assign(line, {
+            gutterCaret: caretAt(line.gutterX, line.y), leadingCaret: caretAt(line.left + 0.5, line.y)
+          }));
+        })()
+        """) as? [[String: Any]])
+    }
+
+    private func cueIsAtLine(_ reader: ReaderController, y: Double) -> Bool {
+        evaluate(reader, """
+        (() => {
+          const cue = document.getElementById('reader-reading-marker-cue');
+          if (!cue) return false;
+          const rect = cue.getBoundingClientRect();
+          return Math.abs(rect.top + rect.height / 2 - \(y)) < 2;
+        })()
+        """) as? Bool == true
+    }
+
+    private func savedMarkerIsAtLine(_ reader: ReaderController, y: Double) -> Bool {
+        evaluate(reader, """
+        (() => {
+          const marker = document.getElementById('reader-reading-marker');
+          if (!marker) return false;
+          const rect = marker.getBoundingClientRect();
+          return Math.abs(rect.top + rect.height / 2 - \(y)) < 2;
+        })()
+        """) as? Bool == true
+    }
+
     private struct LineStartHit {
         let x: Double
         let glyphX: Double
@@ -450,12 +714,13 @@ final class ReadingMarkerTests: XCTestCase {
         evaluate(reader, "document.getElementById('reader-reading-marker-cue') !== null") as? Bool == true
     }
 
-    private func makeReader(size: CGSize = CGSize(width: 900, height: 700)) throws -> ReaderController {
+    private func makeReader(size: CGSize = CGSize(width: 900, height: 700), fontSize: Double = 19) throws -> ReaderController {
         let url = try CalibreFixture.writeEPUB()
         bookURL = url
         let book = try EPUBBook(fileURL: url)
         var settings = ReaderSettings()
         settings.animatePageTurns = false
+        settings.fontSize = fontSize
         let reader = ReaderController(settings: settings)
         controller = reader
         let view = reader.makeWebView(for: book)

@@ -21,6 +21,11 @@ final class ChatController {
 
     var onCreditsChanged: (() -> Void)?
     var onInsufficientCredits: (() -> Void)?
+    /// Semantic request lifecycle callbacks carry no question or response content.
+    var onRequestStarted: ((UUID) -> Void)?
+    var onRequestCompleted: ((UUID) -> Void)?
+    var onRequestFailed: ((UUID, Error) -> Void)?
+    var onRequestCancelled: ((UUID) -> Void)?
     /// Called after the conversation changes so AppModel can write the book record.
     var onPersist: (([ChatThread], UUID?) -> Void)?
     /// Live book metadata for the system prompt.
@@ -33,6 +38,8 @@ final class ChatController {
     @ObservationIgnored private let service: AIChatService
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var operationID: UUID?
+    /// This UUID is independent of the account-linked billing operation ID.
+    @ObservationIgnored private var analyticsRequestID: UUID?
 
     init(configStore: AIConfigStore, auth: AIAuthController, service: AIChatService = AIChatService()) {
         self.configStore = configStore
@@ -102,6 +109,7 @@ final class ChatController {
         operationID = operation
         streamTask = Task { [weak self] in
             guard let self else { return }
+            var requestStarted = false
             do {
                 let token = try await self.auth.accessToken()
                 guard self.operationID == operation, !Task.isCancelled else { return }
@@ -110,6 +118,10 @@ final class ChatController {
                 self.messages.append(userMessage)
                 self.messages.append(assistant)
                 self.persist()
+                let telemetryID = UUID()
+                self.analyticsRequestID = telemetryID
+                self.onRequestStarted?(telemetryID)
+                requestStarted = true
                 let stream = self.service.stream(
                     config: config,
                     accessToken: token,
@@ -125,12 +137,15 @@ final class ChatController {
                         self.messages[index].text += token
                     }
                 }
+                guard self.operationID == operation, !Task.isCancelled else { return }
+                self.finishAnalyticsRequest(.completed)
             } catch is CancellationError {
-                // Stop is intentional.
+                if self.operationID == operation { self.finishAnalyticsRequest(.cancelled) }
             } catch AIChatError.cancelled {
-                // Stop is intentional.
+                if self.operationID == operation { self.finishAnalyticsRequest(.cancelled) }
             } catch {
                 guard self.operationID == operation else { return }
+                if requestStarted { self.finishAnalyticsRequest(.failed(error)) }
                 if case AIChatError.insufficientCredits = error { self.onInsufficientCredits?() }
                 if case AIChatError.authRequired = error { self.auth.showingSignIn = true }
                 self.errorMessage = error.localizedDescription
@@ -163,12 +178,27 @@ final class ChatController {
     }
 
     func stop() {
+        finishAnalyticsRequest(.cancelled)
         if isStreaming { onCreditsChanged?() }
         operationID = nil
         streamTask?.cancel()
         streamTask = nil
         isStreaming = false
         persist()
+    }
+
+    private enum AnalyticsOutcome { case completed, failed(Error), cancelled }
+
+    private func finishAnalyticsRequest(_ outcome: AnalyticsOutcome) {
+        guard let id = analyticsRequestID else { return }
+        // Clear before invoking observers so re-entrant Stop or a late stream
+        // callback cannot emit a second terminal outcome.
+        analyticsRequestID = nil
+        switch outcome {
+        case .completed: onRequestCompleted?(id)
+        case .failed(let error): onRequestFailed?(id, error)
+        case .cancelled: onRequestCancelled?(id)
+        }
     }
 
     func newConversation() {

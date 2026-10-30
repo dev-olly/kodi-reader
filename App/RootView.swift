@@ -1,7 +1,70 @@
+import AppKit
 import EpubKit
 import ReaderUI
 import SwiftUI
 import UniformTypeIdentifiers
+
+/// Scope reading time to this window: Settings, minimized windows, and other
+/// apps should not accrue reading time just because a book remains open.
+private struct AnalyticsReadingWindowObserver: NSViewRepresentable {
+    var onChange: (Bool) -> Void
+    var onInteraction: () -> Void
+
+    func makeNSView(context: Context) -> MonitorView { MonitorView(onChange: onChange, onInteraction: onInteraction) }
+    func updateNSView(_ view: MonitorView, context: Context) {
+        view.onChange = onChange
+        view.onInteraction = onInteraction
+    }
+    static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.stopObserving() }
+
+    final class MonitorView: NSView {
+        var onChange: (Bool) -> Void
+        var onInteraction: () -> Void
+        private var tokens: [NSObjectProtocol] = []
+        private var inputMonitor: Any?
+
+        init(onChange: @escaping (Bool) -> Void, onInteraction: @escaping () -> Void) {
+            self.onChange = onChange
+            self.onInteraction = onInteraction
+            super.init(frame: .zero)
+        }
+        required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            stopObserving()
+            guard let window else { return }
+            let names: [Notification.Name] = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                NSWindow.didChangeOcclusionStateNotification]
+            tokens = names.map { name in
+                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
+                    MainActor.assumeIsolated { self?.publish() }
+                }
+            }
+            inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] event in
+                if let self, event.window === self.window, self.window?.isKeyWindow == true {
+                    self.onInteraction()
+                }
+                return event
+            }
+            publish()
+        }
+
+        func stopObserving() {
+            tokens.forEach(NotificationCenter.default.removeObserver)
+            tokens.removeAll()
+            if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
+            inputMonitor = nil
+            onChange(false)
+        }
+
+        private func publish() {
+            guard let window else { onChange(false); return }
+            onChange(window.isVisible && window.isKeyWindow && !window.isMiniaturized)
+        }
+    }
+}
 
 struct RootView: View {
     @Environment(AppModel.self) private var model
@@ -30,6 +93,12 @@ struct RootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(model.settings.theme.uiBackground)
+        .background {
+            AnalyticsReadingWindowObserver(onChange: {
+                model.analytics.setReadingWindowVisible($0)
+                model.readingProgress.setReadingWindowVisible($0)
+            }, onInteraction: { model.readingProgress.recordInteraction() })
+        }
         .foregroundStyle(model.settings.theme.uiForeground)
         .tint(model.settings.theme.accent)
         .preferredColorScheme(model.settings.theme.colorScheme)
@@ -56,6 +125,12 @@ struct RootView: View {
         .onChange(of: phase) { _, phase in
             if phase == .active { Task { await model.aiCredits.refresh() } }
         }
+        .onChange(of: analyticsReadingContent, initial: true) { _, content in
+            model.analytics.setReadingContent(content)
+        }
+        .onChange(of: isReadingGoalEligible, initial: true) { _, eligible in
+            model.readingProgress.setReaderEligible(eligible)
+        }
         .sheet(isPresented: Binding(get: { !needsAuthWelcome && model.aiAuth.showingSignIn }, set: { model.aiAuth.showingSignIn = $0 })) {
             AISignInSheet(auth: model.aiAuth)
         }
@@ -72,6 +147,23 @@ struct RootView: View {
     }
 
     private var needsAuthWelcome: Bool { !authWelcomeSeen && !model.aiAuth.isSignedIn }
+
+    private var isReadingGoalEligible: Bool {
+        guard !needsAuthWelcome, !model.isBrowsing, model.book != nil,
+              let reader = model.reader else { return false }
+        return model.hasReadyReader && !reader.isLoading && reader.errorMessage == nil
+    }
+
+    /// A stable root observer avoids duplicated starts from rebuilt reader views.
+    private var analyticsReadingContent: AnalyticsContentType? {
+        guard !needsAuthWelcome else { return nil }
+        if let browser = model.webBrowser {
+            return !browser.isLoading && browser.estimatedProgress >= 1 && browser.errorMessage == nil && browser.currentURL != nil ? .web : nil
+        }
+        guard let book = model.book, let reader = model.reader,
+              model.hasReadyReader, reader.errorMessage == nil else { return nil }
+        return model.record?.sourceURL != nil ? .web : (book.kind == .pdf ? .pdf : .epub)
+    }
 
     private func loadDroppedBook(from providers: [NSItemProvider]) -> Bool {
         guard let provider = providers.first else { return false }

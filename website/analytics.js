@@ -1,0 +1,708 @@
+const $ = (id) => document.getElementById(id);
+const number = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });
+const shortDate = new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+const longDate = new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric', timeZone: 'UTC' });
+const time = new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit', timeZone: 'UTC', hour12: false });
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const COLORS = { active_users: '#416f4d', readers: '#a8bb84', ai_users: '#c3a368', new_accounts: '#416f4d', ai_requests: '#a8bb84', ai_accounts: '#c3a368' };
+const SERIES_NAMES = { active_users: 'Active devices', readers: 'Reader devices', ai_users: 'AI devices', new_accounts: 'New registrations', ai_requests: 'AI requests', ai_accounts: 'AI accounts' };
+const DEVICE_SERIES = ['active_users', 'readers', 'ai_users'];
+const SERVER_SERIES = ['new_accounts', 'ai_requests', 'ai_accounts'];
+const LOCAL_HOST = location.hostname === '127.0.0.1' || location.hostname === 'localhost';
+const EVENT_NAMES = {
+  app_active: 'App opened', reading_started: 'Reader engagement started', reading_heartbeat: 'Reader engagement',
+  page_turned: 'Page turns', book_imported: 'Book imports', highlight_created: 'Highlights',
+  note_created: 'New notes', note_edit_session: 'Note editing sessions', sketch_created: 'New drawings', sketch_edit_session: 'Drawing editing sessions', note_saved: 'Legacy note autosaves', sketch_saved: 'Legacy drawing autosaves', web_opened: 'Web reader opens',
+  account_created: 'Account registered', ai_request_charged: 'AI requests charged', ai_request_released: 'AI requests refunded', new_accounts: 'New registrations', new_account: 'New registration', ai_requests: 'AI requests', ai_request_reserved: 'AI requests reserved', ai_charged: 'Charged AI requests', ai_released: 'Refunded AI requests', ai_request_started: 'AI requests started', ai_request_completed: 'AI requests completed', ai_request_failed: 'AI requests failed', ai_request_cancelled: 'AI requests stopped',
+};
+const FEATURE_NAMES = ['book_imported', 'page_turned', 'highlight_created', 'note_created', 'note_edit_session', 'sketch_created', 'sketch_edit_session', 'web_opened'];
+const SEMANTIC_FEATURES = new Set(['note_created', 'note_edit_session', 'sketch_created', 'sketch_edit_session']);
+const LEGACY_FEATURES = ['note_saved', 'sketch_saved'];
+const countryNames = typeof Intl.DisplayNames === 'function' ? new Intl.DisplayNames(undefined, { type: 'region' }) : null;
+const state = { token: '', days: 30, data: null, controller: null, request: 0, loading: false, lastAttempt: 0, error: false, timer: null, snapshotMode: false, chartSource: 'device', series: new Set(DEVICE_SERIES) };
+
+function setText(id, value) { $(id).textContent = value; }
+function count(value) { return number.format(value); }
+function duration(seconds) {
+  if (seconds === 0) return '0m';
+  if (seconds < 60) return '<1m';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${count(minutes)}m`;
+  const hours = Math.floor(minutes / 60);
+  const remainder = minutes % 60;
+  return remainder === 0 ? `${count(hours)}h` : `${count(hours)}h ${remainder}m`;
+}
+function percent(value, total) { return total > 0 ? Math.min(100, value / total * 100) : 0; }
+function formatPercent(value) { return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 1 }).format(value)}%`; }
+function eventName(name) { return EVENT_NAMES[name] || String(name).replaceAll('_', ' '); }
+function date(value) { return new Date(value.length === 10 ? `${value}T00:00:00Z` : value); }
+function notice(message = '', kind = '') {
+  const node = $('notice');
+  node.textContent = message;
+  node.dataset.kind = kind;
+  node.hidden = !message;
+}
+function status(label, type) {
+  setText('connection-label', label);
+  $('connection-dot').dataset.status = type;
+}
+function cell(value, tag = 'td') {
+  const node = document.createElement(tag);
+  node.textContent = value;
+  return node;
+}
+function emptyTable(body, columns, message) {
+  const row = document.createElement('tr');
+  const item = cell(message);
+  item.colSpan = columns;
+  item.className = 'table-empty';
+  row.append(item);
+  body.replaceChildren(row);
+}
+function sectionEmpty(parent, text) {
+  const empty = document.createElement('div');
+  empty.className = 'section-empty';
+  empty.textContent = text;
+  parent.replaceChildren(empty);
+}
+function svgElement(type, attrs = {}, text) {
+  const node = document.createElementNS(SVG_NS, type);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+  if (text !== undefined) node.textContent = text;
+  return node;
+}
+function setAccessVisible(visible) {
+  $('access-panel').hidden = !visible;
+  $('sign-out').hidden = !state.token;
+  $('mobile-lock').hidden = !state.token;
+}
+function setLoading(loading) {
+  state.loading = loading;
+  document.body.classList.toggle('is-loading', loading);
+  $('refresh').disabled = loading || (!state.token && !state.snapshotMode);
+  $('refresh').dataset.loading = String(loading);
+  $('unlock').disabled = loading;
+  $('unlock').firstChild.textContent = loading ? 'Connecting ' : 'Unlock ';
+  $('admin-token').disabled = loading;
+  $('export').disabled = loading || !state.data;
+  $('main').setAttribute('aria-busy', String(loading));
+}
+function resetValues() {
+  configureSourceLayout();
+  for (const id of ['account-total', 'account-signed-in', 'account-ai', 'account-requests', 'returning-devices', 'ai-cancelled']) setText(id, '—');
+  for (const id of ['account-ai-change', 'account-requests-change']) { $(id).removeAttribute('title'); setText(id, 'From server records in this period'); }
+  for (const node of document.querySelectorAll('.is-unmeasured')) node.classList.remove('is-unmeasured');
+  for (const id of ['metric-active', 'metric-readers', 'metric-ai', 'metric-time', 'new-devices', 'total-sessions', 'total-ai-requests', 'adoption-percent', 'reading-total', 'reading-average', 'reading-adoption', 'ai-requests', 'ai-completed', 'ai-failed', 'ai-unresolved']) setText(id, '—');
+  const defaults = { active: 'Distinct installations in this period', readers: 'Distinct devices using the reader', ai: 'Distinct devices making AI requests', time: 'Reading, notes, drawing, and Ask AI' };
+  for (const [key, text] of Object.entries(defaults)) {
+    setText(`change-${key}`, text);
+    delete $(`change-${key}`).dataset.direction;
+    $(`change-${key}`).removeAttribute('title');
+  }
+  setText('date-range', `Last ${state.days} days · UTC`);
+  setText('updated-at', state.token ? 'Waiting for analytics' : 'Connect to view usage');
+  setText('adoption-note', 'Share of active devices that used AI.');
+  setText('ai-device-note', 'Across devices that asked Kodi AI for help.');
+  setText('ai-success', '— outcomes');
+  setText('chart-total', '—');
+  setText('footer-status', 'PRIVATE · KODI READER');
+  $('adoption-bar').style.width = '0%';
+  $('adoption-track').setAttribute('aria-label', 'AI adoption unavailable');
+  $('ai-completed-bar').style.width = '0%';
+  $('ai-failed-bar').style.width = '0%';
+  $('ai-cancelled-bar').style.width = '0%';
+  $('ai-unknown-bar').style.width = '0%';
+  $('outcome-track').setAttribute('aria-label', 'AI request outcomes unavailable');
+  sectionEmpty($('feature-list'), 'Unlock the dashboard to see feature activity.');
+  sectionEmpty($('version-list'), 'Version distribution appears with app activity.');
+  sectionEmpty($('country-list'), 'Unlock the dashboard to see country totals.');
+  $('legacy-features').hidden = true;
+  setText('history-ledger', '');
+  emptyTable($('recent-table'), 3, 'Activity appears as events reach the server.');
+  emptyTable($('daily-table'), 6, 'Unlock to view daily data.');
+  renderChart();
+  $('export').disabled = true;
+}
+function lock({ message = '', focus = true } = {}) {
+  state.token = '';
+  state.snapshotMode = false;
+  state.data = null;
+  state.error = false;
+  state.request += 1;
+  state.controller?.abort();
+  state.controller = null;
+  clearInterval(state.timer);
+  state.timer = null;
+  $('admin-token').value = '';
+  setLoading(false);
+  resetValues();
+  setAccessVisible(true);
+  status('Private dashboard', 'locked');
+  notice(message, message ? 'error' : '');
+  if (focus) $('admin-token').focus();
+}
+function validateData(input, requestedDays) {
+  if (!input || input.days !== requestedDays || !input.summary || !Array.isArray(input.daily) || !Array.isArray(input.features) || !Array.isArray(input.versions) || !Array.isArray(input.recent) || !Number.isFinite(date(input.generated_at || '').getTime())) throw new Error('invalid_data');
+  const nonnegative = (value) => typeof value === 'number' && Number.isFinite(value) && value >= 0;
+  for (const key of ['active_users', 'readers', 'ai_users', 'reading_seconds', 'new_users', 'sessions', 'ai_requests', 'ai_completed', 'ai_failed']) {
+    if (!input.summary[key] || !nonnegative(input.summary[key].value) || !nonnegative(input.summary[key].previous)) throw new Error('invalid_data');
+  }
+  if (!input.period || !Number.isFinite(date(input.period.start || '').getTime()) || !Number.isFinite(date(input.period.end || '').getTime())) throw new Error('invalid_data');
+  for (const item of input.daily) {
+    if (typeof item.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(item.date) || !Number.isFinite(date(item.date).getTime()) || !['active_users', 'readers', 'ai_users', 'reading_seconds', 'ai_requests'].every((key) => nonnegative(item[key]))) throw new Error('invalid_data');
+  }
+  for (const item of input.features) if (typeof item.name !== 'string' || !nonnegative(item.count) || !nonnegative(item.users)) throw new Error('invalid_data');
+  for (const item of input.versions) if (typeof item.version !== 'string' || !nonnegative(item.users)) throw new Error('invalid_data');
+  for (const item of input.recent) if (typeof item.name !== 'string' || typeof item.date !== 'string' || !Number.isFinite(date(item.date).getTime()) || !nonnegative(item.count)) throw new Error('invalid_data');
+  if (input.summary.returning_users && (!nonnegative(input.summary.returning_users.value) || !nonnegative(input.summary.returning_users.previous))) throw new Error('invalid_data');
+  if (input.ai_outcomes) {
+    for (const key of ['started', 'completed', 'failed', 'cancelled', 'unknown', 'legacy_started']) if (!nonnegative(input.ai_outcomes[key])) throw new Error('invalid_data');
+    const outcomes = input.ai_outcomes;
+    if (outcomes.completed + outcomes.failed + outcomes.cancelled + outcomes.unknown !== outcomes.started || outcomes.legacy_started > outcomes.unknown) throw new Error('invalid_data');
+  }
+  if (input.coverage) {
+    if (!['first_event_at', 'last_received_at'].every(key => input.coverage[key] === null || (typeof input.coverage[key] === 'string' && Number.isFinite(date(input.coverage[key]).getTime()))) || !nonnegative(input.coverage.instrumented_devices) || !nonnegative(input.coverage.legacy_devices) || typeof input.coverage.semantic_features_available !== 'boolean') throw new Error('invalid_data');
+  }
+  if (input.countries !== undefined) {
+    if (!Array.isArray(input.countries) || input.countries.length > 260) throw new Error('invalid_data');
+    const seen = new Set();
+    for (const country of input.countries) {
+      if ((country.country_code !== null && (typeof country.country_code !== 'string' || !/^[A-Z]{2}$/.test(country.country_code))) || !nonnegative(country.devices) || seen.has(country.country_code)) throw new Error('invalid_data');
+      seen.add(country.country_code);
+    }
+    if (input.countries.reduce((sum, row) => sum + row.devices, 0) !== input.summary.active_users.value) throw new Error('invalid_data');
+  }
+  if (input.server_metrics) {
+    const server = input.server_metrics;
+    if (!server.totals || !server.summary || !Array.isArray(server.daily) || !Array.isArray(server.recent)) throw new Error('invalid_data');
+    for (const key of ['registered_accounts', 'credit_accounts', 'ai_accounts', 'ai_requests', 'ai_charged']) if (!nonnegative(server.totals[key])) throw new Error('invalid_data');
+    for (const key of ['new_accounts', 'signed_in_accounts', 'ai_accounts', 'ai_requests', 'ai_charged', 'ai_released']) if (!nonnegative(server.summary[key]?.value) || !nonnegative(server.summary[key]?.previous)) throw new Error('invalid_data');
+    for (const day of server.daily) if (typeof day.date !== 'string' || !Number.isFinite(date(day.date).getTime()) || !['new_accounts', 'ai_accounts', 'ai_requests', 'ai_charged', 'ai_released'].every((key) => nonnegative(day[key]))) throw new Error('invalid_data');
+    for (const event of server.recent) if (typeof event.name !== 'string' || typeof event.date !== 'string' || !Number.isFinite(date(event.date).getTime()) || !nonnegative(event.count)) throw new Error('invalid_data');
+  }
+  if (input.data_source?.kind === 'local_snapshot' && (!LOCAL_HOST || !input.server_metrics || typeof input.data_source.captured_at !== 'string' || !Number.isFinite(date(input.data_source.captured_at).getTime()))) throw new Error('invalid_data');
+  return input;
+}
+function failureMessage(code, statusCode) {
+  if (code === 'not_configured') return 'Analytics is not configured on the server yet. Set ANALYTICS_ADMIN_TOKEN and the analytics database connection, then refresh.';
+  if (code === 'storage_unavailable') return 'The analytics database is unavailable. Check the server configuration and try again.';
+  if (statusCode === 429) return 'The server is receiving too many requests. Please wait a moment and refresh.';
+  if (statusCode === 404) return 'The analytics endpoint is unavailable. Deploy the analytics API with this dashboard, then refresh.';
+  return 'Could not load analytics. Check your connection and the analytics server, then refresh.';
+}
+async function load({ snapshot = state.snapshotMode, bootstrap = false } = {}) {
+  if ((!state.token && !snapshot) || (snapshot && !LOCAL_HOST)) return;
+  state.controller?.abort();
+  const controller = new AbortController();
+  state.controller = controller;
+  const request = ++state.request;
+  const requestedDays = state.days;
+  const token = state.token;
+  state.lastAttempt = Date.now();
+  state.error = false;
+  setLoading(true);
+  status(snapshot ? 'Reading database snapshot' : state.data ? 'Refreshing analytics' : 'Connecting', 'loading');
+  notice();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  let timedOut = false;
+  controller.signal.addEventListener('abort', () => { timedOut = true; }, { once: true });
+  try {
+    const endpoint = snapshot ? 'local-snapshot' : 'dashboard';
+    const headers = { Accept: 'application/json', ...(!snapshot ? { Authorization: `Bearer ${token}` } : {}) };
+    const response = await fetch(`/api/analytics/${endpoint}?days=${requestedDays}`, { method: 'GET', headers, credentials: 'omit', cache: 'no-store', signal: controller.signal, referrerPolicy: 'no-referrer' });
+    if (request !== state.request) return;
+    if (bootstrap && !response.ok) { status('Private dashboard', 'locked'); setAccessVisible(true); return; }
+    if (!snapshot && (response.status === 401 || response.status === 403)) {
+      lock({ message: 'That admin token was not accepted. Enter the configured token to unlock the dashboard.' });
+      return;
+    }
+    let payload;
+    try { payload = await response.json(); } catch { throw new Error(response.ok ? 'invalid_data' : 'server_error'); }
+    if (request !== state.request) return;
+    if (!response.ok) {
+      const error = new Error(failureMessage(payload?.error?.code, response.status));
+      error.publicMessage = true;
+      throw error;
+    }
+    const data = validateData(payload, requestedDays);
+    if ((snapshot && data.data_source?.kind !== 'local_snapshot') || (!snapshot && data.data_source?.kind === 'local_snapshot')) throw new Error('invalid_data');
+    state.data = data;
+    state.snapshotMode = snapshot;
+    setAccessVisible(false);
+    render();
+    status(snapshot ? 'Database snapshot' : 'Connected · auto-refresh', snapshot ? 'snapshot' : 'live');
+    if (!snapshot && data.summary.active_users.value === 0) notice(hasTelemetry() ? 'No device activity was recorded in this period. The recorded totals are zero.' : 'App telemetry has not started yet. Reader engagement and feature usage will appear as analytics-enabled Kodi apps send activity.');
+    if (!snapshot && !state.timer) state.timer = setInterval(() => { if (!document.hidden && !state.loading && Date.now() - state.lastAttempt >= 60000) load(); }, 15000);
+  } catch (error) {
+    if (request !== state.request) return;
+    state.error = true;
+    if (bootstrap) { status('Private dashboard', 'locked'); setAccessVisible(true); return; }
+    const message = error.message === 'invalid_data' ? 'The server returned an unexpected analytics response. Check that the dashboard and API versions match.' : error.publicMessage ? error.message : timedOut ? 'The analytics request timed out. Check the server and refresh to try again.' : failureMessage();
+    const hasStaleData = Boolean(state.data);
+    notice(`${message}${hasStaleData ? ' Showing the last successfully loaded data below.' : ''}`, hasStaleData ? 'stale' : 'error');
+    status(hasStaleData ? 'Last data · refresh failed' : 'Unable to connect', 'error');
+    if (!hasStaleData && !snapshot) setAccessVisible(true);
+  } finally {
+    clearTimeout(timeout);
+    if (request === state.request) { state.controller = null; setLoading(false); }
+  }
+}
+function metric(id, data, formatter = count) {
+  setText(`metric-${id}`, formatter(data.value));
+  const target = $(`change-${id}`);
+  if (data.previous === 0) {
+    target.textContent = data.value > 0 ? 'New activity this period' : 'No change from the previous period';
+    target.dataset.direction = data.value > 0 ? 'up' : 'flat';
+  } else {
+    const delta = (data.value - data.previous) / data.previous * 100;
+    target.textContent = `${delta > 0 ? '↗ +' : delta < 0 ? '↘ −' : ''}${formatPercent(Math.abs(delta))} vs previous period`;
+    target.dataset.direction = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+  }
+  target.title = `Previous period: ${formatter(data.previous)}`;
+}
+function historicalLead() { return state.snapshotMode; }
+function configureSourceLayout() {
+  const server = historicalLead();
+  const hasHistory = Boolean(state.data?.server_metrics);
+  const target = server ? $('telemetry-mount') : $('main-kpis');
+  if ($('telemetry-kpis').parentNode !== target) target.append($('telemetry-kpis'));
+  const historyTarget = server ? $('main-kpis') : $('history-mount');
+  if ($('server-kpis').parentNode !== historyTarget) historyTarget.append($('server-kpis'));
+  $('server-kpis').hidden = !hasHistory && !server;
+  $('history-section').hidden = !hasHistory || server;
+  $('outcome-track').hidden = server || !state.data?.ai_outcomes;
+  $('ai-cancelled-group').hidden = server;
+  $('returning-row').hidden = server;
+  $('telemetry-section').hidden = !server;
+  $('source-banner').hidden = !server;
+  const nextSource = server ? 'server' : 'device';
+  const keys = server ? SERVER_SERIES : DEVICE_SERIES;
+  if (state.chartSource !== nextSource) { state.series = new Set(keys); state.chartSource = nextSource; }
+  const buttons = [...document.querySelectorAll('[data-series]')];
+  buttons.forEach((button, index) => {
+    button.dataset.series = keys[index];
+    button.setAttribute('aria-pressed', String(state.series.has(keys[index])));
+    button.lastChild.textContent = SERIES_NAMES[keys[index]];
+  });
+  setText('trend-heading', server ? 'Historical account & AI activity' : 'Daily app activity');
+  setText('trend-unit', server ? 'COUNTS / DAY' : 'DEVICES / DAY');
+  setText('chart-footnote', server ? 'New registrations, reserved AI requests, and distinct AI accounts per UTC day.' : 'Each line counts distinct devices per UTC day. Daily counts cannot be added to get period uniques.');
+  const headers = server ? ['Date (UTC)', 'New registrations', 'AI requests', 'AI accounts'] : ['Date (UTC)', 'Active', 'Reader devices', 'AI', 'Engagement time', 'AI requests'];
+  const row = document.createElement('tr');
+  for (const header of headers) { const heading = cell(header, 'th'); heading.scope = 'col'; row.append(heading); }
+  $('daily-head').replaceChildren(row);
+  const labels = server ? {
+    'audience-first-label': 'Credit accounts', 'audience-first-note': 'Accounts with a credit profile · all time',
+    'audience-second-label': 'New registrations', 'audience-second-note': 'Accounts created in this period',
+    'audience-third-label': 'AI requests · all time', 'audience-third-note': 'Reservations in the credit ledger',
+    'adoption-label': 'AI reach in this period', 'audience-source-note': 'Account and credit totals come from server records. Device activity and reader engagement are measured separately below.',
+    'ai-request-label': 'AI requests reserved', 'outcome-heading': 'Historical AI credit ledger', 'outcome-completed-label': 'Charged', 'outcome-failed-label': 'Refunded', 'outcome-unresolved-label': 'Reserved',
+    'ai-outcome-note': 'Each count uses its own ledger timestamp, so charges and refunds may belong to reservations from another period. A charge can include text generated before delivery was interrupted; these are credit events, not completed or failed requests.',
+    'recent-note': 'Recent daily account and AI credit ledger totals from this saved snapshot. No account identifiers are displayed.',
+  } : {
+    'audience-first-label': 'New devices', 'audience-first-note': 'First seen in this period',
+    'audience-second-label': 'Foreground activations', 'audience-second-note': 'App became active; this is not a timed session count',
+    'audience-third-label': 'AI requests', 'audience-third-note': 'Actual requests started across devices',
+    'adoption-label': 'AI adoption', 'audience-source-note': 'Devices are random pseudonymous installations, without account linkage. One person using two devices counts twice.',
+    'ai-request-label': 'requests started', 'outcome-heading': 'Outcomes of requests started in this period', 'outcome-completed-label': 'Completed', 'outcome-failed-label': 'Failed', 'outcome-unresolved-label': 'Unknown',
+    'ai-outcome-note': 'Outcomes are matched to requests started in the selected period. Intentional stops count separately. In-flight, interrupted, and uncorrelated legacy requests remain Unknown.',
+    'recent-note': 'The 12 most recent app event and UTC day groups.',
+  };
+  for (const [id, text] of Object.entries(labels)) setText(id, text);
+  if (server) {
+    $('source-banner').dataset.kind = 'snapshot';
+    setText('source-title', 'Your historical account & AI activity.');
+    setText('source-description', 'Aggregate account and AI credit records captured from the Kodi Reader database. This saved view does not update live. The separate device measurements below start with the analytics-enabled app release.');
+    setText('source-badge', 'SAVED DATABASE SNAPSHOT');
+    const captured = state.data?.data_source?.captured_at;
+    setText('source-captured', captured ? `Captured ${longDate.format(date(captured))} at ${time.format(date(captured))} UTC · Refresh rereads this saved snapshot.` : '');
+  }
+}
+function hasTelemetry() {
+  if (!state.data) return false;
+  return Boolean(state.data.coverage?.first_event_at) || state.data.summary.active_users.value > 0 || state.data.features.some((feature) => feature.count > 0) || state.data.summary.reading_seconds.value > 0;
+}
+function unmeasured(id) { setText(id, 'Not measured yet'); $(id).classList.add('is-unmeasured'); }
+function accountComparison(id, metric) {
+  const node = $(id);
+  node.removeAttribute('title');
+  if (metric.previous === 0) node.textContent = metric.value > 0 ? 'New activity this period' : 'No records in either period';
+  else {
+    const change = (metric.value - metric.previous) / metric.previous * 100;
+    node.textContent = `${change > 0 ? '+' : change < 0 ? '−' : ''}${formatPercent(Math.abs(change))} vs previous period`;
+  }
+  node.title = `Previous period: ${count(metric.previous)}`;
+}
+function render() {
+  const data = state.data;
+  const summary = data.summary;
+  const server = historicalLead() ? data.server_metrics : null;
+  const measured = hasTelemetry();
+  const coverage = data.coverage;
+  for (const node of document.querySelectorAll('.is-unmeasured')) node.classList.remove('is-unmeasured');
+  configureSourceLayout();
+  metric('active', summary.active_users);
+  metric('readers', summary.readers);
+  metric('ai', summary.ai_users);
+  metric('time', summary.reading_seconds, duration);
+  setText('date-range', `${shortDate.format(date(data.period.start))} – ${longDate.format(date(data.period.end))} · UTC`);
+  const captured = data.data_source?.captured_at || data.generated_at;
+  setText('updated-at', state.snapshotMode ? `Captured ${time.format(date(captured))} UTC · saved snapshot` : `Updated ${time.format(date(data.generated_at))} UTC · every minute`);
+  setText('new-devices', count(server ? server.totals.credit_accounts : summary.new_users.value));
+  setText('returning-devices', summary.returning_users ? count(summary.returning_users.value) : 'Not measured');
+  setText('total-sessions', count(server ? server.summary.new_accounts.value : summary.sessions.value));
+  setText('total-ai-requests', count(server ? server.totals.ai_requests : summary.ai_requests.value));
+  const aiUsers = server ? server.summary.ai_accounts.value : summary.ai_users.value;
+  const audience = server ? server.totals.registered_accounts : summary.active_users.value;
+  const adoption = percent(aiUsers, audience);
+  setText('adoption-percent', audience > 0 ? formatPercent(adoption) : 'No active devices');
+  $('adoption-bar').style.width = `${adoption}%`;
+  $('adoption-track').setAttribute('aria-label', audience > 0 ? `${count(aiUsers)} ${server ? 'AI accounts in this period out of' : 'AI devices out of'} ${count(audience)} ${server ? 'all-time registered accounts' : 'active devices'}` : 'No active devices to measure AI adoption');
+  setText('adoption-note', server ? `${count(aiUsers)} accounts made an AI request in this period, out of ${count(audience)} registered accounts in total.` : `${count(aiUsers)} of ${count(audience)} active devices used AI.`);
+  setText('reading-total', duration(summary.reading_seconds.value));
+  setText('reading-average', summary.readers.value > 0 ? duration(summary.reading_seconds.value / summary.readers.value) : 'No reader devices');
+  setText('reading-adoption', summary.active_users.value > 0 ? formatPercent(percent(summary.readers.value, summary.active_users.value)) : 'No active devices');
+  if (data.server_metrics) {
+    const history = data.server_metrics;
+    setText('account-total', count(history.totals.registered_accounts));
+    setText('account-signed-in', count(history.summary.signed_in_accounts.value));
+    setText('account-ai', count(history.summary.ai_accounts.value));
+    setText('account-requests', count(history.summary.ai_requests.value));
+    setText('account-sign-in-change', 'Accounts, based on latest auth sign-in');
+    accountComparison('account-ai-change', history.summary.ai_accounts);
+    accountComparison('account-requests-change', history.summary.ai_requests);
+    setText('history-ledger', `Independent credit events in this period: ${count(history.summary.ai_charged.value)} charged and ${count(history.summary.ai_released.value)} refunded. A charge does not establish that a response was completed. These records are separate from the app telemetry above.`);
+  }
+  renderAi(server, measured);
+  if (!measured) {
+    for (const id of ['metric-active', 'metric-readers', 'metric-ai', 'metric-time', 'reading-total', 'reading-average', 'reading-adoption']) unmeasured(id);
+    for (const id of ['change-active', 'change-readers', 'change-ai', 'change-time']) { setText(id, 'App telemetry has not started'); $(id).removeAttribute('title'); delete $(id).dataset.direction; }
+    setText('telemetry-note', 'Not measured yet. App usage, reader engagement, and feature actions begin with the analytics-enabled app release. Historical account and credit records do not measure this activity.');
+    sectionEmpty($('feature-list'), 'Not measured yet. Feature counts begin when analytics-enabled Kodi installations send activity.');
+    setText('feature-tag', 'NOT MEASURED YET');
+    $('legacy-features').hidden = true;
+    sectionEmpty($('version-list'), 'Not measured yet. App versions arrive with device events.');
+    if (!server) {
+      for (const id of ['new-devices', 'returning-devices', 'total-sessions', 'total-ai-requests']) setText(id, 'Not measured');
+      setText('adoption-percent', 'Not measured');
+    }
+  } else {
+    const detail = coverage ? `${count(coverage.instrumented_devices)} version-2 devices and ${count(coverage.legacy_devices)} legacy devices in this period.` : 'This response uses legacy event definitions.';
+    setText('telemetry-note', `Pseudonymous app events measure reader engagement and feature usage separately from account records. ${detail}`);
+    if (coverage?.legacy_devices > 0 || !coverage) setText('change-time', 'Includes legacy reader timing; see version coverage');
+    setText('feature-tag', coverage?.semantic_features_available ? 'MEANINGFUL ACTIONS' : 'PARTIAL COVERAGE');
+    renderFeatures();
+    renderVersions();
+  }
+  renderCountries();
+  renderRecent();
+  renderDaily();
+  renderChart();
+  setText('footer-status', `${state.snapshotMode ? 'SAVED DATABASE SNAPSHOT' : 'UPDATED'} ${longDate.format(date(captured)).toUpperCase()} · UTC`);
+  $('export').disabled = false;
+}
+function renderAi(server, measured) {
+  const summary = state.data.summary;
+  const outcomes = state.data.ai_outcomes;
+  const started = server ? server.summary.ai_requests.value : outcomes?.started ?? summary.ai_requests.value;
+  setText('ai-requests', server || measured ? count(started) : 'Not measured');
+  setText('ai-device-note', server ? `${count(server.summary.ai_accounts.value)} distinct accounts reserved AI requests in this period.` : `${count(summary.ai_users.value)} distinct devices asked Kodi AI for help.${outcomes?.legacy_started ? ` ${count(outcomes.legacy_started)} legacy starts have no request correlation and remain Unknown.` : ''}`);
+  if (server) {
+    setText('ai-completed', count(server.summary.ai_charged.value));
+    setText('ai-failed', count(server.summary.ai_released.value));
+    setText('ai-unresolved', count(started));
+    setText('ai-success', 'Independent credit events');
+    return;
+  }
+  if (!outcomes) {
+    for (const id of ['ai-completed', 'ai-failed', 'ai-unresolved', 'ai-cancelled']) setText(id, measured ? 'Unavailable' : 'Not measured');
+    setText('ai-success', measured ? 'Legacy outcomes are uncorrelated' : 'Not measured yet');
+    setText('ai-outcome-note', 'Older events do not correlate request starts and outcomes. Completed, failed, stopped, and Unknown cohort counts become available with the updated analytics backend. Legacy daily events remain in the activity log and CSV.');
+    return;
+  }
+  for (const [key, id] of Object.entries({ completed: 'ai-completed', failed: 'ai-failed', cancelled: 'ai-cancelled', unknown: 'ai-unresolved' })) setText(id, measured ? count(outcomes[key]) : 'Not measured');
+  const settled = outcomes.completed + outcomes.failed + outcomes.cancelled;
+  setText('ai-success', started > 0 ? `${count(settled)} of ${count(started)} have a known outcome` : measured ? '0 requests started' : 'Not measured yet');
+  $('ai-completed-bar').style.width = `${percent(outcomes.completed, started)}%`;
+  $('ai-failed-bar').style.width = `${percent(outcomes.failed, started)}%`;
+  $('ai-cancelled-bar').style.width = `${percent(outcomes.cancelled, started)}%`;
+  $('ai-unknown-bar').style.width = `${percent(outcomes.unknown, started)}%`;
+  $('outcome-track').setAttribute('aria-label', `${count(outcomes.completed)} completed, ${count(outcomes.failed)} failed, ${count(outcomes.cancelled)} stopped, ${count(outcomes.unknown)} unknown out of ${count(started)} requests started in the period`);
+}
+function appendFeatureRows(container, rows) {
+  const maximum = Math.max(1, ...rows.filter(item => item.measured).map(item => item.count));
+  for (const feature of rows) {
+    const row = document.createElement('div'); row.className = 'feature-row';
+    const label = document.createElement('span'); label.className = 'feature-name'; label.textContent = eventName(feature.name);
+    const bar = document.createElement('div'); bar.className = 'feature-bar'; bar.setAttribute('aria-hidden', 'true');
+    const fill = document.createElement('span'); fill.style.width = `${feature.measured ? feature.count / maximum * 100 : 0}%`; bar.append(fill);
+    const amount = document.createElement('span'); amount.className = 'feature-count'; amount.textContent = feature.measured ? count(feature.count) : 'Not measured';
+    const devices = document.createElement('span'); devices.textContent = feature.measured ? `${count(feature.users)} ${feature.users === 1 ? 'device' : 'devices'}` : 'Needs version 2'; amount.append(devices);
+    row.append(label, bar, amount); container.append(row);
+  }
+}
+function renderFeatures() {
+  const semantic = Boolean(state.data.coverage?.semantic_features_available);
+  const rows = FEATURE_NAMES.map(name => ({ ...(state.data.features.find(item => item.name === name) || { name, count: 0, users: 0 }), measured: !SEMANTIC_FEATURES.has(name) || semantic }));
+  $('feature-list').replaceChildren();
+  appendFeatureRows($('feature-list'), rows);
+  const legacy = LEGACY_FEATURES.map(name => ({ ...(state.data.features.find(item => item.name === name) || { name, count: 0, users: 0 }), measured: true }));
+  $('legacy-features').hidden = !legacy.some(item => item.count > 0);
+  $('legacy-feature-list').replaceChildren();
+  if (!$('legacy-features').hidden) appendFeatureRows($('legacy-feature-list'), legacy);
+  setText('feature-note', semantic ? `Notes and drawings count new items and meaningful editing sessions. Repeated autosaves, restored data, empty drafts, and failed saves are excluded.${state.data.coverage.legacy_devices > 0 ? ' Partial coverage: legacy devices do not report these new measurements.' : ''}` : 'New note and drawing metrics have not been measured by version-2 devices in this period. General feature events and any legacy autosave counts are shown separately.');
+}
+function renderCountries() {
+  const container = $('country-list');
+  if (!Array.isArray(state.data.countries)) { sectionEmpty(container, 'Not measured yet. Country observations begin with the updated analytics backend; historical snapshots have no location data.'); return; }
+  if (!state.data.countries.length) { sectionEmpty(container, hasTelemetry() ? '0 active devices in this period, so there are no connection countries to show.' : 'Not measured yet. Country totals appear when the first analytics-enabled installations send activity.'); return; }
+  const total = state.data.summary.active_users.value;
+  const rows = [...state.data.countries].sort((a, b) => b.devices - a.devices || String(a.country_code || '').localeCompare(String(b.country_code || '')));
+  container.replaceChildren();
+  for (const country of rows) {
+    const row = document.createElement('div'); row.className = 'country-row';
+    const label = document.createElement('span'); label.className = 'country-name';
+    let name = 'Unknown';
+    if (country.country_code) { try { name = countryNames?.of(country.country_code) || country.country_code; } catch { name = country.country_code; } }
+    label.textContent = name;
+    const share = document.createElement('span'); share.className = 'country-share'; share.textContent = formatPercent(percent(country.devices, total));
+    const bar = document.createElement('div'); bar.className = 'country-bar'; bar.setAttribute('aria-hidden', 'true');
+    const fill = document.createElement('span'); fill.style.width = `${percent(country.devices, total)}%`; bar.append(fill);
+    const amount = document.createElement('strong'); amount.className = 'country-count'; amount.textContent = `${count(country.devices)} ${country.devices === 1 ? 'device' : 'devices'}`;
+    row.append(label, bar, share, amount); container.append(row);
+  }
+}
+function renderVersions() {
+  const container = $('version-list');
+  const versions = state.data.versions;
+  if (!versions.length) { sectionEmpty(container, 'No app versions reported in this period yet.'); return; }
+  const total = state.data.summary.active_users.value;
+  container.replaceChildren();
+  for (const version of versions) {
+    const row = document.createElement('div');
+    row.className = 'version-row';
+    const label = document.createElement('span');
+    label.className = 'version-name';
+    label.textContent = version.version;
+    const bar = document.createElement('div');
+    bar.className = 'version-bar';
+    bar.setAttribute('aria-hidden', 'true');
+    const fill = document.createElement('span');
+    fill.style.width = `${percent(version.users, total)}%`;
+    bar.append(fill);
+    const value = document.createElement('span');
+    value.className = 'version-value';
+    value.textContent = count(version.users);
+    value.title = `${count(version.users)} ${version.users === 1 ? 'device' : 'devices'}`;
+    const share = document.createElement('span');
+    share.textContent = ` / ${formatPercent(percent(version.users, total))}`;
+    value.append(share);
+    row.append(label, bar, value);
+    container.append(row);
+  }
+}
+function renderRecent() {
+  const container = $('recent-table');
+  const recent = historicalLead() ? state.data.server_metrics?.recent || [] : state.data.recent;
+  if (!recent.length) { emptyTable(container, 3, historicalLead() ? 'No account or AI ledger records in this period.' : 'No activity received in this period yet.'); return; }
+  container.replaceChildren();
+  for (const event of recent) {
+    const row = document.createElement('tr');
+    row.append(cell(eventName(event.name)), cell(shortDate.format(date(event.date))), cell(count(event.count)));
+    container.append(row);
+  }
+}
+function renderDaily() {
+  const container = $('daily-table');
+  const server = historicalLead() ? state.data.server_metrics : null;
+  const daily = server?.daily || state.data.daily;
+  if (!daily.length) { emptyTable(container, server ? 4 : 6, 'No daily records in this period.'); return; }
+  container.replaceChildren();
+  for (const day of [...daily].reverse()) {
+    const row = document.createElement('tr');
+    if (server) row.append(cell(longDate.format(date(day.date))), cell(count(day.new_accounts)), cell(count(day.ai_requests)), cell(count(day.ai_accounts)));
+    else row.append(cell(longDate.format(date(day.date))), cell(count(day.active_users)), cell(count(day.readers)), cell(count(day.ai_users)), cell(duration(day.reading_seconds)), cell(count(day.ai_requests)));
+    container.append(row);
+  }
+}
+function chartTooltip(day, pointX, chartWidth) {
+  const tooltip = $('chart-tooltip');
+  tooltip.replaceChildren();
+  const heading = document.createElement('strong');
+  heading.textContent = longDate.format(date(day.date));
+  tooltip.append(heading);
+  for (const series of state.series) {
+    const row = document.createElement('span');
+    row.textContent = SERIES_NAMES[series];
+    const value = document.createElement('b');
+    value.textContent = count(day[series]);
+    row.append(value);
+    tooltip.append(row);
+  }
+  tooltip.hidden = false;
+  const stage = $('chart-stage');
+  const relativeX = pointX / chartWidth * stage.clientWidth;
+  tooltip.style.left = `${Math.max(0, Math.min(stage.clientWidth - tooltip.offsetWidth, relativeX + 12))}px`;
+  tooltip.style.top = '14px';
+}
+function renderChart() {
+  const svg = $('activity-chart');
+  const chartWidth = Math.max(280, $('chart-stage').clientWidth);
+  svg.setAttribute('viewBox', `0 0 ${chartWidth} 244`);
+  const title = svgElement('title', { id: 'chart-title' }, 'Daily app usage');
+  const description = svgElement('desc', { id: 'chart-description' }, state.data ? historicalLead() ? `New registrations, reserved AI requests, and distinct AI accounts per UTC day for the last ${state.days} days. Full values are available in the daily data table below.` : `Distinct active, reader, and AI devices each UTC day for the last ${state.days} days. Full values are available in the daily data table below.` : 'Unlock the dashboard to see daily active, reading, and AI devices.');
+  svg.replaceChildren(title, description);
+  $('chart-tooltip').hidden = true;
+  const daily = (historicalLead() ? state.data?.server_metrics?.daily : state.data?.daily) || [];
+  const series = [...state.series];
+  const left = 33, right = chartWidth - 15, top = 14, bottom = 212;
+  const highest = Math.max(0, ...daily.flatMap((item) => series.map((key) => item[key])));
+  const stepRaw = Math.max(1, highest / 4);
+  const magnitude = 10 ** Math.floor(Math.log10(stepRaw));
+  const step = Math.ceil(stepRaw / magnitude) * magnitude;
+  const maximum = step * 4;
+  const y = (value) => bottom - value / maximum * (bottom - top);
+  const x = (index) => daily.length <= 1 ? (left + right) / 2 : left + index / (daily.length - 1) * (right - left);
+  for (let i = 0; i <= 4; i += 1) {
+    const value = i * step;
+    const position = y(value);
+    svg.append(svgElement('line', { x1: left, x2: right, y1: position, y2: position, class: 'chart-grid' }));
+    svg.append(svgElement('text', { x: left - 10, y: position + 3, 'text-anchor': 'end', class: 'chart-axis' }, state.data ? count(value) : '—'));
+  }
+  if (daily.length) {
+    const indexes = new Set([0, Math.round((daily.length - 1) / 3), Math.round((daily.length - 1) * 2 / 3), daily.length - 1]);
+    for (const index of indexes) svg.append(svgElement('text', { x: x(index), y: 238, 'text-anchor': index === 0 ? 'start' : index === daily.length - 1 ? 'end' : 'middle', class: 'chart-axis' }, shortDate.format(date(daily[index].date))));
+  }
+  const empty = $('chart-empty');
+  const hasActivity = daily.some((day) => (historicalLead() ? SERVER_SERIES : DEVICE_SERIES).some((key) => day[key] > 0));
+  empty.hidden = hasActivity && series.length > 0;
+  empty.querySelector('strong').textContent = !state.data ? 'Your activity story starts here' : !series.length ? 'Choose a line to explore' : 'A quiet chapter, for now';
+  empty.querySelector('span:last-child').textContent = !state.data ? 'Connect to see real usage from Kodi.' : !series.length ? 'Use the legend above to show daily activity.' : historicalLead() ? 'No registrations or AI reservations recorded in this period.' : 'No device activity recorded in this period yet.';
+  if (!hasActivity || !series.length) return;
+  for (const key of series) {
+    const line = daily.map((day, index) => `${index === 0 ? 'M' : 'L'}${x(index).toFixed(2)} ${y(day[key]).toFixed(2)}`).join(' ');
+    if (key === 'active_users' || key === 'new_accounts') svg.append(svgElement('path', { d: `${line} L${x(daily.length - 1)} ${bottom} L${x(0)} ${bottom} Z`, fill: '#416f4d', opacity: '.045' }));
+    svg.append(svgElement('path', { d: line, fill: 'none', stroke: COLORS[key], 'stroke-width': key === 'active_users' || key === 'new_accounts' ? '2.3' : '2', 'stroke-linejoin': 'round', 'stroke-linecap': 'round' }));
+  }
+  const focusLine = svgElement('line', { x1: 0, x2: 0, y1: top, y2: bottom, stroke: '#9aaf8c', 'stroke-width': '1', 'stroke-dasharray': '3 3', visibility: 'hidden' });
+  svg.append(focusLine);
+  for (const [index, day] of daily.entries()) {
+    const point = svgElement('g', { class: 'chart-point', tabindex: '0', role: 'img', 'aria-label': `${longDate.format(date(day.date))}: ${series.map((key) => `${count(day[key])} ${SERIES_NAMES[key].toLowerCase()}`).join(', ')}` });
+    const position = x(index);
+    const width = (right - left) / Math.max(1, daily.length - 1);
+    point.append(svgElement('rect', { x: Math.max(left, position - width / 2), y: top, width: Math.min(right, position + width / 2) - Math.max(left, position - width / 2), height: bottom - top, fill: 'transparent' }));
+    for (const key of series) point.append(svgElement('circle', { cx: position, cy: y(day[key]), r: daily.length === 1 ? '3' : '2', fill: COLORS[key], opacity: daily.length === 1 ? '1' : '0' }));
+    const show = () => { chartTooltip(day, position, chartWidth); focusLine.setAttribute('x1', position); focusLine.setAttribute('x2', position); focusLine.setAttribute('visibility', 'visible'); for (const circle of point.querySelectorAll('circle')) circle.setAttribute('opacity', '1'); };
+    const hide = () => { $('chart-tooltip').hidden = true; focusLine.setAttribute('visibility', 'hidden'); if (daily.length > 1) for (const circle of point.querySelectorAll('circle')) circle.setAttribute('opacity', '0'); };
+    point.addEventListener('pointerenter', show);
+    point.addEventListener('pointerleave', hide);
+    point.addEventListener('focus', show);
+    point.addEventListener('blur', hide);
+    point.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+        event.preventDefault();
+        const sibling = event.key === 'ArrowRight' ? point.nextElementSibling : point.previousElementSibling;
+        if (sibling?.classList.contains('chart-point')) sibling.focus();
+      }
+      if (event.key === 'Escape') hide();
+    });
+    svg.append(point);
+  }
+  setText('chart-total', historicalLead() ? `${count(state.data.server_metrics.summary.ai_requests.value)} AI requests in period` : `${count(state.data.summary.active_users.value)} active devices in period`);
+}
+function csvValue(value) {
+  let text = String(value ?? '');
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  return `"${text.replaceAll('"', '""')}"`;
+}
+function exportCsv() {
+  const data = state.data;
+  if (!data) return;
+  const rows = [ ['Kodi Reader analytics'], ['Generated at (UTC)', data.generated_at], ['Period start (UTC)', data.period.start], ['Period end (UTC)', data.period.end], ['Data source', data.data_source?.kind || 'authenticated_server'], ['Captured at (UTC)', data.data_source?.captured_at || data.generated_at], ['Measurement', 'Pseudonymous device telemetry; account and credit records are separate'], ['Reader engagement', 'Reading, notes, drawing and Ask AI in the foreground reader workspace; excludes idle time'], ['Country measurement', 'Latest approximate upload-country observation in the period, not the location of past offline activity'] ];
+  if (data.server_metrics) {
+    rows.push(['Account and AI credit records · all time', 'Value']);
+    for (const [key, value] of Object.entries(data.server_metrics.totals)) rows.push([key, value]);
+    rows.push([], ['Account and AI credit metric', 'Selected period', 'Previous period']);
+    for (const [key, value] of Object.entries(data.server_metrics.summary)) rows.push([key, value.value, value.previous]);
+    rows.push([], ['Server date (UTC)', 'New registrations', 'AI accounts', 'AI requests reserved', 'AI requests charged', 'AI requests refunded']);
+    for (const day of data.server_metrics.daily) rows.push([day.date, day.new_accounts, day.ai_accounts, day.ai_requests, day.ai_charged, day.ai_released]);
+    rows.push([], ['Server event date (UTC)', 'Event', 'Count']);
+    for (const event of data.server_metrics.recent) rows.push([event.date, event.name, event.count]);
+  }
+  rows.push([], ['Device telemetry status', hasTelemetry() ? (data.summary.active_users.value > 0 ? 'Events received in period' : 'Recorded zero activity in selected period') : 'Not measured yet: app telemetry has not started'], ['Device telemetry metric', 'Selected period', 'Previous period']);
+  const summaryNames = { active_users: 'Active devices', readers: 'Reader devices', ai_users: 'AI devices', reading_seconds: 'Reader engagement seconds', new_users: 'New devices', sessions: 'Foreground activations', ai_requests: 'AI requests started', ai_completed: 'Legacy independent AI completion events', ai_failed: 'Legacy independent AI failure events' };
+  for (const [key, label] of Object.entries(summaryNames)) rows.push([label, hasTelemetry() ? data.summary[key].value : '', hasTelemetry() ? data.summary[key].previous : '']);
+  if (data.summary.returning_users) rows.push(['Returning devices', hasTelemetry() ? data.summary.returning_users.value : '', hasTelemetry() ? data.summary.returning_users.previous : '']);
+  if (data.coverage) { rows.push([], ['Coverage', 'Value']); for (const [key, value] of Object.entries(data.coverage)) rows.push([key, value]); }
+  if (data.ai_outcomes) { rows.push([], ['AI request cohort outcome', 'Count']); for (const [key, value] of Object.entries(data.ai_outcomes)) rows.push([key, hasTelemetry() ? value : '']); }
+  rows.push([], ['Connection country (upload origin)', 'Distinct active devices']);
+  if (Array.isArray(data.countries)) for (const country of data.countries) rows.push([country.country_code || 'Unknown', country.devices]);
+  else rows.push(['Not measured yet', '']);
+  rows.push([], ['Date (UTC)', 'Active devices', 'Reader devices', 'AI devices', 'Reader engagement seconds', 'AI requests started']);
+  if (hasTelemetry()) for (const day of data.daily) rows.push([day.date, day.active_users, day.readers, day.ai_users, day.reading_seconds, day.ai_requests]);
+  rows.push([], ['Feature event', 'Event count', 'Distinct devices']);
+  if (hasTelemetry()) for (const feature of data.features) rows.push([feature.name, SEMANTIC_FEATURES.has(feature.name) && !data.coverage?.semantic_features_available ? '' : feature.count, SEMANTIC_FEATURES.has(feature.name) && !data.coverage?.semantic_features_available ? '' : feature.users]);
+  rows.push([], ['App version', 'Distinct devices']);
+  for (const version of data.versions) rows.push([version.version, version.users]);
+  rows.push([], ['Recent date (UTC)', 'Event', 'Count']);
+  for (const event of data.recent) rows.push([event.date, event.name, event.count]);
+  const blob = new Blob(['\uFEFF', rows.map((row) => row.map(csvValue).join(',')).join('\r\n')], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `kodi-analytics-${state.days}d-${data.generated_at.slice(0, 10)}.csv`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+$('access-form').addEventListener('submit', (event) => {
+  event.preventDefault();
+  const token = $('admin-token').value.trim();
+  if (!token) { $('admin-token').focus(); return; }
+  state.token = token;
+  state.snapshotMode = false;
+  state.data = null;
+  $('admin-token').value = '';
+  setAccessVisible(true);
+  load();
+});
+$('period').addEventListener('change', () => {
+  state.days = Number($('period').value);
+  state.data = null;
+  state.request += 1;
+  state.controller?.abort();
+  resetValues();
+  notice();
+  if (state.token || state.snapshotMode) load();
+});
+$('refresh').addEventListener('click', () => load());
+$('connect-live').addEventListener('click', () => lock());
+$('sign-out').addEventListener('click', () => lock());
+$('mobile-lock').addEventListener('click', () => lock());
+$('export').addEventListener('click', exportCsv);
+for (const button of document.querySelectorAll('[data-series]')) button.addEventListener('click', () => {
+  const key = button.dataset.series;
+  if (state.series.has(key)) state.series.delete(key); else state.series.add(key);
+  button.setAttribute('aria-pressed', String(state.series.has(key)));
+  renderChart();
+});
+const navLinks = [...document.querySelectorAll('.side-nav a')];
+for (const link of navLinks) link.addEventListener('click', () => {
+  for (const item of navLinks) item.removeAttribute('aria-current');
+  link.setAttribute('aria-current', 'page');
+});
+if ('IntersectionObserver' in window) {
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) if (entry.isIntersecting) {
+      const selected = navLinks.find((link) => link.hash === `#${entry.target.id}`);
+      if (selected) { for (const link of navLinks) link.removeAttribute('aria-current'); selected.setAttribute('aria-current', 'page'); }
+    }
+  }, { rootMargin: '-10% 0px -65% 0px', threshold: 0 });
+  for (const id of ['overview', 'reading', 'ai', 'countries', 'features', 'activity']) observer.observe($(id));
+}
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.token && !state.loading && Date.now() - state.lastAttempt >= 60000) load(); });
+window.addEventListener('resize', renderChart);
+window.addEventListener('pagehide', () => lock({ focus: false }));
+resetValues();
+if (LOCAL_HOST) load({ snapshot: true, bootstrap: true });

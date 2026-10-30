@@ -1003,7 +1003,7 @@
   // Text fragments, rather than paragraph boxes, distinguish wrapped lines,
   // inline emphasis, indentation, and the two columns of a spread.
   function markerLineFragment(node, x, y) {
-    var block = node.parentElement;
+    var block = node ? node.parentElement : document.body;
     while (block && block !== document.body &&
            /^(inline|contents|ruby)/.test(getComputedStyle(block).display)) block = block.parentElement;
     if (!block) return null;
@@ -1023,7 +1023,7 @@
         if (!best || rect.left < best.rect.left) best = { node: text, rect: rect };
       }
     }
-    if (block === document.body) inspect(node);
+    if (block === document.body && node) inspect(node);
     else {
       var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), text;
       while ((text = walker.nextNode())) inspect(text);
@@ -1031,25 +1031,68 @@
     return best;
   }
 
+  function markerFirstCharacter(fragment) {
+    var node = fragment.node, line = fragment.rect;
+    if (!node.length) return null;
+    var range = document.createRange();
+    function startsOnLine(rect) {
+      return rect.width > 0 && rect.height > 0 &&
+        Math.abs(rect.top - line.top) <= 1 && Math.abs(rect.left - line.left) <= 1;
+    }
+    function prefixReachesLine(end) {
+      range.setStart(node, 0);
+      range.setEnd(node, end);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        if (startsOnLine(rects[i])) return true;
+      }
+      return false;
+    }
+    // A caret at a wrap boundary can belong to the preceding line. Find the
+    // first character whose rendered range reaches this fragment instead.
+    // Prefix ranges keep this logarithmic even for chapter-sized text nodes.
+    var low = 1, high = node.length;
+    while (low < high) {
+      var middle = Math.floor((low + high) / 2);
+      if (prefixReachesLine(middle)) high = middle;
+      else low = middle + 1;
+    }
+    for (var offset = low - 1; offset < node.length; offset++) {
+      if (!/[^\s\u00ad]/.test(node.textContent.charAt(offset))) continue;
+      range.setStart(node, offset);
+      range.setEnd(node, offset + 1);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rect = rects[i];
+        if (rect.width > 0 && rect.height > 0 && Math.abs(rect.top - line.top) <= 1 &&
+            rect.left >= line.left - 1 && rect.left < line.right && rect.right > line.left) {
+          return { position: { elementPath: pathOfNode(node), offset: offset }, rect: rect };
+        }
+      }
+      break;
+    }
+    return null;
+  }
+
   function markerLineStartAtPoint(x, y) {
     if (!state.ready || viewportResizePending || pendingPageTarget != null ||
         x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return null;
     var caret = markerCaretAtPoint(x, y);
-    if (!caret || caret.startContainer.nodeType !== Node.TEXT_NODE ||
-        !isReadableTextNode(caret.startContainer) || markerInteractiveText(caret.startContainer)) return null;
-    var fragment = markerLineFragment(caret.startContainer, x, y);
+    var fragment = caret && caret.startContainer.nodeType === Node.TEXT_NODE &&
+      isReadableTextNode(caret.startContainer) ? markerLineFragment(caret.startContainer, x, y) : null;
+    var first = fragment ? markerFirstCharacter(fragment) : null;
+    // Gutter hit testing may return an adjacent block or no text at all.
+    // An ordinary mid-line hit is already resolved and needs no chapter scan.
+    if (!fragment || !first || x < fragment.rect.left - 28) {
+      fragment = markerLineFragment(null, x, y);
+      first = fragment ? markerFirstCharacter(fragment) : null;
+    }
     if (!fragment || markerInteractiveText(fragment.node)) return null;
     var rect = fragment.rect;
-    if (x < rect.left - 28 || x > rect.left + Math.min(8, rect.width)) return null;
-    var first = markerCaretAtPoint(rect.left + Math.min(0.5, rect.width / 4), rect.top + rect.height / 2);
-    if (!first || first.startContainer.nodeType !== Node.TEXT_NODE ||
-        !isReadableTextNode(first.startContainer) || markerInteractiveText(first.startContainer)) return null;
-    var position = { elementPath: pathOfNode(first.startContainer),
-      offset: clamp(first.startOffset, 0, Math.max(0, first.startContainer.length - 1)) };
-    var glyph = readingMarkerRect(position);
-    if (!glyph || Math.abs(glyph.top - rect.top) > 3 || Math.abs(glyph.left - rect.left) > 3) return null;
-    return { position: position, rect: rect,
-      text: first.startContainer.textContent.slice(position.offset, position.offset + 120).trim() };
+    if (x < rect.left - 28 || x > rect.right) return null;
+    if (!first || x > first.rect.right) return null;
+    return { position: first.position, rect: rect,
+      text: fragment.node.textContent.slice(first.position.offset, first.position.offset + 120).trim() };
   }
 
   function onMarkerPointerMove(event) {
@@ -1130,8 +1173,13 @@
     if (!node.length) return null;
     range.setStart(node, offset);
     range.setEnd(node, offset + 1);
-    var rect = range.getBoundingClientRect();
-    return rect.width > 0 && rect.height > 0 ? rect : null;
+    // At a hyphenated wrap WebKit also returns a zero-width caret fragment
+    // on the preceding line. Its bounding union would span both lines.
+    var rects = range.getClientRects();
+    for (var i = 0; i < rects.length; i++) {
+      if (rects[i].width > 0 && rects[i].height > 0) return rects[i];
+    }
+    return null;
   }
 
   function renderReadingMarker() {

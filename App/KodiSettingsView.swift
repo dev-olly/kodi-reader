@@ -4,17 +4,29 @@ import SwiftUI
 struct KodiSettingsView: View {
     @Environment(AppModel.self) private var model
     @ObservedObject var updater: AppUpdater
-    @State private var selection = "sync"
+    @State private var selection = "reading"
     @State private var pendingProvider: SyncProvider?
     @State private var pendingMode: SyncMode = .notesOnly
     @State private var errorMessage: String?
 
     var body: some View {
         TabView(selection: $selection) {
-            syncSettings
-                .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }.tag("sync")
+            ReadingSettingsView()
+                .tabItem { Label("Reading", systemImage: "book") }.tag("reading")
+            Group {
+                // Building this panel reads Drive credentials. Defer that lookup
+                // until Sync is selected, so other settings open independently.
+                if selection == "sync" {
+                    syncSettings
+                } else {
+                    Color.clear
+                }
+            }
+            .tabItem { Label("Sync", systemImage: "arrow.triangle.2.circlepath") }.tag("sync")
             UpdateSettingsView(updater: updater)
                 .tabItem { Label("Updates", systemImage: "arrow.down.circle") }.tag("updates")
+            privacySettings
+                .tabItem { Label("Privacy", systemImage: "hand.raised") }.tag("privacy")
         }
         .frame(width: 540, height: 540)
         .confirmationDialog("Copy this Mac’s library to \(pendingProvider?.title ?? "cloud")?",
@@ -128,6 +140,25 @@ struct KodiSettingsView: View {
             }
             Text("These choices apply only to this Mac. Reading and editing remain available offline. Google Drive checks for changes every five minutes while Kodi is active.")
                 .font(.caption).foregroundStyle(.secondary)
+        }
+        .formStyle(.grouped)
+    }
+
+    private var privacySettings: some View {
+        Form {
+            Section("Usage analytics") {
+                Toggle("Share anonymous usage analytics", isOn: Binding(
+                    get: { model.analytics.isEnabled },
+                    set: { model.analytics.setEnabled($0) }
+                ))
+                Text("Help improve Kodi by sharing app activity, reading time, and feature counts such as Ask AI usage. A random identifier distinguishes this installation without linking it to your account.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("Your books, titles, reading passages, notes, sketches, webpage addresses, AI questions and answers, and account details are never included in usage analytics.")
+                    .font(.callout).foregroundStyle(.secondary)
+                Text("Turning this off clears analytics waiting to send and removes this Mac’s analytics identifier. If you enable it again, a new identifier is created. Previously received anonymous statistics are retained.")
+                    .font(.caption).foregroundStyle(.secondary)
+                Link("Privacy Policy", destination: URL(string: "https://www.kodi-reader.app/privacy")!)
+            }
         }
         .formStyle(.grouped)
     }

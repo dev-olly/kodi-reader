@@ -10,7 +10,7 @@ Previously distributed versions do not send events. There is no historical
 reading data to backfill, and the dashboard does not substitute sample counts.
 The Expo mobile app is not instrumented by this change.
 
-## Deployment status · 24 October 2026
+## Deployment status · 30 October 2026
 
 The existing Kodi Reader Supabase project (`hftfeybmgpousanpawgw`) has the
 `add_private_usage_analytics` and `enable_analytics_retention` migrations applied.
@@ -19,23 +19,23 @@ daily `analytics-retention` job is active at 03:20 UTC. The 7-, 30-, and 90-day
 aggregate queries and a service-role ingestion/deduplication test passed. Test
 events were rolled back; no sample usage remains in the production database.
 
-The existing Vercel CLI sign-in has verified access to `devollys-projects/kodi-reader`.
-Staged production deployment `dpl_3aivKcmTezWiTJb9FxD9c6aXxU6G` is ready at
-`https://kodi-reader-fv56659mp-devollys-projects.vercel.app/analytics`, with both
-analytics API functions detected. The homepage, dashboard, scripts, styles,
-and logo return 200 through authenticated Vercel access; dashboard data rejects
-unauthenticated requests with 401.
+Production deployment `dpl_HJ9b2YzPPzrHVwQL84eRnVmAkiVq` is ready and assigned to
+the existing Kodi Reader domains. The dashboard is live at
+`https://www.kodi-reader.app/analytics`. Authenticated API checks passed for
+7-, 30-, and 90-day reports with `no-store` responses; unauthenticated requests
+return 401. The updated privacy notice includes usage analytics and approximate
+upload-country observations.
 
 `ANALYTICS_SUPABASE_URL` and a random `ANALYTICS_ADMIN_TOKEN` are configured for
 Production. The administrator key is saved in this Mac's login Keychain under
 service **Kodi Reader Analytics**, account **admin-2026-10-24**, label
 **Kodi Reader Analytics Dashboard**. No administrator key is stored in this repo.
 
-`ANALYTICS_SUPABASE_SERVICE_KEY` still needs configuration. Automatic security
-review blocked reading the existing Supabase server key through the browser
-without explicit user approval. Domain promotion was also blocked while this
-database connection is incomplete. The live Kodi website has not been changed.
-The updated Mac client also needs a release before installations can send activity.
+The owner approved configuring `ANALYTICS_SUPABASE_SERVICE_KEY` on 30 October.
+The existing project's server key is saved as a masked Production Secret in
+Vercel, and the owner completed two-factor reauthentication for redeployment.
+No server key was printed or saved in this repository. This deployment supports
+the Kodi Reader 0.4.8 Mac client; earlier distributed versions do not send events.
 
 On 30 October 2026, the owner approved and applied `003_usage_v2.sql` as
 production migration `20261030162740_usage_analytics_v2`. The current collector

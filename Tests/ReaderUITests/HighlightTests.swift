@@ -93,6 +93,50 @@ final class HighlightTests: XCTestCase {
         XCTAssertEqual(overlappingPairs, 0, "Inline italics received a second highlight layer")
     }
 
+    func testIndexAnchorsUseBodyInkAndNarrationAddsNoBackgroundFill() throws {
+        let (reader, _) = try loadTextChapter()
+        var colors: [String: String]?
+        reader.evaluateForTesting("""
+            (() => {
+              const p = document.querySelector('p');
+              p.innerHTML = '<a id="index-marker">Ordinary prose</a> <a id="real-link" href="#chapter">Cross reference</a>';
+              return {
+                body: getComputedStyle(p).color,
+                marker: getComputedStyle(document.getElementById('index-marker')).color,
+                link: getComputedStyle(document.getElementById('real-link')).color,
+                narration: getComputedStyle(p, '::highlight(kodi-narration)').backgroundColor
+              };
+            })()
+            """) { colors = $0 as? [String: String] }
+        XCTAssertTrue(spin { colors != nil })
+        XCTAssertEqual(colors?["marker"], colors?["body"], "EPUB index anchors must not turn prose green")
+        XCTAssertNotEqual(colors?["link"], colors?["body"])
+        XCTAssertEqual(colors?["narration"], "rgba(0, 0, 0, 0)", "Narration must not layer a second fill over saved highlights")
+    }
+
+    func testHighlightUsesTextFragmentsInsideMultilineInlineBoxes() throws {
+        let (reader, chapter) = try loadTextChapter()
+        var updated = false
+        reader.evaluateForTesting("""
+            (() => {
+              const p = document.querySelector('p');
+              p.innerHTML = 'Before <span style="display: inline-block">first line<br/>second line</span> after.';
+              return true;
+            })()
+            """) { _ in updated = true }
+        XCTAssertTrue(spin { updated })
+        reader.setAnnotations([Annotation(locator: Locator(spineIndex: chapter, start: TextPosition(elementPath: [999], offset: 0)),
+                                          text: "Before first linesecond line after.", color: .purple)])
+        let count = waitForNumber(reader, "document.querySelectorAll('.reader-highlight-rect').length") { $0 > 0 }
+        XCTAssertGreaterThan(count ?? 0, 0)
+        let oversized = waitForNumber(reader, """
+            Array.from(document.querySelectorAll('.reader-highlight-rect')).filter(rect =>
+              rect.getBoundingClientRect().height > parseFloat(getComputedStyle(document.querySelector('p')).lineHeight) + 2
+            ).length
+            """) { _ in true }
+        XCTAssertEqual(oversized, 0, "Inline container boxes must not produce large overlapping highlight slabs")
+    }
+
     func testClickingPaintedHighlightReportsItsIdentityAndRect() throws {
         let (reader, chapter) = try loadTextChapter()
         let anchor = try XCTUnwrap(reportedPosition)

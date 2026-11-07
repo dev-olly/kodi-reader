@@ -15,7 +15,7 @@ struct HighlightPalette: View {
     var hasNote = false
     var hasAttachedContent = false
     var onDelete: (() -> Void)? = nil
-    var onReadAloud: (() -> Void)? = nil
+    var onListenFromHere: (() -> Void)? = nil
     var onAddReminder: (() -> Void)? = nil
 
     @State private var copied = false
@@ -114,14 +114,13 @@ struct HighlightPalette: View {
         .buttonStyle(.plain)
         .help(currentColor == nil ? "Ask AI about this selection" : "Ask AI about this highlight")
 
-        if let onReadAloud {
-            Button(action: onReadAloud) {
-                Label("Read Aloud", systemImage: "speaker.wave.2")
-                    .labelStyle(.iconOnly)
+        if let onListenFromHere {
+            Button(action: onListenFromHere) {
+                Label("Listen from Here", systemImage: "speaker.wave.2")
                     .font(.system(size: 12, weight: .medium))
             }
             .buttonStyle(.plain)
-            .help("Read the selected text aloud")
+            .help("Listen from the start of this passage")
         }
 
         Button(action: copyTapped) {

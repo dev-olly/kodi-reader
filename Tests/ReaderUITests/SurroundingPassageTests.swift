@@ -74,6 +74,64 @@ final class SurroundingPassageTests: XCTestCase {
         XCTAssertTrue(remainingText.hasSuffix("Read this final sentinel."))
         XCTAssertEqual(reader.page, page)
         XCTAssertEqual(reader.spineIndex, chapter)
+
+        let extractedPassages = await reader.narrationPassages()
+        let passages = try XCTUnwrap(extractedPassages)
+        XCTAssertFalse(passages.isEmpty)
+        XCTAssertTrue(passages.allSatisfy { $0.text.utf16.count <= 400 })
+        let passage = try XCTUnwrap(passages.last)
+        reader.showNarrationPassage(passage.locator)
+        let highlighted = await withCheckedContinuation { continuation in
+            reader.evaluateForTesting("CSS.highlights.get('kodi-narration').values().next().value.toString()") {
+                continuation.resume(returning: $0 as? String)
+            }
+        }
+        XCTAssertEqual(highlighted, passage.text)
+        XCTAssertEqual(reader.page, page, "A spoken cue should allow independent browsing")
+        XCTAssertTrue(reader.annotations.isEmpty)
+        reader.showNarrationPassage(nil)
+        let clearedRangeCount = await withCheckedContinuation { continuation in
+            reader.evaluateForTesting("CSS.highlights.get('kodi-narration').size") {
+                continuation.resume(returning: $0 as? Int)
+            }
+        }
+        XCTAssertEqual(clearedRangeCount, 0)
+
+        let book = try XCTUnwrap(reader.book)
+        let followingChapter = try await ReaderController.narrationPassages(in: book, chapter: chapter)
+        XCTAssertGreaterThan(followingChapter.count, passages.count)
+        XCTAssertEqual(reader.spineIndex, chapter)
+        XCTAssertEqual(reader.page, page, "Preparing narration in a second WebKit context must preserve the visible page")
+
+        let selectionJSON = await withCheckedContinuation { continuation in
+            reader.evaluateForTesting("""
+                (() => {
+                  document.body.insertAdjacentHTML('beforeend', '<p id="audio-selection">Before <em>café 🌿</em> after. Leave this unread.</p>');
+                  const paragraph = document.getElementById('audio-selection');
+                  function path(node) {
+                    const result = [];
+                    while (node !== document.body) {
+                      result.unshift(Array.from(node.parentNode.childNodes).indexOf(node));
+                      node = node.parentNode;
+                    }
+                    return result;
+                  }
+                  return JSON.stringify({
+                    spineIndex: \(chapter),
+                    start: {elementPath: path(paragraph.querySelector('em').firstChild), offset: 0},
+                    end: {elementPath: path(paragraph.lastChild), offset: 6}
+                  });
+                })()
+                """) { continuation.resume(returning: $0 as? String) }
+        }
+        let selectionLocator = try JSONDecoder().decode(Locator.self, from: Data(try XCTUnwrap(selectionJSON).utf8))
+        let selection = ReaderSelection(text: "café 🌿 after", locator: selectionLocator, rect: .zero)
+        let selectedPassages = await reader.narrationPassages(selection: selection)
+        XCTAssertEqual(selectedPassages?.map(\.text), ["café 🌿 after"])
+        let fromHere = await reader.narrationPassages(from: selectionLocator)
+        XCTAssertTrue(fromHere?.first?.text.hasPrefix("café 🌿 after") == true)
+        XCTAssertTrue(fromHere?.last?.text.contains("Leave this unread.") == true,
+                      "Listen from Here should continue beyond the selection")
     }
 
     private func middleParagraphLocator(in reader: ReaderController) throws -> Locator {

@@ -29,6 +29,10 @@ Rename a document from its library context menu (**Rename…**) or while reading
 with **File → Rename Document…**. The name persists and syncs with book details;
 the original file keeps its name, and reading data stays attached.
 
+Following an EPUB reference shows **Back to reading** above the reading footer.
+Use it to retrace nested citations and footnotes, or dismiss it with its close
+button. Reference jumps pause narration until you press Play.
+
 Search the library by title or author, and sort by title, date added, or date
 last read. Use the arrow to reverse the order. Reading filters include Recently
 read (the last seven days), In progress, Unread, and Finished. Sort and filter
@@ -39,10 +43,14 @@ without a recorded added date appear last.
 
 ### Listen to EPUBs
 
-Open **Listen → Listen from Here** in the macOS reader to hear the rest of
-the current EPUB chapter. To hear just a passage, select it and click the
-speaker button. Choose from four English voices and adjust playback speed
-in the Listen popover. Paradee downloads its model and pronunciation files
+Click **Listen** in the macOS reader to open the audio player and listen from
+your current passage. Narration continues through chapters, with a spoken
+passage cue and optional text following. The bottom player includes a chapter
+timeline, 15-second skips, four English voices, and playback speed controls.
+Select a passage and choose **Listen from Here** to start at that passage and
+continue through the book.
+Chapter time remaining is estimated until audio has been generated.
+Paradee downloads its model and pronunciation files
 on first use, with a separate dictionary for UK voices. Speech runs on your Mac
 and works offline after those files are available.
 

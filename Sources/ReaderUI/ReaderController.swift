@@ -29,6 +29,12 @@ public struct ReaderSurroundingPassage: Equatable, Sendable {
     }
 }
 
+/// Spoken text with its exact source range, independent of saved annotations.
+public struct ReaderNarrationPassage: Codable, Equatable, Sendable {
+    public let text: String
+    public let locator: Locator
+}
+
 /// Drives the web view: loads spine documents, moves between pages and
 /// chapters, tracks position, and relays selections and highlights.
 @Observable
@@ -52,6 +58,9 @@ public final class ReaderController {
     public private(set) var errorMessage: String?
     public private(set) var visiblePageRange: ClosedRange<Int> = 0...0
     public private(set) var isPlacingReadingMarker = false
+    public private(set) var isReferenceNavigationInProgress = false
+    public var canReturnFromReference: Bool { !referenceHistory.isEmpty }
+    public var referenceReturnChapterTitle: String? { referenceHistory.last?.chapterTitle }
     /// A single durable place to resume, independent of automatic progress.
     public var readingMarker: Locator? {
         didSet { pushReadingMarker() }
@@ -90,10 +99,26 @@ public final class ReaderController {
     /// Fires when an external web link is tapped, so the app can open it in-app.
     public var onExternalLink: ((URL) -> Void)?
     public var onReadingMarkerPlaced: ((Locator) -> Void)?
+    public var onReferenceNavigationWillBegin: (() -> Void)?
 
     // MARK: - Private
 
     @ObservationIgnored private var webView: WKWebView?
+    @ObservationIgnored private var narrationLocator: Locator?
+    private struct ReferenceReturnPoint {
+        let id = UUID()
+        let locator: Locator
+        let chapterTitle: String?
+    }
+    private enum ReferenceNavigation {
+        case following(ReferenceReturnPoint)
+        case returning(ReferenceReturnPoint)
+        case rollback(ReferenceReturnPoint)
+    }
+    private var referenceHistory: [ReferenceReturnPoint] = []
+    @ObservationIgnored private var referenceNavigation: ReferenceNavigation?
+    @ObservationIgnored private var referenceNavigationID = UUID()
+    @ObservationIgnored private var documentID = UUID().uuidString
     @ObservationIgnored private var pdfView: PDFView?
     @ObservationIgnored private var pdfObserverTokens: [NSObjectProtocol] = []
     @ObservationIgnored private var pdfHighlightAnnotations: [UUID: [PDFAnnotation]] = [:]
@@ -228,6 +253,8 @@ public final class ReaderController {
     }
 
     private func tearDownViews() {
+        dismissReferenceHistory()
+        narrationLocator = nil
         isReminderBadgeFocused = false
         cancelReadingMarkerPlacement()
         if let marker = pdfReadingMarkerAnnotation { marker.page?.removeAnnotation(marker) }
@@ -324,6 +351,8 @@ public final class ReaderController {
         evaluate("__reader.setReminders([])")
 
         isLoading = true
+        errorMessage = nil
+        documentID = UUID().uuidString
         spineIndex = index
         chapterTitle = book.chapterTitle(forSpineIndex: index)
         pendingPosition = position
@@ -337,6 +366,7 @@ public final class ReaderController {
     // MARK: - Navigation
 
     public func nextPage() {
+        guard !isReferenceNavigationInProgress else { return }
         if let pdfView {
             clearSelection()
             pdfView.goToNextPage(nil)
@@ -350,6 +380,7 @@ public final class ReaderController {
     }
 
     public func previousPage() {
+        guard !isReferenceNavigationInProgress else { return }
         if let pdfView {
             clearSelection()
             pdfView.goToPreviousPage(nil)
@@ -363,6 +394,7 @@ public final class ReaderController {
     }
 
     public func goToNextChapter() {
+        guard !isReferenceNavigationInProgress else { return }
         if pdfBook != nil {
             goToAdjacentPDFOutline(forward: true)
             return
@@ -374,6 +406,7 @@ public final class ReaderController {
     }
 
     public func goToPreviousChapter() {
+        guard !isReferenceNavigationInProgress else { return }
         if pdfBook != nil {
             goToAdjacentPDFOutline(forward: false)
             return
@@ -385,6 +418,7 @@ public final class ReaderController {
     }
 
     public func go(to entry: TOCEntry) {
+        guard !isReferenceNavigationInProgress else { return }
         guard let book, let index = book.publication.spineIndex(forPath: entry.path) else { return }
         if index == spineIndex, let fragment = entry.fragment {
             evaluate("__reader.goToFragment(\(jsString(fragment)), true)")
@@ -394,6 +428,7 @@ public final class ReaderController {
     }
 
     public func go(to destination: DocumentDestination) {
+        guard !isReferenceNavigationInProgress else { return }
         switch destination {
         case .epub(let path, let fragment):
             go(to: TOCEntry(title: "", path: path, fragment: fragment))
@@ -403,6 +438,7 @@ public final class ReaderController {
     }
 
     public func go(to locator: Locator) {
+        guard !isReferenceNavigationInProgress else { return }
         if locator.kind == .pdf {
             goToPDFPage(locator.spineIndex, point: pdfDestinationPoint(for: locator))
             return
@@ -414,8 +450,64 @@ public final class ReaderController {
         }
     }
 
+    /// Restore the most recent reference origin without adding another history entry.
+    public func returnFromReference() {
+        guard book != nil, !isLoading, !isReferenceNavigationInProgress,
+              let point = referenceHistory.last else { return }
+        beginReferenceNavigation(.returning(point))
+        if point.locator.spineIndex == spineIndex {
+            restoreReferencePosition(point.locator.start)
+        } else {
+            loadSpineItem(index: point.locator.spineIndex, position: point.locator.start)
+        }
+    }
+
+    /// Reference history belongs only to the currently open book session.
+    public func dismissReferenceHistory() {
+        referenceHistory = []
+        endReferenceNavigation()
+    }
+
+    private func beginReferenceNavigation(_ navigation: ReferenceNavigation) {
+        referenceNavigationID = UUID()
+        referenceNavigation = navigation
+        isReferenceNavigationInProgress = true
+    }
+
+    private func endReferenceNavigation() {
+        referenceNavigationID = UUID()
+        referenceNavigation = nil
+        isReferenceNavigationInProgress = false
+    }
+
+    private func rememberReferenceOrigin(_ point: ReferenceReturnPoint) {
+        if let last = referenceHistory.last,
+           last.locator.spineIndex == point.locator.spineIndex,
+           last.locator.start == point.locator.start { return }
+        referenceHistory.append(point)
+        if referenceHistory.count > 32 { referenceHistory.removeFirst(referenceHistory.count - 32) }
+    }
+
+    private func restoreReferencePosition(_ position: TextPosition) {
+        let operationID = referenceNavigationID
+        evaluate("__reader.restoreReferencePosition(\(json(position)))") { [weak self] result in
+            guard let self, self.referenceNavigationID == operationID else { return }
+            if result as? Bool == true {
+                if case .returning(let point) = self.referenceNavigation,
+                   self.referenceHistory.last?.id == point.id {
+                    self.referenceHistory.removeLast()
+                }
+            } else {
+                if case .rollback(let point) = self.referenceNavigation { self.rememberReferenceOrigin(point) }
+                self.errorMessage = "Couldn’t return to the original passage. Try again."
+            }
+            self.endReferenceNavigation()
+        }
+    }
+
     /// Jumps to a fraction of the whole book, for the progress slider.
     public func seek(toProgress target: Double) {
+        guard !isReferenceNavigationInProgress else { return }
         if let pdfBook {
             let index = Int((min(max(target, 0), 1) * Double(max(0, pdfBook.pageCount - 1))).rounded())
             goToPDFPage(index)
@@ -513,6 +605,59 @@ public final class ReaderController {
         let result = try? await webView.evaluateJavaScript("__reader.narrationText(\(chapter))")
         guard !isLoading, spineIndex == chapter, self.webView === webView else { return nil }
         return result as? String
+    }
+
+    @MainActor
+    public func narrationPassages(selection: ReaderSelection? = nil, from locator: Locator? = nil, fromChapterStart: Bool = false) async -> [ReaderNarrationPassage]? {
+        guard book != nil, !isLoading, let webView else { return nil }
+        let chapter = spineIndex
+        let start = (selection?.locator.start ?? locator?.start).map { json($0) } ?? "null"
+        let end = selection.flatMap { $0.locator.end }.map { json($0) } ?? "null"
+        let result = try? await webView.evaluateJavaScript(
+            "__reader.narrationPassages(\(chapter), \(start), \(end), \(fromChapterStart))"
+        )
+        guard !isLoading, spineIndex == chapter, self.webView === webView,
+              let string = result as? String else { return nil }
+        return try? JSONDecoder().decode([ReaderNarrationPassage].self, from: Data(string.utf8))
+    }
+
+    /// Prepare following chapters without moving the displayed book or publishing its progress.
+    @MainActor
+    public static func narrationPassages(in book: EPUBBook, chapter: Int) async throws -> [ReaderNarrationPassage] {
+        let source = ReaderController()
+        defer { source.tearDown() }
+        let view = source.makeWebView(for: book)
+        view.frame = CGRect(x: 0, y: 0, width: 900, height: 700)
+        source.updateViewport(width: 900, height: 700)
+        source.start(at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        let deadline = Date().addingTimeInterval(15)
+        while source.isLoading && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(25))
+        }
+        try Task.checkCancellation()
+        guard !source.isLoading, source.errorMessage == nil,
+              let passages = await source.narrationPassages(fromChapterStart: true) else {
+            throw URLError(.cannotDecodeContentData)
+        }
+        return passages
+    }
+
+    public func showNarrationPassage(_ locator: Locator?, follow: Bool = false) {
+        narrationLocator = locator
+        if let locator, follow, locator.spineIndex != spineIndex {
+            go(to: locator)
+        } else {
+            pushNarrationRange(follow: follow)
+        }
+    }
+
+    private func pushNarrationRange(follow: Bool = false) {
+        guard let locator = narrationLocator, locator.spineIndex == spineIndex,
+              let data = try? JSONEncoder().encode(locator), let json = String(data: data, encoding: .utf8) else {
+            evaluate("__reader.setNarrationRange(null, false)")
+            return
+        }
+        evaluate("__reader.setNarrationRange(\(json), \(follow))")
     }
 
     /// A few paragraphs around `locator`, capped so prompts stay small.
@@ -1220,11 +1365,17 @@ public final class ReaderController {
     // MARK: - Message handling
 
     fileprivate func reportLoadFailure(_ message: String) {
+        switch referenceNavigation {
+        case .following(let point), .rollback(let point): rememberReferenceOrigin(point)
+        default: break
+        }
+        endReferenceNavigation()
         isLoading = false
         errorMessage = message
     }
 
     fileprivate func handle(message body: [String: Any]) {
+        if let sourceID = body["documentID"] as? String, sourceID != documentID { return }
         guard let type = body["type"] as? String else { return }
 
         switch type {
@@ -1268,6 +1419,7 @@ public final class ReaderController {
     private func startRuntime() {
         var options = settings.runtimeOptions(forWidth: viewportWidth)
         options["spineIndex"] = spineIndex
+        options["documentID"] = documentID
         #if os(macOS)
         options["markerClickDelay"] = NSEvent.doubleClickInterval * 1000
         #endif
@@ -1282,9 +1434,15 @@ public final class ReaderController {
         if pendingGoToEnd {
             evaluate("__reader.goToEnd()")
         } else if let fragment = pendingFragment {
-            evaluate("__reader.goToFragment(\(jsString(fragment)), false)")
+            positionAtReferenceFragment(fragment)
         } else if let position = pendingPosition, !position.elementPath.isEmpty {
-            evaluate("__reader.goToPosition(\(json(position)), false)")
+            if referenceNavigation != nil { restoreReferencePosition(position) }
+            else { evaluate("__reader.goToPosition(\(json(position)), false)") }
+        } else if case .following(let point) = referenceNavigation {
+            rememberReferenceOrigin(point)
+            endReferenceNavigation()
+        } else if let position = pendingPosition, referenceNavigation != nil {
+            restoreReferencePosition(position)
         }
 
         pendingGoToEnd = false
@@ -1293,6 +1451,7 @@ public final class ReaderController {
 
         pushHighlights()
         pushReadingMarker()
+        pushNarrationRange()
         pushPinRestore()
         // Evaluations run in order, so this reports the position after any
         // restore above has been applied. Without it, opening a book at its
@@ -1431,17 +1590,50 @@ public final class ReaderController {
         }
 
         let order = book.publication.readingOrder
-        guard order.indices.contains(spineIndex) else { return }
+        guard !isLoading, !isReferenceNavigationInProgress, order.indices.contains(spineIndex),
+              body["documentID"] as? String == documentID,
+              body["spineIndex"] as? Int == spineIndex,
+              let rawPosition = body["position"] as? [String: Any],
+              let position = decodePosition(rawPosition) else { return }
 
-        let (rawPath, fragment) = EPUBPath.splitFragment(href)
-        if rawPath.isEmpty {
-            evaluate("__reader.goToFragment(\(jsString(fragment ?? "")), true)")
-            return
-        }
-
-        let resolved = EPUBPath.resolve(href: rawPath, relativeTo: order[spineIndex].path)
+        let (rawPath, rawFragment) = EPUBPath.splitFragment(href)
+        let fragment = rawFragment.map { $0.removingPercentEncoding ?? $0 }
+        let resolved = rawPath.isEmpty ? order[spineIndex].path : EPUBPath.resolve(href: rawPath, relativeTo: order[spineIndex].path)
         guard let index = book.publication.spineIndex(forPath: resolved) else { return }
-        loadSpineItem(index: index, fragment: fragment)
+        let origin = ReferenceReturnPoint(locator: Locator(spineIndex: spineIndex, start: position), chapterTitle: chapterTitle)
+        beginReferenceNavigation(.following(origin))
+        if index == spineIndex {
+            let operationID = referenceNavigationID
+            evaluate("__reader.referenceDestination(\(jsString(fragment ?? "")))") { [weak self] result in
+                guard let self, self.referenceNavigationID == operationID else { return }
+                guard let destination = result as? [String: Any], destination["moves"] as? Bool == true else {
+                    self.endReferenceNavigation()
+                    return
+                }
+                self.onReferenceNavigationWillBegin?()
+                self.positionAtReferenceFragment(fragment ?? "")
+            }
+        } else {
+            onReferenceNavigationWillBegin?()
+            loadSpineItem(index: index, fragment: fragment)
+        }
+    }
+
+    private func positionAtReferenceFragment(_ fragment: String) {
+        let operationID = referenceNavigationID
+        evaluate("__reader.goToFragment(\(jsString(fragment)), false)") { [weak self] result in
+            guard let self, self.referenceNavigationID == operationID,
+                  case .following(let origin) = self.referenceNavigation else { return }
+            if result as? Bool == true {
+                self.rememberReferenceOrigin(origin)
+                self.endReferenceNavigation()
+            } else if origin.locator.spineIndex != self.spineIndex {
+                self.referenceNavigation = .rollback(origin)
+                self.loadSpineItem(index: origin.locator.spineIndex, position: origin.locator.start)
+            } else {
+                self.endReferenceNavigation()
+            }
+        }
     }
 
     // MARK: - Progress weighting

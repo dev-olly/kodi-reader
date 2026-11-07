@@ -12,6 +12,11 @@ struct ReaderScreen: View {
     @State private var isShowingTypography = false
     @State private var isShowingReadAloud = false
     @State private var narration = ReadAloudController()
+    @State private var speechPassages: [ReaderNarrationPassage] = []
+    @State private var listeningChapter = 0
+    @State private var listeningChapterTitle = ""
+    @State private var followSpokenText = true
+    @State private var narrationCover: NSImage?
     @State private var editingAnnotation: Annotation?
     @State private var activeHighlight: ActiveHighlight?
     @State private var activeReminder: ActiveReminder?
@@ -52,6 +57,20 @@ struct ReaderScreen: View {
                     .shadow(color: .black.opacity(usesWorkspaceOverlay ? 0.12 : 0), radius: 16, x: -6)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if isShowingReadAloud {
+                ReadAloudPlayerBar(
+                    narration: narration,
+                    title: model.record?.title ?? book.title,
+                    subtitle: book.author + " · " + listeningChapterTitle,
+                    cover: narrationCover,
+                    theme: model.settings.theme,
+                    followText: $followSpokenText,
+                    onPlay: toggleNarration,
+                    onClose: closeNarration
+                )
+            }
+        }
         // A sidebar transition must not animate the web view through a series
         // of intermediate widths and briefly expose reflowed text.
         .animation(nil, value: model.workspace)
@@ -73,6 +92,21 @@ struct ReaderScreen: View {
                 narration.onAnalyticsActivityChanged = { [weak analytics = model.analytics] activity, active in
                     analytics?.setFeatureActivity(activity, active: active)
                 }
+                reader.onReferenceNavigationWillBegin = { [weak narration] in narration?.pause() }
+                narrationCover = book.coverImageData.flatMap(NSImage.init(data:))
+                narration.onPassageChanged = { index in
+                    guard let index, speechPassages.indices.contains(index) else {
+                        reader.showNarrationPassage(nil)
+                        return
+                    }
+                    reader.showNarrationPassage(speechPassages[index].locator,
+                                                follow: followSpokenText && narration.phase == .playing)
+                }
+                narration.loadNextChapter = loadNextListeningChapter
+            }
+            .onChange(of: followSpokenText) { _, follow in
+                guard follow, narration.isActive, speechPassages.indices.contains(narration.passageIndex) else { return }
+                reader.showNarrationPassage(speechPassages[narration.passageIndex].locator, follow: true)
             }
             .sheet(item: sheetAnnotation) { annotation in
                 // Re-read from the model so color/status updates while the sheet is open.
@@ -147,7 +181,10 @@ struct ReaderScreen: View {
             .onChange(of: windowWidth) { _, _ in reader.pinRestoreCurrentPositionOnce() }
             .onDisappear {
                 reader.onReminderActivated = nil
+                reader.onReferenceNavigationWillBegin = nil
                 narration.stop()
+                narration.onPassageChanged = nil
+                narration.loadNextChapter = nil
                 model.suspendNarration = nil
                 reader.cancelReadingMarkerPlacement()
                 model.isNoteEditorOpen = false
@@ -361,11 +398,21 @@ struct ReaderScreen: View {
                         .readerKeyboardShortcuts(
                             reader,
                             enabled: reminderDraft == nil && activeReminder == nil && !reader.isReminderBadgeFocused,
-                            spaceAction: reader.nextPage,
+                            spaceAction: {
+                                if isShowingReadAloud { toggleNarration() }
+                                else { reader.nextPage() }
+                            },
                             onSuppressChange: { model.isNoteEditorOpen = $0 }
                         )
                         .overlay(alignment: .topLeading) { selectionPopover }
                         .overlay(alignment: .bottom) { reminderConfirmation }
+                        .overlay(alignment: .bottomLeading) {
+                            if reader.canReturnFromReference {
+                                ReferenceReturnChip(reader: reader, theme: model.settings.theme)
+                                    .padding(.leading, 24)
+                                    .padding(.bottom, 12)
+                            }
+                        }
                         .overlay(alignment: .bottom) {
                             if reader.isPlacingReadingMarker {
                                 HStack(spacing: 10) {
@@ -516,7 +563,7 @@ struct ReaderScreen: View {
                     },
                     onCopy: { copyToPasteboard(selection.text) },
                     onDismiss: { reader.clearSelection() },
-                    onReadAloud: supportsReadAloud ? { readAloud(selection.text) } : nil,
+                    onListenFromHere: supportsReadAloud ? { startNarration(selection: selection) } : nil,
                     onAddReminder: {
                         beginReminder(title: selection.text, locator: selection.locator, quote: selection.text,
                                       chapter: reader.chapterTitle, anchor: selection.rect)
@@ -535,10 +582,59 @@ struct ReaderScreen: View {
         return code == nil || code == "en" || code == "eng" || code == "und"
     }
 
-    private func readAloud(_ text: String) {
+    private func startNarration(selection: ReaderSelection? = nil) {
+        reader.pinRestoreCurrentPositionOnce()
+        listeningChapter = reader.spineIndex
+        listeningChapterTitle = reader.chapterTitle ?? book.author
+        followSpokenText = true
         reader.clearSelection()
         isShowingReadAloud = true
-        narration.start { text }
+        narration.start(passages: {
+            let passages = await reader.narrationPassages(from: selection?.locator)
+            guard !Task.isCancelled else { return nil }
+            speechPassages = passages ?? []
+            return passages?.map(\.text)
+        })
+    }
+
+    private func toggleNarration() {
+        switch narration.phase {
+        case .playing: narration.pause()
+        case .paused: narration.resume()
+        case .preparing: break
+        case .failed:
+            if narration.hasSession { narration.retry() }
+            else { startNarration() }
+        case .idle:
+            if narration.isFinished && narration.hasSession { narration.seek(to: 0) }
+            else { startNarration() }
+        }
+    }
+
+    private func closeNarration() {
+        reader.pinRestoreCurrentPositionOnce()
+        narration.stop()
+        isShowingReadAloud = false
+        speechPassages = []
+    }
+
+    private func loadNextListeningChapter() async throws -> ReadAloudController.Chapter? {
+        guard case .epub(let epub) = book else { return nil }
+        var chapter = listeningChapter + 1
+        while epub.publication.readingOrder.indices.contains(chapter) {
+            let passages = try await ReaderController.narrationPassages(in: epub, chapter: chapter)
+            try Task.checkCancellation()
+            if !passages.isEmpty {
+                let nextChapter = chapter
+                return ReadAloudController.Chapter(passages: passages.map(\.text)) {
+                    listeningChapter = nextChapter
+                    listeningChapterTitle = epub.chapterTitle(forSpineIndex: nextChapter) ?? epub.title
+                    speechPassages = passages
+                }
+            }
+            chapter += 1
+        }
+        return nil
     }
 
     private func copyToPasteboard(_ text: String) {
@@ -801,16 +897,15 @@ struct ReaderScreen: View {
             UpdateButton()
 
             if supportsReadAloud {
-                Button { isShowingReadAloud.toggle() } label: {
+                Button {
+                    if isShowingReadAloud { closeNarration() }
+                    else { startNarration() }
+                } label: {
                     Label("Listen", systemImage: "headphones")
-                        .foregroundStyle(narration.isActive ? Color.accentColor : Color.primary)
+                        .foregroundStyle(isShowingReadAloud ? model.settings.theme.accent : Color.primary)
                 }
-                .quickHelp("Listen with Paradee")
-                .popover(isPresented: $isShowingReadAloud, arrowEdge: .bottom) {
-                    ReadAloudPopover(narration: narration, canStart: !reader.isLoading && reader.errorMessage == nil) {
-                        narration.start { await reader.narrationTextFromViewport() }
-                    }
-                }
+                .quickHelp(isShowingReadAloud ? "Close audio player" : "Listen to this book")
+                .disabled(reader.isLoading || reader.errorMessage != nil)
             }
 
             Menu {

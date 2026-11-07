@@ -111,6 +111,110 @@ import Foundation
         await waitUntil { resuming.phase == .playing }
         resuming.stop()
         assert(resumeSpy.events.suffix(2) == [.ttsListeningStarted, .ttsListeningStopped] && resumeSpy.activity == [true, false, true, false])
+
+        // Seeking across synthesized passages keeps a paused session silent,
+        // reuses recent audio, and applies speed changes without regeneration.
+        var seekPlayers: [SilentPlaybackDevice] = []
+        var synthesized = 0
+        let seeking = ReadAloudController(prepare: {}, synthesize: { _, _ in
+            synthesized += 1
+            return Array(repeating: 0, count: 20)
+        }, playerFactory: { _ in
+            let player = SilentPlaybackDevice()
+            player.duration = 20
+            seekPlayers.append(player)
+            return player
+        }, sampleRate: { 1 })
+        seeking.start { "First passage.\nSecond passage." }
+        await waitUntil { seeking.phase == .playing && synthesized == 2 }
+        seeking.pause()
+        seeking.seek(to: seeking.durations[0] + 0.5)
+        await waitUntil { seeking.phase == .paused && seekPlayers.count == 2 }
+        assert(seeking.passageIndex == 1 && seekPlayers[1].currentTime == 0.5 && !seekPlayers[1].isPlaying)
+        let synthesisCount = synthesized
+        seeking.seek(to: 5)
+        await waitUntil { seeking.phase == .paused && seekPlayers.count == 3 }
+        assert(synthesized == synthesisCount, "Recent audio should be reused when scrubbing backward")
+        seeking.rate = 2
+        seeking.skip(by: 3)
+        assert(seekPlayers[2].currentTime == 11 && seekPlayers[2].rate == 2)
+        assert(seeking.phase == .paused && !seekPlayers[2].isPlaying)
+        seeking.stop()
+
+        // Continuing chapters is one listening session with one completion.
+        var chapterPlayers: [SilentPlaybackDevice] = []
+        var chaptersLoaded = 0
+        let continuing = ReadAloudController(prepare: {}, synthesize: { _, _ in [0] }, playerFactory: { _ in
+            let player = SilentPlaybackDevice()
+            chapterPlayers.append(player)
+            return player
+        }, sampleRate: { 24_000 })
+        let chapterSpy = ListeningAnalyticsSpy(continuing)
+        continuing.loadNextChapter = {
+            chaptersLoaded += 1
+            return chaptersLoaded == 1 ? ReadAloudController.Chapter(passages: ["Next chapter."]) : nil
+        }
+        continuing.start { "First chapter." }
+        await waitUntil { continuing.phase == .playing }
+        continuing.playbackFinished(identity: ObjectIdentifier(chapterPlayers[0]), successfully: true)
+        await waitUntil { chapterPlayers.count == 2 && continuing.phase == .playing }
+        assert(chapterSpy.events.filter { $0 == .ttsListeningStarted }.count == 1)
+        continuing.playbackFinished(identity: ObjectIdentifier(chapterPlayers[1]), successfully: true)
+        await waitUntil { continuing.phase == .idle }
+        assert(continuing.isFinished && continuing.elapsed == continuing.duration)
+        assert(chapterSpy.events == [.ttsListeningStarted, .ttsListeningCompleted])
+
+        // A late chapter load cannot change the source after the user seeks back.
+        var lateChapter: CheckedContinuation<ReadAloudController.Chapter?, Never>?
+        var sourceChanged = false
+        continuing.loadNextChapter = { await withCheckedContinuation { lateChapter = $0 } }
+        continuing.start { "Current chapter." }
+        await waitUntil { continuing.phase == .playing }
+        continuing.playbackFinished(identity: ObjectIdentifier(chapterPlayers.last!), successfully: true)
+        await waitUntil { lateChapter != nil }
+        continuing.seek(to: 0)
+        await waitUntil { continuing.phase == .playing }
+        lateChapter!.resume(returning: ReadAloudController.Chapter(passages: ["Canceled chapter."], onLoad: { sourceChanged = true }))
+        await Task.yield()
+        assert(!sourceChanged && continuing.phase == .playing)
+        continuing.stop()
+
+        // A reference detour pauses even while model preparation is suspended.
+        var bufferedPreparation: CheckedContinuation<Void, Never>?
+        var bufferedPlayer: SilentPlaybackDevice?
+        var cueAllowedFollowing = false
+        let buffered = ReadAloudController(prepare: {
+            await withCheckedContinuation { bufferedPreparation = $0 }
+        }, synthesize: { _, _ in [0] }, playerFactory: { _ in
+            let player = SilentPlaybackDevice(); bufferedPlayer = player; return player
+        })
+        buffered.onPassageChanged = { index in
+            if index != nil { cueAllowedFollowing = buffered.phase == .playing }
+        }
+        buffered.start { "Do not speak until Play is explicitly pressed." }
+        await waitUntil { bufferedPreparation != nil }
+        buffered.pause()
+        assert(buffered.phase == .paused)
+        bufferedPreparation!.resume(); bufferedPreparation = nil
+        await waitUntil { bufferedPlayer != nil }
+        assert(buffered.phase == .paused && bufferedPlayer?.isPlaying == false && !cueAllowedFollowing)
+        buffered.resume()
+        assert(buffered.phase == .playing && bufferedPlayer?.isPlaying == true && cueAllowedFollowing)
+        buffered.stop()
+
+        // Pressing Play before buffering finishes must resume this passage,
+        // without skipping forward or starting a second model request.
+        bufferedPlayer = nil
+        buffered.start { "Resume the current passage.\nThen the next one." }
+        await waitUntil { bufferedPreparation != nil }
+        buffered.pause()
+        buffered.resume()
+        assert(buffered.phase == .preparing && buffered.passageIndex == 0)
+        bufferedPreparation!.resume(); bufferedPreparation = nil
+        await waitUntil { buffered.phase == .playing }
+        assert(buffered.passageIndex == 0 && bufferedPlayer?.isPlaying == true)
+        buffered.stop()
+        buffered.onPassageChanged = nil
         print("Read aloud analytics: actual output start, pause/resume, preparation/gap exclusion, passage completion, stale callbacks, cancellation, sleep, failure and explicit stop passed; no model or speakers were opened")
     }
 

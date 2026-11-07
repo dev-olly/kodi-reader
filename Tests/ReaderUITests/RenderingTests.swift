@@ -200,6 +200,47 @@ final class RenderingTests: XCTestCase {
         XCTAssertEqual(reader.page, 3, "A single backward turn skipped a complete spread")
     }
 
+    func testWheelGestureConsumesDiagonalScrollingAndMomentumOnce() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: Locator(spineIndex: largestChapterIndex(in: book), start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        var prevented: Bool?
+        reader.evaluateForTesting("""
+            (() => {
+              const event = new WheelEvent('wheel', {deltaX: 8, deltaY: 45, bubbles: true, cancelable: true});
+              window.dispatchEvent(event);
+              return event.defaultPrevented;
+            })()
+            """) { prevented = $0 as? Bool }
+        XCTAssertTrue(wait { prevented != nil })
+        XCTAssertEqual(prevented, true, "Vertical/diagonal trackpad events must not scroll the column canvas freely")
+        for _ in 0..<20 {
+            reader.evaluateForTesting("window.dispatchEvent(new WheelEvent('wheel', {deltaX: 3, deltaY: 20, bubbles: true, cancelable: true}))") { _ in }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.04))
+        }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(reader.page, 1, "One gesture including its momentum should turn one spread")
+        XCTAssertTrue(pageIndexAgreesWithScroll(pagingGeometry(from: reader), swiftPage: 1))
+
+        reader.evaluateForTesting("window.dispatchEvent(new WheelEvent('wheel', {deltaX: -50, deltaY: 2, bubbles: true, cancelable: true}))") { _ in }
+        XCTAssertTrue(wait { reader.page == 0 })
+    }
+
+    func testFreeScrollSettlesOnWholeColumnsAndSmoothTurnsReachTheirTarget() throws {
+        let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
+        reader.start(at: Locator(spineIndex: largestChapterIndex(in: book), start: TextPosition(elementPath: [], offset: 0)), annotations: [])
+        XCTAssertTrue(wait { !reader.isLoading })
+        reader.evaluateForTesting("document.scrollingElement.scrollLeft = window.innerWidth * 1.31; window.dispatchEvent(new Event('scroll'))") { _ in }
+        RunLoop.current.run(until: Date().addingTimeInterval(0.35))
+        let geometry = pagingGeometry(from: reader)
+        XCTAssertEqual(geometry["scrollLeft"] ?? -1, 1.5 * (geometry["innerWidth"] ?? 0), accuracy: 2,
+                       "A two-column reader must never stop with three clipped columns visible")
+
+        reader.evaluateForTesting("__reader.goToPage(3, true); document.scrollingElement.scrollLeft = window.innerWidth * 2.2; window.dispatchEvent(new Event('scroll'))") { _ in }
+        XCTAssertTrue(wait(timeout: 3) { self.pageIndexAgreesWithScroll(self.pagingGeometry(from: reader), swiftPage: 3) },
+                      "An interrupted animation must still reach its intended page")
+    }
+
     /// Edge-tap paging must use the page gutter, not the text column. A click
     /// on a paragraph near the left edge used to fall inside the old 15% zone
     /// and turn the page; it must now stay put. A click on the empty margin

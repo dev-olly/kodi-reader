@@ -34,12 +34,14 @@
     readingMarker: null,
     placingReadingMarker: false,
     ready: false,
+    documentID: null,
   };
 
   // ---------------------------------------------------------------- bridge
 
   function post(message) {
     try {
+      if (state.documentID) message.documentID = state.documentID;
       window.webkit.messageHandlers.reader.postMessage(message);
     } catch (error) {
       /* Running outside the app; nothing is listening. */
@@ -570,18 +572,22 @@
     return true;
   }
 
-  function goToFragment(fragment, animated) {
-    if (!fragment) {
-      goToPage(0, false);
-      return true;
-    }
+  function referenceDestination(fragment) {
+    if (!fragment) return { page: 0, moves: getScrollLeft() > 2 };
     var element =
       document.getElementById(fragment) ||
       document.querySelector('[name="' + cssEscape(fragment) + '"]');
-    if (!element) return false;
+    if (!element) return null;
 
     var page = pageForRect(element.getBoundingClientRect());
-    goToPage(page, animated === true);
+    var target = Math.min(maxScrollLeft(), page * currentStride());
+    return { page: page, moves: Math.abs(target - getScrollLeft()) > 2 };
+  }
+
+  function goToFragment(fragment, animated) {
+    var destination = referenceDestination(fragment);
+    if (!destination) return false;
+    goToPage(destination.page, animated === true);
     return true;
   }
 
@@ -1546,11 +1552,28 @@
     return { status: "orphaned", range: null, locator: null };
   }
 
-  // Range.getClientRects() includes both an inline element's box and its text
-  // fragments. Painting both makes emphasis such as <em> appear more saturated.
+  // Element boxes can span several lines or paragraphs in converted EPUBs.
+  // Paint text fragments alone so a saved highlight follows the glyphs.
   function highlightRects(range) {
     var merged = [];
-    var rects = range.getClientRects();
+    var rects = [];
+    function collect(node) {
+      if (!range.intersectsNode(node)) return;
+      var text = document.createRange();
+      text.selectNodeContents(node);
+      if (node === range.startContainer) text.setStart(node, range.startOffset);
+      if (node === range.endContainer) text.setEnd(node, range.endOffset);
+      var fragments = text.getClientRects();
+      for (var i = 0; i < fragments.length; i++) rects.push(fragments[i]);
+    }
+    var ancestor = range.commonAncestorContainer;
+    if (ancestor.nodeType === Node.TEXT_NODE) {
+      collect(ancestor);
+    } else {
+      var walker = document.createTreeWalker(ancestor, NodeFilter.SHOW_TEXT, null);
+      var node;
+      while ((node = walker.nextNode())) collect(node);
+    }
     for (var i = 0; i < rects.length; i++) {
       var rect = rects[i];
       if (rect.width < 1 || rect.height < 1) continue;
@@ -1675,17 +1698,19 @@
     return nodes;
   }
 
-  function narrationText(spineIndex) {
+  function narrationPassages(spineIndex, selectedStart, selectedEnd, fromChapterStart) {
     if (!state.ready || spineIndex !== state.spineIndex) return null;
-    var position = currentPosition();
+    var position = selectedStart || (fromChapterStart ? null : currentPosition());
     var start = position && nodeAtPath(position.elementPath);
+    var end = selectedEnd && nodeAtPath(selectedEnd.elementPath);
     var boundary = null;
+    var endBoundary = null;
     var offset = 0;
     if (start) {
       var isText = start.nodeType === Node.TEXT_NODE;
       offset = clamp(position.offset, 0, isText ? start.length : start.childNodes.length);
       // The viewport caret can land just inside the first visible word.
-      if (isText && /^[\p{L}\p{N}\p{M}]/u.test(start.data.slice(offset))) {
+      if (!selectedStart && isText && /^[\p{L}\p{N}\p{M}]/u.test(start.data.slice(offset))) {
         var prefix = start.data.slice(0, offset).match(/[\p{L}\p{N}\p{M}]+$/u);
         if (prefix) offset -= prefix[0].length;
       }
@@ -1693,9 +1718,16 @@
       boundary.setStart(start, offset);
       boundary.collapse(true);
     }
+    if (end) {
+      endBoundary = document.createRange();
+      endBoundary.setStart(end, clamp(selectedEnd.offset, 0,
+        end.nodeType === Node.TEXT_NODE ? end.length : end.childNodes.length));
+      endBoundary.collapse(true);
+    }
 
     var blocks = [];
-    var parts = [];
+    var text = "";
+    var map = [];
     var parent = null;
     var excluded = new WeakMap();
     function isExcluded(el) {
@@ -1711,13 +1743,46 @@
     }
 
     function appendBlock() {
-      var text = parts.join("").replace(/\u00ad/g, "").replace(/\s+/g, " ").trim();
-      if (text) blocks.push(text);
-      parts = [];
+      var trimmedEnd = text.trimEnd().length;
+      var cursor = 0;
+      while (cursor < trimmedEnd) {
+        while (cursor < trimmedEnd && /\s/.test(text[cursor])) cursor++;
+        if (cursor >= trimmedEnd) break;
+        var limit = Math.min(trimmedEnd, cursor + 400);
+        var cut = limit;
+        if (limit < trimmedEnd) {
+          var prefix = text.slice(cursor, limit);
+          var sentences = /[.!?…]["'”’)]*\s+/g;
+          var match;
+          while ((match = sentences.exec(prefix))) cut = cursor + match.index + match[0].length;
+          if (cut === limit) {
+            var space = prefix.lastIndexOf(" ");
+            if (space > 0) cut = cursor + space;
+          }
+          // Keep UTF-16 surrogate pairs together at a forced word split.
+          if (/[\uDC00-\uDFFF]/.test(text[cut])) cut--;
+        }
+        var contentEnd = cut;
+        while (contentEnd > cursor && /\s/.test(text[contentEnd - 1])) contentEnd--;
+        var first = map[cursor], last = map[contentEnd - 1];
+        if (first && last && /[\p{L}\p{N}]/u.test(text.slice(cursor, contentEnd))) {
+          var spoken = text.slice(cursor, contentEnd);
+          blocks.push({ text: spoken, locator: {
+            spineIndex: spineIndex,
+            start: { elementPath: pathOfNode(first.node), offset: first.offset },
+            end: { elementPath: pathOfNode(last.node), offset: last.offset + 1 },
+            text: spoken
+          }});
+        }
+        cursor = cut;
+      }
+      text = "";
+      map = [];
     }
 
     collectReadableNodes().forEach(function (node) {
       if (boundary && boundary.comparePoint(node, node.length) < 0) return;
+      if (endBoundary && endBoundary.comparePoint(node, 0) > 0) return;
       var element = node.parentElement;
       if (isExcluded(element) || getComputedStyle(element).visibility !== "visible") return;
       var block = blockParent(node);
@@ -1725,11 +1790,41 @@
         appendBlock();
         parent = block;
       }
-      if (node.previousSibling && node.previousSibling.localName === "br") parts.push(" ");
-      parts.push(node === start ? node.data.slice(offset) : node.data);
+      if (node.previousSibling && node.previousSibling.localName === "br" && text && !text.endsWith(" ")) {
+        text += " ";
+        map.push({ node: node, offset: 0 });
+      }
+      var begin = node === start ? offset : 0;
+      var finish = node === end ? selectedEnd.offset : node.length;
+      for (var i = begin; i < finish; i++) {
+        var character = node.data[i];
+        if (character === "\u00ad") continue;
+        if (/\s/.test(character)) {
+          if (!text || text.endsWith(" ")) continue;
+          character = " ";
+        }
+        text += character;
+        map.push({ node: node, offset: i });
+      }
     });
     appendBlock();
-    return blocks.join("\n\n");
+    return blocks;
+  }
+
+  function setNarrationRange(locator, follow) {
+    if (!window.CSS || !CSS.highlights) return;
+    var highlight = CSS.highlights.get("kodi-narration");
+    if (!highlight) {
+      highlight = new Highlight();
+      CSS.highlights.set("kodi-narration", highlight);
+    }
+    // Reuse the registered Highlight so WebKit invalidates the previous painted range.
+    highlight.clear();
+    if (!locator || locator.spineIndex !== state.spineIndex) return;
+    var range = rangeFromLocator(locator);
+    if (!range) return;
+    highlight.add(range);
+    if (follow) goToPosition(locator.start, false);
   }
 
   function blockParent(node) {
@@ -2060,7 +2155,9 @@
     var link = target && target.closest ? target.closest("a") : null;
     if (link && link.getAttribute("href")) {
       event.preventDefault();
-      post({ type: "link", href: link.getAttribute("href") });
+      if (pendingScrollTarget != null) scrollToOffset(pendingScrollTarget, false);
+      post({ type: "link", href: link.getAttribute("href"),
+        spineIndex: state.spineIndex, position: currentPosition() });
       return;
     }
 
@@ -2124,27 +2221,45 @@
   }
 
   function onWheel(event) {
-    // Trackpad horizontal swipes should page rather than scroll the columns.
-    if (Math.abs(event.deltaX) <= Math.abs(event.deltaY)) return;
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+    var horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    var delta = horizontal ? event.deltaX : event.deltaY;
+    var unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+    // Let authored scrollable panels consume movement within their bounds.
+    var element = event.target && event.target.nodeType === Node.ELEMENT_NODE ? event.target : null;
+    while (element && element !== document.body && element !== document.documentElement) {
+      var style = getComputedStyle(element);
+      var overflow = horizontal ? style.overflowX : style.overflowY;
+      var position = horizontal ? element.scrollLeft : element.scrollTop;
+      var maximum = horizontal ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight;
+      if (/^(auto|scroll)$/.test(overflow) && maximum > 1 &&
+          (delta > 0 ? position < maximum - 1 : position > 1)) return;
+      element = element.parentElement;
+    }
+    // Vertical and diagonal wheel packets can also pan WebKit's column canvas.
     event.preventDefault();
-    if (wheelCooldown) return;
-
-    if (event.deltaX > 24) {
+    if (!delta || !state.ready || viewportResizePending) return;
+    if (wheelResetTimer) clearTimeout(wheelResetTimer);
+    wheelResetTimer = setTimeout(function () {
+      wheelDistance = 0;
+      wheelConsumed = false;
+      wheelResetTimer = null;
+    }, 180);
+    if (wheelConsumed) return;
+    if (wheelDistance * delta < 0) wheelDistance = 0;
+    wheelDistance += delta * unit;
+    if (Math.abs(wheelDistance) < 24) return;
+    wheelConsumed = true;
+    if (wheelDistance > 0) {
       if (!nextPage()) post({ type: "reachedEnd" });
-      startWheelCooldown();
-    } else if (event.deltaX < -24) {
+    } else {
       if (!previousPage()) post({ type: "reachedStart" });
-      startWheelCooldown();
     }
   }
 
-  var wheelCooldown = false;
-  function startWheelCooldown() {
-    wheelCooldown = true;
-    setTimeout(function () {
-      wheelCooldown = false;
-    }, 320);
-  }
+  var wheelDistance = 0;
+  var wheelConsumed = false;
+  var wheelResetTimer = null;
 
   var resizeTimer = null;
   function onResize() {
@@ -2186,15 +2301,19 @@
     viewportCaptureTimer = setTimeout(function () {
       viewportCaptureTimer = null;
       if (viewportResizePending) return;
-      // Smooth page turns report once at their intended target before WebKit
-      // finishes scrolling. Capture and report again after it settles so the
-      // resize fallback and persisted locator both describe the visible page.
-      if (scrollSettleTimer) {
-        clearTimeout(scrollSettleTimer);
+      // Honor an interrupted page turn's exact destination. Uncontrolled
+      // native scrolling must settle on a whole physical column as well.
+      var columnStride = currentStride() / Math.max(1, state.columns);
+      var target = pendingScrollTarget != null ? pendingScrollTarget :
+        Math.round(getScrollLeft() / columnStride) * columnStride;
+      if (Math.abs(getScrollLeft() - clamp(target, 0, maxScrollLeft())) > 1) {
+        scrollToOffset(target, false);
+      } else {
+        if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
         scrollSettleTimer = null;
+        pendingPageTarget = null;
+        pendingScrollTarget = null;
       }
-      pendingPageTarget = null;
-      pendingScrollTarget = null;
       notifyPageChanged();
     }, 120);
   }
@@ -2212,6 +2331,7 @@
         });
         if (!options.variables) remapAuthorSurfaces();
         if (typeof options.spineIndex === "number") state.spineIndex = options.spineIndex;
+        if (options.documentID) state.documentID = options.documentID;
       } else {
         remapAuthorSurfaces();
       }
@@ -2261,6 +2381,12 @@
     nextPage: nextPage,
     previousPage: previousPage,
     goToFragment: goToFragment,
+    referenceDestination: referenceDestination,
+    restoreReferencePosition: function (position) {
+      if (!position || (position.elementPath.length && !rangeFromPosition(position))) return false;
+      goToPosition(position, false);
+      return true;
+    },
     goToPosition: goToPosition,
     pinRestore: pinRestore,
     pinRestoreOnce: pinRestoreOnce,
@@ -2276,7 +2402,14 @@
     setReadingMarker: setReadingMarker,
     setReadingMarkerPlacement: setReadingMarkerPlacement,
     clearSelection: clearSelection,
-    narrationText: narrationText,
+    narrationText: function (spineIndex) {
+      var passages = narrationPassages(spineIndex);
+      return passages && passages.map(function (passage) { return passage.text; }).join("\n\n");
+    },
+    narrationPassages: function (spineIndex, start, end, fromChapterStart) {
+      return JSON.stringify(narrationPassages(spineIndex, start, end, fromChapterStart));
+    },
+    setNarrationRange: setNarrationRange,
     extractSurroundingPassage: function (start, end) {
       try {
         return JSON.stringify(extractSurroundingPassage(start, end));

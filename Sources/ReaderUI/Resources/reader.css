@@ -94,6 +94,12 @@ html body.tei-text {
   background-color: var(--color-selection);
 }
 
+::highlight(kodi-narration) {
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-link);
+  text-decoration-thickness: 2px;
+}
+
 /*
  * The book's own colours and absolute font sizes rarely suit a reader chrome,
  * so descendants take ours instead.
@@ -128,9 +134,17 @@ body h6 {
 }
 
 body a {
-  color: var(--color-link) !important;
+  color: inherit !important;
   background-color: transparent;
   font-family: inherit;
+}
+
+body a[href] {
+  color: var(--color-link) !important;
+}
+
+body a:not([href]) {
+  text-decoration: none !important;
 }
 
 body p,

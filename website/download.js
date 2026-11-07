@@ -1,4 +1,4 @@
-const RELEASES_PAGE = "https://github.com/dev-olly/kodi-reader/releases/latest";
+const LATEST_INSTALLER = "https://github.com/dev-olly/kodi-reader/releases/latest/download/KodiReader.dmg";
 const RELEASES_API = "https://api.github.com/repos/dev-olly/kodi-reader/releases/latest";
 
 (function wireDownload() {
@@ -6,7 +6,7 @@ const RELEASES_API = "https://api.github.com/repos/dev-olly/kodi-reader/releases
   const versionEl = document.getElementById("version");
   if (!buttons.length) return;
 
-  buttons.forEach((button) => { button.href = RELEASES_PAGE; });
+  buttons.forEach((button) => { button.href = LATEST_INSTALLER; });
 
   fetch(RELEASES_API, {
     headers: { Accept: "application/vnd.github+json" },
@@ -36,6 +36,6 @@ const RELEASES_API = "https://api.github.com/repos/dev-olly/kodi-reader/releases
       }
     })
     .catch(function () {
-      // Keep the Releases page fallback.
+      // Keep the direct latest-installer link if release metadata is unavailable.
     });
 })();

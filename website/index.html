@@ -4,9 +4,9 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kodi Reader — A little more absorbed.</title>
-<meta name="description" content="Your books. Your thoughts. A native EPUB and PDF reader for Mac, with notes, drawing, and Ask AI.">
+<meta name="description" content="A native EPUB and PDF reader for Mac. Highlight, sketch, record audio notes, listen to English EPUBs, and keep research reminders beside the page.">
 <meta property="og:title" content="Kodi Reader">
-<meta property="og:description" content="Your books. Your thoughts. A little more absorbed.">
+<meta property="og:description" content="Your books. Your thoughts. Read EPUBs and PDFs, keep audio notes, listen, and save a little curiosity for later.">
 <meta property="og:image" content="https://www.kodi-reader.app/assets/social-card.png">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
@@ -35,14 +35,14 @@
 <main id="main">
   <section class="hero" aria-labelledby="hero-title">
     <div class="hero-copy wrap">
-      <p class="eyebrow"><span class="status-dot"></span>A NATIVE EPUB READER FOR MAC</p>
+      <p class="eyebrow"><span class="status-dot"></span>A NATIVE EPUB &amp; PDF READER FOR MAC</p>
       <h1 id="hero-title">Kodi Reader<span>A little more <em>absorbed.</em></span></h1>
-      <p class="intro">For the books you get lost in.<br>And the ideas you want to keep.</p>
+      <p class="intro">For the books you get lost in.<br>And the ideas you want to write, record, or return to.</p>
       <div class="hero-actions">
-        <a id="download" data-download class="button" href="https://github.com/dev-olly/kodi-reader/releases/latest"><span aria-hidden="true">↓</span> Download for Mac</a>
+        <a id="download" data-download class="button" href="https://github.com/dev-olly/kodi-reader/releases/latest/download/KodiReader.dmg"><span aria-hidden="true">↓</span> Download for Mac</a>
         <a class="text-link" href="#features">Take a closer look <span aria-hidden="true">↗</span></a>
       </div>
-      <p class="compatibility">Free &amp; open source <span>·</span> macOS 15+ <span>·</span> Apple Silicon<span id="version"></span></p>
+      <p class="compatibility">Free core &amp; open source <span>·</span> macOS 15+ <span>·</span> Apple Silicon<span id="version"></span></p>
     </div>
     <div class="hero-product wrap">
       <div class="product-caption"><span>LESS DISTRACTION. MORE BOOK.</span><span>Made for your Mac ↘</span></div>
@@ -59,16 +59,18 @@
       </div>
     </div>
   </section>
-  <div class="principles wrap" aria-label="At a glance"><p><span>01</span> Bring your own EPUBs</p><p><span>02</span> Keep your thoughts close</p><p><span>03</span> Read at your own pace</p></div>
+  <div class="principles wrap" aria-label="At a glance"><p><span>01</span> Bring your EPUBs &amp; PDFs</p><p><span>02</span> Notes, sketches &amp; audio</p><p><span>03</span> Keep curiosity for later</p></div>
   <section class="features wrap" id="features" aria-labelledby="features-title">
     <div class="section-heading"><p class="eyebrow">GO BEYOND THE PAGE</p><h2 id="features-title">Good books leave you<br>with <em>something.</em></h2><p>A question. A note. A new way of seeing things.<br>Keep it all right where it started.</p></div>
     <div class="feature-tabs" role="tablist" aria-label="Explore Kodi Reader features">
       <button id="tab-ai" role="tab" aria-selected="true" aria-controls="panel-ai" tabindex="0">Ask AI</button>
       <button id="tab-notes" role="tab" aria-selected="false" aria-controls="panel-notes" tabindex="-1">Notes</button>
       <button id="tab-draw" role="tab" aria-selected="false" aria-controls="panel-draw" tabindex="-1">Draw</button>
+      <button id="tab-audio" role="tab" aria-selected="false" aria-controls="panel-audio" tabindex="-1">Audio</button>
+      <button id="tab-reminders" role="tab" aria-selected="false" aria-controls="panel-reminders" tabindex="-1">Reminders</button>
     </div>
     <article class="feature-panel" id="panel-ai" role="tabpanel" aria-labelledby="tab-ai" tabindex="0">
-      <div class="feature-copy"><span class="feature-number">01 / ASK AI</span><h3>Follow your curiosity.</h3><p>Unpack a tricky passage. Explore an unfamiliar idea. Ask questions with the book as context, whenever you choose.</p><span class="feature-detail">Opt-in. Always your call.</span></div>
+      <div class="feature-copy"><span class="feature-number">01 / ASK AI</span><h3>Follow your curiosity.</h3><p>Unpack a tricky passage. Explore an unfamiliar idea. Ask questions with the book as context, whenever you choose.</p><span class="feature-detail">Opt-in and online. Always your call.</span></div>
       <div class="feature-demo ask-ai-preview" aria-label="Illustrative ask-ai preview"><div class="demo-toolbar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="demo-book">A conversation with your book</span><img class="demo-brand-mark" src="assets/kodi-logo.svg" width="24" height="24" alt=""></div><div class="mini-content"><p class="mini-eyebrow">CHAPTER 03 · ON NOTICING</p><blockquote>“Perhaps the most useful thing we can learn is how to <mark>look a little longer.</mark>”</blockquote><div class="sample-question">What does “look a little longer” mean?</div><div class="ai-answer"><strong>A little room for understanding.</strong><p id="sample-answer">The author invites us to slow down. Stay with one idea long enough to notice what it means to you.</p></div><div class="sample-prompts"><button data-question="meaning" aria-pressed="true">Explain the idea</button><button data-question="practice" aria-pressed="false">Put it into practice</button></div></div><div class="mini-foot">Your ideas belong beside the words.<span> Kodi Reader</span></div></div>
     </article>
     <article class="feature-panel" id="panel-notes" role="tabpanel" aria-labelledby="tab-notes" tabindex="0" hidden>
@@ -79,6 +81,64 @@
       <div class="feature-copy"><span class="feature-number">03 / DRAW</span><h3>Think outside the lines.</h3><p>Some ideas make more sense as a sketch. Draw connections and explore your thoughts on a canvas attached to a highlight.</p><span class="feature-detail">A little room to think. Offline, too.</span></div>
       <div class="feature-demo draw-preview" aria-label="Illustrative draw preview"><div class="demo-toolbar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="demo-book">Some thoughts take shape</span><img class="demo-brand-mark" src="assets/kodi-logo.svg" width="24" height="24" alt=""></div><div class="sketch-header"><span class="mini-eyebrow">CHAPTER 03 · A CONNECTION</span><button id="clear-sketch" title="Clear your drawing" aria-label="Clear your drawing">↺</button></div><div class="sketch-stage"><svg viewBox="0 0 600 330" role="img" aria-label="Attention leads to noticing and a new perspective"><path d="M185 108 C235 100 247 190 286 197 M394 198 C452 189 432 103 479 99" fill="none" stroke="#648676" stroke-width="2"/><rect x="37" y="65" width="152" height="74" rx="5" fill="#e1eddb" stroke="#8dad80"/><text x="113" y="110" text-anchor="middle" fill="#304b35" font-size="22" font-family="Georgia,serif">attention</text><rect x="253" y="175" width="159" height="68" rx="5" fill="#fff2c1" stroke="#cdb666"/><text x="332" y="217" text-anchor="middle" fill="#655527" font-size="22" font-family="Georgia,serif">noticing</text><text x="475" y="73" text-anchor="middle" fill="#496256" font-size="18" font-family="Georgia,serif" font-style="italic">a new perspective</text><text x="82" y="274" fill="#809086" font-size="17" font-family="Georgia,serif" font-style="italic">stay with the idea.</text></svg><canvas id="sample-canvas" aria-label="Freehand sketch area"></canvas></div><div class="mini-foot">Your ideas belong beside the words.<span> Kodi Reader</span></div></div>
     </article>
+    <article class="feature-panel" id="panel-audio" role="tabpanel" aria-labelledby="tab-audio" tabindex="0" hidden>
+      <div class="feature-copy">
+        <span class="feature-number">04 / AUDIO</span>
+        <h3>Keep the thought.<br>In your own voice.</h3>
+        <p>Type <code>/audio</code> in a note and talk it through. Record, pause, resume, and keep a player beside the passage. Seek through the waveform, rename the recording, or export it as an audio file.</p>
+        <p>When macOS supports your current language, turn a recording into text on your Mac, then expand or copy it. Recordings and saved transcripts travel with your note exports.</p>
+        <div class="feature-aside"><span class="feature-aside-label">MORE OF A LISTENER?</span><p>Listen to a selected passage or the rest of the current English EPUB chapter. Choose from four voices and set your own pace.</p></div>
+        <span class="feature-detail">Local audio. A little room to listen.</span>
+      </div>
+      <div class="feature-demo audio-preview" aria-label="Illustrative audio note and listening preview; no audio plays on this website">
+        <div class="demo-toolbar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="demo-book">Some thoughts sound like you</span><img class="demo-brand-mark" src="assets/kodi-logo.svg" width="24" height="24" alt=""></div>
+        <div class="audio-demo-content">
+          <p class="mini-eyebrow">CHAPTER 03 / A THOUGHT WORTH KEEPING</p>
+          <blockquote>“Give an idea enough room<br>to become your own.”</blockquote>
+          <div class="audio-note-card">
+            <div class="audio-note-heading"><span class="audio-note-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M6 11v1a6 6 0 0 0 12 0v-1M12 18v3M9 21h6"/></svg></span><div><h4>An idea for tomorrow</h4><p>Audio note <span>·</span> 42 seconds</p></div><span class="audio-local-label">ON THIS MAC</span></div>
+            <svg class="audio-waveform" viewBox="0 0 420 64" role="img" aria-label="Illustrative waveform of a saved audio note"><path d="M4 28v8M14 22v20M24 26v12M34 16v32M44 23v18M54 10v44M64 17v30M74 23v18M84 7v50M94 18v28M104 22v20M114 13v38M124 19v26M134 26v12M144 15v34M154 6v52M164 16v32M174 23v18M184 12v40M194 20v24M204 26v12M214 18v28M224 9v46M234 14v36M244 22v20M254 17v30M264 5v54M274 15v34M284 24v16M294 20v24M304 12v40M314 18v28M324 25v14M334 21v22M344 14v36M354 22v20M364 18v28M374 26v12M384 22v20M394 27v10M404 25v14M414 29v6" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/></svg>
+            <div class="audio-transcript"><p class="mini-eyebrow">SAVED TRANSCRIPT</p><p>“I want to try this after my next chapter. Pick one idea, put it in my own words, and see where it takes me.”</p></div>
+          </div>
+          <div class="listen-demo"><span class="listen-symbol" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m11 5-6 4H2v6h3l6 4V5ZM15 8a6 6 0 0 1 0 8M18 5a10 10 0 0 1 0 14"/></svg></span><div><strong>Listen from Here</strong><p>English EPUB <span>·</span> Four voices <span>·</span> Your pace</p></div><span class="listen-badge">1.0×</span></div>
+        </div>
+        <div class="mini-foot"><span class="demo-illustration-label">ILLUSTRATIVE PREVIEW · NO AUDIO PLAYBACK</span></div>
+      </div>
+    </article>
+    <article class="feature-panel" id="panel-reminders" role="tabpanel" aria-labelledby="tab-reminders" tabindex="0" hidden>
+      <div class="feature-copy">
+        <span class="feature-number">05 / RESEARCH REMINDERS</span>
+        <h3>Stay with the book.<br>Keep the question.</h3>
+        <p>A topic catches your eye. Select it, choose <strong>Remind</strong>, and make the prefilled Add Reminder title your own. The original passage stays attached, so the thought still makes sense later.</p>
+        <p>A small magnifier marks unfinished research beside the words. Or type <code>/remind</code> or <code>/task</code> in a note. Find it all in one list, return to the source, and check it off when you’re done.</p>
+        <span class="feature-detail">Try it here. Edit the topic and add a reminder ↗</span>
+      </div>
+      <div class="feature-demo reminders-preview" aria-label="Interactive research reminder demo">
+        <div class="demo-toolbar"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="demo-book">System Design / Databases</span><img class="demo-brand-mark" src="assets/kodi-logo.svg" width="24" height="24" alt=""></div>
+        <div class="research-demo-content">
+          <p class="mini-eyebrow">KEEP READING. COME BACK CURIOUS.</p>
+          <p class="research-passage" id="sample-reminder-source"><span>Database sharding</span> distributes records across multiple servers. <button id="demo-reminder-marker" class="research-marker" type="button" aria-label="Open the Add Reminder demo" aria-controls="sample-reminder-form" aria-expanded="true" title="Add a research reminder"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg></button></p>
+          <form class="research-composer" id="sample-reminder-form">
+            <div class="research-composer-heading"><span class="research-composer-icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 5 5"/></svg></span><div><p class="mini-eyebrow">RESEARCH LATER</p><h4>Add Reminder</h4></div></div>
+            <label for="sample-reminder-title">What would you like to research?</label>
+            <input id="sample-reminder-title" value="Database sharding" maxlength="180" required autocomplete="off">
+            <div class="research-original"><span>FROM YOUR BOOK</span><p>Database sharding</p></div>
+            <div class="research-composer-actions"><button id="cancel-reminder-preview" type="button">Cancel</button><button class="research-add" type="submit"><span aria-hidden="true">+</span> Add Reminder</button></div>
+          </form>
+          <div class="research-queue"><div class="research-queue-heading"><p class="mini-eyebrow">YOUR REMINDERS <span id="reminder-open-count">01 OPEN</span></p><button type="button" id="add-another-reminder">Add another <span aria-hidden="true">+</span></button></div><ul id="sample-reminder-list"><li class="research-task"><label><input type="checkbox"><span>Compare sharding strategies</span></label><a href="#sample-reminder-source">System Design <span>·</span> Databases <span aria-hidden="true">↗</span></a></li></ul></div>
+          <p id="reminder-demo-status" class="research-demo-status" role="status">Edit the topic, then add it to the demo list.</p>
+        </div>
+        <div class="mini-foot"><span class="demo-illustration-label">INTERACTIVE DEMO · CHANGES STAY ON THIS PAGE</span></div>
+      </div>
+    </article>
+  </section>
+  <section class="local-first wrap" aria-labelledby="local-first-title">
+    <div class="local-first-heading"><p class="eyebrow">A QUIETER KIND OF READER</p><h2 id="local-first-title">Close to the book.<br><em>Close to you.</em></h2></div>
+    <div class="local-first-details">
+      <article><span class="local-first-number">01 / ON YOUR MAC</span><h3>Your thoughts stay close.</h3><p>Read, write, sketch, record, and save research topics offline. EPUB listening runs locally after its voice and pronunciation files download. On-device transcription may need a macOS speech-model download and a supported language.</p></article>
+      <article><span class="local-first-number">02 / ACROSS YOUR MACS</span><h3>Carry the margin with you.</h3><p>Choose optional iCloud or Google Drive sync for your books and notes, including sketches, audio, saved transcripts, and reminders. You decide what travels; sync is off by default.</p></article>
+      <article><span class="local-first-number">03 / YOUR CALL</span><h3>A free reader. A choice to ask.</h3><p>The core app is free and open source. Ask AI is a separate, opt-in online feature for conversations about your book. <a href="/pricing">See how Ask AI works <span aria-hidden="true">↗</span></a></p></article>
+    </div>
   </section>
   <section class="reading-band" aria-labelledby="reading-title"><div class="wrap reading-layout">
     <div><p class="eyebrow">THE READING PART? JUST RIGHT.</p><h2 id="reading-title">Make yourself<br><em>at home.</em></h2><p>A reading experience that gets out of your way.<br>Open a book. Find your rhythm. Stay awhile.</p></div>
@@ -86,12 +146,14 @@
       <article><span aria-hidden="true">Aa</span><div><h3>Your type of reading.</h3><p>Typography and themes that feel right to you.</p></div></article>
       <article><span aria-hidden="true">↔</span><div><h3>One page at a time.</h3><p>Paginated reading, with room for the words to breathe.</p></div></article>
       <article><span aria-hidden="true">⌑</span><div><h3>Right where you left off.</h3><p>Your reading progress stays put as your layout changes.</p></div></article>
+      <article><span aria-hidden="true">⌕</span><div><h3>A library you can find your way around.</h3><p>Search by title or author. Sort your books and filter by reading status.</p></div></article>
+      <article><span aria-hidden="true">◷</span><div><h3>A little time, just for reading.</h3><p>Set an optional daily reading goal. Keep your time and streak private, on your Mac.</p></div></article>
     </div>
   </div></section>
   <section id="get-kodi" class="download-section wrap">
-    <p class="eyebrow">YOUR NEXT CHAPTER</p><h2>A good book.<br>A little <em>Kodi.</em></h2><p>No store. No subscription. Just your books.</p>
-    <a data-download class="button" href="https://github.com/dev-olly/kodi-reader/releases/latest"><span aria-hidden="true">↓</span> Download for Mac</a>
-    <p class="compatibility">macOS 15+ <span>·</span> Apple Silicon <span>·</span> Free &amp; open source</p>
+    <p class="eyebrow">YOUR NEXT CHAPTER</p><h2>A good book.<br>A little <em>Kodi.</em></h2><p>Your EPUBs and PDFs. Your notes, voice, and next question.<br>A free core app, with Ask AI there when you choose.</p>
+    <a data-download class="button" href="https://github.com/dev-olly/kodi-reader/releases/latest/download/KodiReader.dmg"><span aria-hidden="true">↓</span> Download for Mac</a>
+    <p class="compatibility">macOS 15+ <span>·</span> Apple Silicon <span>·</span> Free core &amp; open source</p>
     <details><summary>Opening Kodi for the first time</summary><p>Kodi Reader is signed with Developer ID and notarized by Apple. Open the downloaded disk image and drag Kodi Reader into Applications. macOS may ask you to confirm the first time you open an app downloaded from the Internet.</p></details>
   </section>
 </main>

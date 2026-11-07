@@ -105,3 +105,98 @@ function filterDemoMargin() {
 ['demo-search', 'demo-filter', 'demo-chapter-filter'].forEach(id => {
   document.getElementById(id).addEventListener(id === 'demo-search' ? 'input' : 'change', filterDemoMargin);
 });
+
+// This queue is an ephemeral product demo. It never sends or saves a visitor's text.
+const reminderForm = document.getElementById('sample-reminder-form');
+const reminderTitle = document.getElementById('sample-reminder-title');
+const reminderList = document.getElementById('sample-reminder-list');
+const reminderMarker = document.getElementById('demo-reminder-marker');
+const reminderStatus = document.getElementById('reminder-demo-status');
+const reminderSource = document.getElementById('sample-reminder-source');
+const selectedTopic = 'Database sharding';
+
+function showReminderForm({ reset = false } = {}) {
+  if (reset) reminderTitle.value = selectedTopic;
+  reminderTitle.setCustomValidity('');
+  reminderForm.hidden = false;
+  reminderMarker.setAttribute('aria-expanded', 'true');
+  reminderStatus.textContent = 'Edit the topic, then add it to the demo list.';
+  reminderTitle.focus({ preventScroll: true });
+  reminderTitle.select();
+}
+
+function hideReminderForm() {
+  reminderForm.hidden = true;
+  reminderMarker.setAttribute('aria-expanded', 'false');
+}
+
+function updateReminderCount() {
+  const count = reminderList.querySelectorAll('input[type="checkbox"]:not(:checked)').length;
+  document.getElementById('reminder-open-count').textContent = `${String(count).padStart(2, '0')} OPEN`;
+}
+
+reminderForm.addEventListener('submit', event => {
+  event.preventDefault();
+  const title = reminderTitle.value.trim();
+  if (!title) {
+    reminderTitle.setCustomValidity('Add a topic you would like to research.');
+    reminderTitle.reportValidity();
+    return;
+  }
+  reminderTitle.setCustomValidity('');
+  const item = document.createElement('li');
+  item.className = 'research-task';
+  const label = document.createElement('label');
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  const text = document.createElement('span');
+  text.textContent = title;
+  label.append(checkbox, text);
+  const source = document.createElement('a');
+  source.href = '#sample-reminder-source';
+  source.textContent = 'System Design · Databases ↗';
+  source.setAttribute('aria-label', `Return to the source passage for ${title}`);
+  item.append(label, source);
+  reminderList.append(item);
+  updateReminderCount();
+  hideReminderForm();
+  reminderStatus.textContent = `“${title}” added to this demo. The selected passage stays attached.`;
+  checkbox.focus({ preventScroll: true });
+});
+
+reminderTitle.addEventListener('input', () => reminderTitle.setCustomValidity(''));
+document.getElementById('cancel-reminder-preview').addEventListener('click', () => {
+  hideReminderForm();
+  reminderTitle.value = selectedTopic;
+  reminderStatus.textContent = 'Canceled. No reminder was added.';
+  reminderMarker.focus({ preventScroll: true });
+});
+reminderForm.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  event.preventDefault();
+  document.getElementById('cancel-reminder-preview').click();
+});
+reminderMarker.addEventListener('click', () => {
+  if (reminderForm.hidden) showReminderForm({ reset: true });
+  else {
+    hideReminderForm();
+    reminderStatus.textContent = 'The demo list keeps your topics close to their source.';
+  }
+});
+document.getElementById('add-another-reminder').addEventListener('click', () => showReminderForm({ reset: true }));
+reminderList.addEventListener('change', event => {
+  if (!event.target.matches('input[type="checkbox"]')) return;
+  const item = event.target.closest('.research-task');
+  item.classList.toggle('is-complete', event.target.checked);
+  updateReminderCount();
+  const title = item.querySelector('label > span').textContent;
+  reminderStatus.textContent = `“${title}” marked ${event.target.checked ? 'complete' : 'open'} in this demo.`;
+});
+reminderList.addEventListener('click', event => {
+  if (!event.target.closest('a')) return;
+  reminderSource.classList.remove('is-source-active');
+  // Restart the small source cue even when the same link is followed again.
+  void reminderSource.offsetWidth;
+  reminderSource.classList.add('is-source-active');
+  setTimeout(() => reminderSource.classList.remove('is-source-active'), 1200);
+});

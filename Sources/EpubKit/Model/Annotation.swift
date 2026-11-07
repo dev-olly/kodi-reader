@@ -29,6 +29,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     /// True when a drawing sidecar exists for this highlight.
     public var hasDrawing: Bool
     public var sketches: [NoteSketch]
+    public var audioRecordings: [NoteAudio]
     public var recoveredFrom: UUID? = nil
 
     public init(
@@ -42,7 +43,8 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         modifiedAt: Date = Date(),
         anchorStatus: AnchorStatus = .unknown,
         hasDrawing: Bool = false,
-        sketches: [NoteSketch] = []
+        sketches: [NoteSketch] = [],
+        audioRecordings: [NoteAudio] = []
     ) {
         self.id = id
         self.locator = locator
@@ -55,14 +57,15 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         self.anchorStatus = anchorStatus
         self.hasDrawing = hasDrawing || !sketches.isEmpty
         self.sketches = sketches
+        self.audioRecordings = audioRecordings
     }
 
     public var hasNote: Bool {
         !(note ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    /// Markdown, a drawing, or both.
-    public var hasContent: Bool { hasNote || hasDrawing || !sketches.isEmpty }
+    /// Written notes and media attached to the passage.
+    public var hasContent: Bool { hasNote || hasDrawing || !sketches.isEmpty || !audioRecordings.isEmpty }
 
     /// Notes must always paint their quote with a background highlight. This
     /// also repairs older notes that were saved with the underline-only style.
@@ -102,7 +105,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing, sketches, recoveredFrom
+        case id, locator, text, note, color, chapterTitle, createdAt, modifiedAt, anchorStatus, hasDrawing, sketches, audioRecordings, recoveredFrom
     }
 
     public init(from decoder: Decoder) throws {
@@ -119,6 +122,7 @@ public struct Annotation: Codable, Identifiable, Hashable, Sendable {
         anchorStatus = try container.decodeIfPresent(AnchorStatus.self, forKey: .anchorStatus) ?? .unknown
         hasDrawing = try container.decodeIfPresent(Bool.self, forKey: .hasDrawing) ?? false
         sketches = try container.decodeIfPresent([NoteSketch].self, forKey: .sketches) ?? []
+        audioRecordings = try container.decodeIfPresent([NoteAudio].self, forKey: .audioRecordings) ?? []
         hasDrawing = hasDrawing || !sketches.isEmpty
         recoveredFrom = try container.decodeIfPresent(UUID.self, forKey: .recoveredFrom)
     }
@@ -152,6 +156,8 @@ public enum NoteMarkdown {
     public enum PreviewBlock: Equatable, Sendable {
         case paragraph(String)
         case sketch(UUID, String)
+        case audio(UUID, String)
+        case reminder(UUID, String)
         case unorderedList([String])
         case orderedList([String])
         case taskList([TaskItem])
@@ -179,13 +185,17 @@ public enum NoteMarkdown {
     /// Fence split, then prose → paragraphs / lists for reliable Preview rendering.
     public static func previewBlocks(of markdown: String) -> [PreviewBlock] {
         var blocks: [PreviewBlock] = []
-        let references = SketchReference.references(in: markdown)
+        let references: [(range: NSRange, block: PreviewBlock)] = (
+            SketchReference.references(in: markdown).map { ($0.range, PreviewBlock.sketch($0.id, $0.title)) }
+            + AudioReference.references(in: markdown).map { ($0.range, PreviewBlock.audio($0.id, $0.title)) }
+            + ReminderReference.references(in: markdown).map { ($0.range, PreviewBlock.reminder($0.id, $0.title)) }
+        ).sorted { $0.range.location < $1.range.location }
         if !references.isEmpty {
             let ns = markdown as NSString
             var cursor = 0
             for reference in references {
                 blocks += previewBlocks(of: ns.substring(with: NSRange(location: cursor, length: reference.range.location - cursor)))
-                blocks.append(.sketch(reference.id, reference.title))
+                blocks.append(reference.block)
                 cursor = NSMaxRange(reference.range)
             }
             blocks += previewBlocks(of: ns.substring(from: cursor))
@@ -430,7 +440,9 @@ public enum NoteMarkdown {
 
     /// Strips a small set of markdown markers for list previews.
     public static func plainPreview(of markdown: String) -> String {
-        var text = markdown.replacingOccurrences(of: "</?u>", with: "", options: .regularExpression)
+        let reminders = ReminderReference.replacing(in: markdown) { $0.title }
+        let recordings = AudioReference.replacing(in: reminders) { $0.title }
+        var text = recordings.replacingOccurrences(of: "</?u>", with: "", options: .regularExpression)
         let patterns = [
             #"\*\*(.+?)\*\*"#,
             #"__(.+?)__"#,
@@ -565,7 +577,8 @@ public enum NoteMarkdown {
     public static func exportDocument(
         bookTitle: String,
         author: String,
-        annotations: [Annotation]
+        annotations: [Annotation],
+        reminders: [ResearchReminder] = []
     ) -> String {
         let authorLine = author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? "Unknown Author"
@@ -595,7 +608,7 @@ public enum NoteMarkdown {
             parts.append("*— \(exportLiteral(chapterHeading)), \(exportLiteral(authorLine)), \(exportLiteral(bookTitle))*")
             parts.append("")
             if annotation.hasNote {
-                parts.append(annotation.note ?? "")
+                parts.append(ReminderReference.exporting(annotation.note ?? "", reminders: reminders))
                 parts.append("")
             }
             if annotation.hasDrawing && annotation.sketches.isEmpty {
@@ -688,11 +701,14 @@ public struct BookRecord: Codable, Identifiable, Sendable {
     public var lastKnownPath: String?
     /// Copy inside Application Support, e.g. `Books/<id>.epub` or `.pdf`.
     public var importedRelativePath: String?
+    /// First known library import date. Nil for records created before it was tracked.
+    public var addedAt: Date?
     public var lastOpenedAt: Date
     public var position: Locator?
     public var progress: Double
     public var annotations: [Annotation]
     public var bookmarks: [Bookmark]
+    public var reminders: [ResearchReminder]
     /// Ask AI conversation for this book. Optional so older library files decode.
     /// Kept as the active thread's messages; prefer `chats` for the full history.
     public var chatMessages: [ChatMessage]?
@@ -719,10 +735,12 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         progress: Double = 0,
         annotations: [Annotation] = [],
         bookmarks: [Bookmark] = [],
+        reminders: [ResearchReminder] = [],
         chatMessages: [ChatMessage]? = nil,
         chats: [ChatThread]? = nil,
         activeChatID: UUID? = nil,
-        sourceURL: URL? = nil
+        sourceURL: URL? = nil,
+        addedAt: Date? = Date()
     ) {
         self.id = id
         self.title = title
@@ -731,11 +749,13 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         self.fileBookmark = fileBookmark
         self.lastKnownPath = lastKnownPath
         self.importedRelativePath = importedRelativePath
+        self.addedAt = addedAt
         self.lastOpenedAt = lastOpenedAt
         self.position = position
         self.progress = progress
         self.annotations = annotations
         self.bookmarks = bookmarks
+        self.reminders = reminders
         self.chatMessages = chatMessages
         self.chats = chats
         self.activeChatID = activeChatID
@@ -763,8 +783,8 @@ public struct BookRecord: Codable, Identifiable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case id, title, author, documentKind, fileBookmark, lastKnownPath
-        case importedRelativePath, lastOpenedAt, position, progress, annotations
-        case bookmarks, chatMessages, chats, activeChatID, sourceURL, cloudIdentity, cloudFile, isHiddenFromRecents
+        case importedRelativePath, addedAt, lastOpenedAt, position, progress, annotations
+        case bookmarks, reminders, chatMessages, chats, activeChatID, sourceURL, cloudIdentity, cloudFile, isHiddenFromRecents
     }
 
     public init(from decoder: Decoder) throws {
@@ -776,11 +796,13 @@ public struct BookRecord: Codable, Identifiable, Sendable {
         fileBookmark = try container.decodeIfPresent(Data.self, forKey: .fileBookmark)
         lastKnownPath = try container.decodeIfPresent(String.self, forKey: .lastKnownPath)
         importedRelativePath = try container.decodeIfPresent(String.self, forKey: .importedRelativePath)
+        addedAt = try container.decodeIfPresent(Date.self, forKey: .addedAt)
         lastOpenedAt = try container.decode(Date.self, forKey: .lastOpenedAt)
         position = try container.decodeIfPresent(Locator.self, forKey: .position)
         progress = try container.decodeIfPresent(Double.self, forKey: .progress) ?? 0
         annotations = try container.decodeIfPresent([Annotation].self, forKey: .annotations) ?? []
         bookmarks = try container.decodeIfPresent([Bookmark].self, forKey: .bookmarks) ?? []
+        reminders = try container.decodeIfPresent([ResearchReminder].self, forKey: .reminders) ?? []
         chatMessages = try container.decodeIfPresent([ChatMessage].self, forKey: .chatMessages)
         chats = try container.decodeIfPresent([ChatThread].self, forKey: .chats)
         activeChatID = try container.decodeIfPresent(UUID.self, forKey: .activeChatID)

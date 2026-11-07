@@ -15,6 +15,29 @@ enum AnalyticsEventName: String, Codable, CaseIterable, Sendable {
     case noteEditSession = "note_edit_session"
     case sketchCreated = "sketch_created"
     case sketchEditSession = "sketch_edit_session"
+    case sketchOpened = "sketch_opened"
+    case sketchDeleted = "sketch_deleted"
+    case reminderCreated = "reminder_created"
+    case reminderUpdated = "reminder_updated"
+    case reminderCompleted = "reminder_completed"
+    case reminderReopened = "reminder_reopened"
+    case reminderDeleted = "reminder_deleted"
+    case reminderRestored = "reminder_restored"
+    case reminderOpened = "reminder_opened"
+    case audioRecordingStarted = "audio_recording_started"
+    case audioRecordingPaused = "audio_recording_paused"
+    case audioRecordingResumed = "audio_recording_resumed"
+    case audioRecordingSaved = "audio_recording_saved"
+    case audioRecordingDiscarded = "audio_recording_discarded"
+    case audioRecordingFailed = "audio_recording_failed"
+    case audioRecordingHeartbeat = "audio_recording_heartbeat"
+    case ttsListeningStarted = "tts_listening_started"
+    case ttsListeningPaused = "tts_listening_paused"
+    case ttsListeningResumed = "tts_listening_resumed"
+    case ttsListeningStopped = "tts_listening_stopped"
+    case ttsListeningCompleted = "tts_listening_completed"
+    case ttsListeningFailed = "tts_listening_failed"
+    case ttsListeningHeartbeat = "tts_listening_heartbeat"
     case webOpened = "web_opened"
     case aiRequestStarted = "ai_request_started"
     case aiRequestCompleted = "ai_request_completed"
@@ -24,6 +47,17 @@ enum AnalyticsEventName: String, Codable, CaseIterable, Sendable {
 
 enum AnalyticsContentType: String, Codable, Sendable { case epub, pdf, web }
 enum AnalyticsErrorCategory: String, Codable, Sendable { case network, authentication, credits, service }
+
+enum AnalyticsFeatureActivity: CaseIterable, Hashable, Sendable {
+    case audioRecording, ttsListening
+
+    var heartbeatEvent: AnalyticsEventName {
+        switch self {
+        case .audioRecording: return .audioRecordingHeartbeat
+        case .ttsListening: return .ttsListeningHeartbeat
+        }
+    }
+}
 
 struct AnalyticsEvent: Codable, Equatable, Sendable {
     struct Properties: Codable, Equatable, Sendable {
@@ -37,7 +71,7 @@ struct AnalyticsEvent: Codable, Equatable, Sendable {
 
         init(platform: String, version: String, build: String,
              contentType: AnalyticsContentType?, errorCategory: AnalyticsErrorCategory?,
-             requestID: UUID? = nil, schemaVersion: Int = 2) {
+             requestID: UUID? = nil, schemaVersion: Int = 3) {
             self.platform = platform
             self.version = version
             self.build = build
@@ -154,4 +188,33 @@ struct AnalyticsReadingClock {
 
     mutating func interacted(at now: TimeInterval) { lastInteraction = now }
     func hasIdleGap(at now: TimeInterval) -> Bool { now > lastInteraction + Self.idleTimeout }
+}
+
+/// Audio continues while the app is in the background, but only the controllers
+/// can mark it active. Preparation, permission prompts, and pauses never count.
+struct AnalyticsFeatureClock {
+    private(set) var isActive = false
+    private var lastTick: TimeInterval
+    private var fractionalSeconds: TimeInterval = 0
+
+    init(now: TimeInterval) { lastTick = now }
+
+    mutating func advance(to now: TimeInterval) -> Int {
+        defer { lastTick = now }
+        guard isActive, now.isFinite, lastTick.isFinite, now >= lastTick else { return 0 }
+        let elapsed = min(60, now - lastTick) + fractionalSeconds
+        let seconds = min(60, Int(elapsed))
+        fractionalSeconds = elapsed - Double(seconds)
+        return seconds
+    }
+
+    mutating func setActive(_ active: Bool, now: TimeInterval) {
+        isActive = active
+        lastTick = now
+    }
+
+    mutating func reset(now: TimeInterval) {
+        lastTick = now
+        fractionalSeconds = 0
+    }
 }

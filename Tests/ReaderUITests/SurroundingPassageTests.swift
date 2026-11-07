@@ -38,6 +38,44 @@ final class SurroundingPassageTests: XCTestCase {
         XCTAssertFalse(result.after.contains(result.quote))
     }
 
+    @MainActor
+    func testNarrationStartsAtViewportAndSkipsHiddenAndNavigationText() async throws {
+        let (reader, chapter) = try loadTextChapter(waitForPosition: false)
+        let deadline = Date().addingTimeInterval(5)
+        while reader.isLoading && Date() < deadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertFalse(reader.isLoading)
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            reader.evaluateForTesting("""
+                document.body.insertAdjacentHTML('beforeend',
+                  '<nav>Skip this navigation sentinel</nav>' +
+                  '<p style="display: none">Skip this hidden sentinel</p>' +
+                  '<p>Read <em>this</em> final sentinel.</p>');
+                __reader.notifyState();
+                """) { _ in continuation.resume() }
+        }
+        let opening = await reader.narrationTextFromViewport()
+        let chapterText = try XCTUnwrap(opening)
+        XCTAssertTrue(chapterText.hasSuffix("Read this final sentinel."))
+        XCTAssertFalse(chapterText.contains("Skip this"))
+
+        reader.nextPage()
+        let pageDeadline = Date().addingTimeInterval(5)
+        while reader.page == 0 && Date() < pageDeadline {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertGreaterThan(reader.page, 0)
+        let page = reader.page
+        let remaining = await reader.narrationTextFromViewport()
+        let remainingText = try XCTUnwrap(remaining)
+        XCTAssertLessThan(remainingText.count, chapterText.count)
+        XCTAssertFalse(remainingText.contains(chapterText.prefix(80)))
+        XCTAssertTrue(remainingText.hasSuffix("Read this final sentinel."))
+        XCTAssertEqual(reader.page, page)
+        XCTAssertEqual(reader.spineIndex, chapter)
+    }
+
     private func middleParagraphLocator(in reader: ReaderController) throws -> Locator {
         let script = """
         (function () {
@@ -84,7 +122,7 @@ final class SurroundingPassageTests: XCTestCase {
 
     // MARK: - Harness
 
-    private func loadTextChapter() throws -> (ReaderController, Int) {
+    private func loadTextChapter(waitForPosition: Bool = true) throws -> (ReaderController, Int) {
         let url = SampleBooks.url(SampleBooks.frankenstein)
         try XCTSkipUnless(FileManager.default.fileExists(atPath: url.path))
 
@@ -119,7 +157,9 @@ final class SurroundingPassageTests: XCTestCase {
             at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)),
             annotations: []
         )
-        XCTAssertTrue(spin { !reader.isLoading && ready })
+        if waitForPosition {
+            XCTAssertTrue(spin { !reader.isLoading && ready })
+        }
         return (reader, chapter)
     }
 

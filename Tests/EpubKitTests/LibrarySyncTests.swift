@@ -27,6 +27,7 @@ private final class TestTransport: SyncTransport {
     var error: Error?
     var failDownloadAfter: Int?
     var callbackContexts: [Bool] = []
+    var collectedTombstones: [SyncEntity] = []
     init(_ cloud: TestCloud) { self.cloud = cloud }
     func accountID() async throws -> String { if let error { throw error }; return account }
     func configure(aiEnabled: Bool, states: [String: Data]) async throws { self.aiEnabled = aiEnabled }
@@ -65,13 +66,109 @@ private final class TestTransport: SyncTransport {
         guard let data = cloud.chunks[hash] else { throw SyncFailure.corruptAsset }
         try data.write(to: file, options: .atomic)
     }
-    func collectDeletedAssets(_ tombstones: [SyncEntity]) async throws {}
+    func collectDeletedAssets(_ tombstones: [SyncEntity]) async throws { collectedTombstones += tombstones }
     func stop() async {}
 }
 
 @MainActor
 final class LibrarySyncTests: XCTestCase {
     private var roots: [URL] = []
+    func testReminderUpgradeRecollectsPreviouslyCollectedBookDeletionOnce() async throws {
+        let cloud = TestCloud(), local = try store()
+        let deletion = SyncEntity(bookID: "deleted-book", kind: .book, key: "metadata",
+            body: Data(), deviceID: "old-mac", deleted: true)
+        cloud.entities[deletion.id] = deletion; cloud.versions[deletion.id] = Data("1".utf8)
+        var journal = SyncJournal()
+        journal.preferences = .init(mode: .notesOnly)
+        journal.accountID = "test-account"
+        journal.local = [deletion.id: deletion]; journal.base = [deletion.id: deletion]
+        journal.collectedTombstones = [SyncCoding.hash(try SyncCoding.encode(deletion))]
+        let path = local.rootDirectory.appendingPathComponent("Sync/journal.json")
+        try FileManager.default.createDirectory(at: path.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try SyncCoding.encode(journal).write(to: path)
+        let transport = TestTransport(cloud)
+        let coordinator = LibrarySyncCoordinator(store: local, transport: transport)
+        try await run(coordinator)
+        XCTAssertEqual(transport.collectedTombstones, [deletion])
+        let saved = try JSONDecoder().decode(SyncJournal.self, from: Data(contentsOf: path))
+        XCTAssertEqual(saved.reminderCleanupVersion, 1)
+        XCTAssertTrue(saved.collectedTombstones?.contains(SyncCoding.hash(try SyncCoding.encode(deletion))) == true)
+        await coordinator.stop()
+        let nextTransport = TestTransport(cloud)
+        let restarted = LibrarySyncCoordinator(store: local, transport: nextTransport)
+        try await run(restarted)
+        XCTAssertTrue(nextTransport.collectedTombstones.isEmpty)
+    }
+
+    func testReminderCreateCompleteReopenAndDeleteSyncAcrossLibraries() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let original = note(), local = try book(in: a, with: original)
+        let reminder = ResearchReminder(title: "Research database sharding", source: .note,
+            locator: original.locator, quotedText: original.text, annotationID: original.id)
+        try a.updateAndFlush(local.id) { $0.reminders = [reminder] }
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!)?.id)
+        XCTAssertEqual(b.record(for: bID)?.reminders, [reminder])
+        try a.renameBook(local.id, to: "Renamed book")
+        try await run(sa); try await run(sb)
+        XCTAssertEqual(b.record(for: bID)?.title, "Renamed book")
+        XCTAssertEqual(b.record(for: bID)?.reminders, [reminder])
+        try b.updateAndFlush(bID) { $0.reminders[0].completedAt = Date(); $0.annotations.removeAll() }
+        try await run(sb); try await run(sa)
+        XCTAssertTrue(try XCTUnwrap(a.record(for: local.id)?.reminders.first).isCompleted)
+        XCTAssertEqual(a.record(for: local.id)?.reminders.first?.quotedText, original.text)
+        try a.updateAndFlush(local.id) { $0.reminders[0].completedAt = nil }
+        try await run(sa); try await run(sb)
+        XCTAssertFalse(try XCTUnwrap(b.record(for: bID)?.reminders.first).isCompleted)
+        try a.updateAndFlush(local.id) { $0.reminders.removeAll() }
+        try await run(sa); try await run(sb)
+        XCTAssertTrue(try XCTUnwrap(b.record(for: bID)).reminders.isEmpty)
+        XCTAssertTrue(cloud.entities.values.contains { $0.kind == .reminder && $0.deleted })
+    }
+
+    func testReminderUndoAfterSyncedDeletionRestoresItsOriginalIdentity() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let local = try book(in: a)
+        var reminder = ResearchReminder(title: "Research later", locator: .startOfBook())
+        try a.updateAndFlush(local.id) { $0.reminders = [reminder] }
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!)?.id)
+        try a.updateAndFlush(local.id) { $0.reminders.removeAll() }
+        try await run(sa); try await run(sb)
+        XCTAssertTrue(try XCTUnwrap(b.record(for: bID)).reminders.isEmpty)
+        reminder.modifiedAt = Date()
+        try a.updateAndFlush(local.id) { $0.reminders = [reminder] }
+        try await run(sa); try await run(sb)
+        XCTAssertEqual(b.record(for: bID)?.reminders, [reminder])
+        let entities = cloud.entities.values.filter { $0.kind == .reminder }
+        XCTAssertEqual(entities.count, 1)
+        XCTAssertFalse(try XCTUnwrap(entities.first).deleted)
+    }
+
+    func testWholeBookDeletionPreservesConcurrentOfflineReminder() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let local = try book(in: a)
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!)?.id)
+        let reminder = ResearchReminder(title: "Offline research", source: .page, locator: .startOfBook())
+        try b.updateAndFlush(bID) { $0.reminders.append(reminder) }; sb.checkpoint()
+        try sa.deleteEverywhere(local); try await run(sa); try await run(sb)
+        XCTAssertNil(b.record(cloudIdentity: local.cloudIdentity!))
+        let recovered = try XCTUnwrap(b.allBooks().first)
+        XCTAssertEqual(recovered.reminders, [reminder])
+        XCTAssertTrue(recovered.title.hasPrefix("Recovered version:"))
+        XCTAssertNil(recovered.cloudIdentity)
+    }
+
     func testNativeFetchScopeNeverIncludesAssetsOrDisabledHistory() {
         let library = CKRecordZone.ID(zoneName: CloudKitSyncTransport.libraryZone)
         let history = CKRecordZone.ID(zoneName: CloudKitSyncTransport.chatZone)
@@ -136,6 +233,27 @@ final class LibrarySyncTests: XCTestCase {
     private func run(_ sync: LibrarySyncCoordinator) async throws {
         sync.syncNow(); try await settle(sync)
     }
+    func testImportDateSyncsAndRemainsStableAfterReading() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let local = try book(in: a)
+        let added = Date(timeIntervalSinceReferenceDate: 1000)
+        try a.updateAndFlush(local.id) { $0.addedAt = added }
+        var time = Date()
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud), now: { time })
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud), now: { time })
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let received = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!))
+        XCTAssertEqual(received.addedAt, added)
+        let lastRead = Date(timeIntervalSinceReferenceDate: 3000)
+        try b.updateAndFlush(received.id) { $0.lastOpenedAt = lastRead }
+        time = time.addingTimeInterval(31)
+        try await run(sb); try await run(sa)
+        XCTAssertEqual(a.record(for: local.id)?.addedAt, added)
+        XCTAssertEqual(b.record(for: received.id)?.addedAt, added)
+        XCTAssertEqual(a.record(for: local.id)?.lastOpenedAt, lastRead)
+    }
+
     func testNotesSyncAcrossTwoStoresWithoutBooksOrAITransfers() async throws {
         let cloud = TestCloud(), a = try store(), b = try store()
         let note = note(), local = try book(in: a, with: note, file: Data("book".utf8))
@@ -748,6 +866,155 @@ final class LibrarySyncTests: XCTestCase {
             }
         }
         XCTAssertEqual(editedScenes, ["remote", "local"])
+    }
+
+    func testAudioRecordingsSyncInNotesOnlyAndRemoveDeletedAssets() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let first = NoteAudio(title: "First thought", duration: 12, waveform: [0.1, 0.8, 0.2])
+        let second = NoteAudio(title: "Another thought", duration: 5)
+        var original = note("Before\n\n" + first.markdown + "\n\n" + second.markdown)
+        original.audioRecordings = [first, second]
+        let local = try book(in: a, with: original, file: Data("book file should stay local".utf8))
+        let source = a.rootDirectory.appendingPathComponent("recorded.m4a")
+        for (index, recording) in original.audioRecordings.enumerated() {
+            try Data("audio-\(index)".utf8).write(to: source)
+            try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        }
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let received = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!))
+        XCTAssertNil(b.existingImportedURL(for: received))
+        XCTAssertEqual(received.annotations.first?.audioRecordings, original.audioRecordings)
+        for (index, recording) in original.audioRecordings.enumerated() {
+            XCTAssertEqual(try Data(contentsOf: b.audioStore.recordingURL(bookID: received.id, annotationID: original.id, audioID: recording.id)), Data("audio-\(index)".utf8))
+        }
+        a.update(local.id) { record in
+            record.annotations[0].audioRecordings = [second]
+            record.annotations[0].note = second.markdown
+        }
+        try a.audioStore.deleteRecording(bookID: local.id, annotationID: original.id, audioID: first.id)
+        sa.checkpoint(); try await run(sa); try await run(sb)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: b.audioStore.recordingURL(bookID: received.id, annotationID: original.id, audioID: first.id).path))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: b.audioStore.recordingURL(bookID: received.id, annotationID: original.id, audioID: second.id).path))
+        a.update(local.id) { $0.annotations.removeAll() }
+        sa.checkpoint(); try await run(sa); try await run(sb)
+        XCTAssertTrue(b.record(for: received.id)!.annotations.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: b.audioStore.recordingURL(bookID: received.id, annotationID: original.id, audioID: second.id).path))
+    }
+
+    func testAbsentAudioFileKeepsPublishedManifestWhenNoteIsEdited() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let recording = NoteAudio(title: "Pending audio", duration: 8)
+        var original = note(recording.markdown); original.audioRecordings = [recording]
+        let local = try book(in: a, with: original)
+        let source = a.rootDirectory.appendingPathComponent("recording.m4a")
+        try Data("kept audio".utf8).write(to: source)
+        try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = try XCTUnwrap(b.record(cloudIdentity: local.cloudIdentity!)?.id)
+        let published = try XCTUnwrap(cloud.entities.values.first { $0.kind == .annotation })
+        let manifest = try XCTUnwrap(published.value(SyncedAnnotation.self).audioRecordings?.first?.recording)
+        try b.audioStore.deleteRecording(bookID: bID, annotationID: original.id, audioID: recording.id)
+        b.update(bID) { $0.annotations[0].note = "More thoughts\n\n" + recording.markdown }
+        sb.checkpoint(); try await run(sb)
+        let updated = try XCTUnwrap(cloud.entities[published.id]).value(SyncedAnnotation.self)
+        XCTAssertEqual(updated.audioRecordings?.first?.recording, manifest)
+        XCTAssertEqual(updated.annotation.audioRecordings, [recording])
+    }
+
+    func testAudioConflictCopiesIndependentIDsAndRecordingFiles() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let recording = NoteAudio(title: "Thought", duration: 9)
+        var original = note(recording.markdown); original.audioRecordings = [recording]
+        let local = try book(in: a, with: original)
+        let source = a.rootDirectory.appendingPathComponent("recording.m4a")
+        try Data("original".utf8).write(to: source)
+        try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = b.record(cloudIdentity: local.cloudIdentity!)!.id
+        try Data("remote".utf8).write(to: source)
+        try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        sa.checkpoint(); try await run(sa)
+        try Data("local".utf8).write(to: source)
+        try b.audioStore.saveRecording(from: source, bookID: bID, annotationID: original.id, audioID: recording.id)
+        sb.checkpoint(); try await run(sb)
+        let copies = try XCTUnwrap(b.record(for: bID)).annotations
+        XCTAssertEqual(copies.count, 2)
+        XCTAssertEqual(Set(copies.flatMap { $0.audioRecordings.map(\.id) }).count, 2)
+        var audio = Set<Data>()
+        for copy in copies {
+            XCTAssertEqual(Set(AudioReference.references(in: copy.note ?? "").map(\.id)), Set(copy.audioRecordings.map(\.id)))
+            let recording = try XCTUnwrap(copy.audioRecordings.first)
+            audio.insert(try Data(contentsOf: b.audioStore.recordingURL(bookID: bID, annotationID: copy.id, audioID: recording.id)))
+        }
+        XCTAssertEqual(audio, [Data("remote".utf8), Data("local".utf8)])
+    }
+
+    func testInterruptedAudioDownloadKeepsLastDurableFileAndRetries() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let recording = NoteAudio(title: "Thought", duration: 7)
+        var original = note(recording.markdown); original.audioRecordings = [recording]
+        let local = try book(in: a, with: original)
+        let source = a.rootDirectory.appendingPathComponent("recording.m4a")
+        try Data("old recording".utf8).write(to: source)
+        try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        let ta = TestTransport(cloud), tb = TestTransport(cloud)
+        var time = Date()
+        let sa = LibrarySyncCoordinator(store: a, transport: ta)
+        let sb = LibrarySyncCoordinator(store: b, transport: tb, now: { time })
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = b.record(cloudIdentity: local.cloudIdentity!)!.id
+        let destination = b.audioStore.recordingURL(bookID: bID, annotationID: original.id, audioID: recording.id)
+        try Data("new recording".utf8).write(to: source)
+        try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        a.update(local.id) { $0.annotations[0].note = "Updated thought\n\n" + recording.markdown }
+        sa.checkpoint(); try await run(sa)
+        tb.failDownloadAfter = tb.downloads
+        sb.syncNow()
+        for _ in 0..<200 {
+            await Task.yield()
+            if sb.status.phase != .syncing { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertEqual(sb.status.phase, .offline)
+        XCTAssertEqual(try Data(contentsOf: destination), Data("old recording".utf8))
+        XCTAssertEqual(b.record(for: bID)?.annotations.first?.note, original.note)
+        tb.failDownloadAfter = nil
+        time += 120
+        try await run(sb)
+        XCTAssertEqual(try Data(contentsOf: destination), Data("new recording".utf8))
+        XCTAssertTrue(b.record(for: bID)!.annotations.first!.note!.contains("Updated thought"))
+    }
+
+    func testWholeBookDeletionPreservesOfflineAudioInRecoveryLibrary() async throws {
+        let cloud = TestCloud(), a = try store(), b = try store()
+        let recording = NoteAudio(title: "Kept thought", duration: 4)
+        var original = note(recording.markdown); original.audioRecordings = [recording]
+        let local = try book(in: a, with: original)
+        let source = a.rootDirectory.appendingPathComponent("recording.m4a")
+        try Data("recover me".utf8).write(to: source)
+        try a.audioStore.saveRecording(from: source, bookID: local.id, annotationID: original.id, audioID: recording.id)
+        let sa = LibrarySyncCoordinator(store: a, transport: TestTransport(cloud))
+        let sb = LibrarySyncCoordinator(store: b, transport: TestTransport(cloud))
+        await sa.setPreferences(.init(mode: .notesOnly)); try await settle(sa)
+        await sb.setPreferences(.init(mode: .notesOnly)); try await settle(sb)
+        let bID = b.record(cloudIdentity: local.cloudIdentity!)!.id
+        b.update(bID) { $0.annotations[0].note = "Offline edit\n\n" + recording.markdown }; sb.checkpoint()
+        try sa.deleteEverywhere(local); try await run(sa); try await run(sb)
+        XCTAssertNil(b.record(cloudIdentity: local.cloudIdentity!))
+        let recovered = try XCTUnwrap(b.allBooks().first)
+        XCTAssertTrue(recovered.title.hasPrefix("Recovered version:"))
+        XCTAssertEqual(try Data(contentsOf: b.audioStore.recordingURL(bookID: recovered.id, annotationID: original.id, audioID: recording.id)), Data("recover me".utf8))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: b.audioStore.recordingURL(bookID: bID, annotationID: original.id, audioID: recording.id).path))
     }
 
     func testIdentityIgnoresFilenameAndDistinguishesContents() throws {

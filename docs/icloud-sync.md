@@ -23,6 +23,18 @@ Switching to Google Drive requires a confirmed copy from the fully merged local
 library. Kodi never syncs both clouds at once, and the previous iCloud copy stays
 in your Apple account. See [Google Drive sync](google-drive-sync.md).
 
+## Research reminders
+
+Research reminders sync with either notes mode, including their source passage,
+title, and completion status. Removing a book download keeps its reminders;
+deleting the book everywhere removes them. Deleting a source note keeps the task
+and its saved passage.
+
+Update Kodi on every Mac before using reminders across devices. Older versions
+continue syncing their existing library data but do not show reminders. If an
+older Mac deletes and reimports a book before an updated Mac receives the
+deletion, earlier reminders may reappear.
+
 ## Downloads and removal
 
 Books and notes downloads a cloud book when you open it. Right-click a book and

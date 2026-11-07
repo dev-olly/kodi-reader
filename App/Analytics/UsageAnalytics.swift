@@ -25,6 +25,7 @@ final class UsageAnalytics {
     @ObservationIgnored private var sessionID = UUID()
     @ObservationIgnored private var outbox: AnalyticsOutbox
     @ObservationIgnored private var clock: AnalyticsReadingClock
+    @ObservationIgnored private var featureClocks: [AnalyticsFeatureActivity: AnalyticsFeatureClock] = [:]
     @ObservationIgnored private var selectedReadingContent: AnalyticsContentType?
     @ObservationIgnored private var readingWindowVisible = true
     @ObservationIgnored private var timer: Timer?
@@ -111,6 +112,7 @@ final class UsageAnalytics {
         installationID = nil
         storage.remove()
         clock.setActive(clock.isActive, now: uptime())
+        for activity in AnalyticsFeatureActivity.allCases { featureClocks[activity]?.reset(now: uptime()) }
         guard enabled && collectionAllowed else { return }
         installationID = UUID()
         defaults.set(installationID?.uuidString, forKey: Self.installationKey)
@@ -165,6 +167,8 @@ final class UsageAnalytics {
     func record(_ name: AnalyticsEventName, content: AnalyticsContentType? = nil,
                 error: AnalyticsErrorCategory? = nil, requestID: UUID? = nil) {
         guard isEnabled, collectionAllowed else { return }
+        // Duration events can only come from their bounded monotonic clocks.
+        guard ![.readingHeartbeat, .audioRecordingHeartbeat, .ttsListeningHeartbeat].contains(name) else { return }
         if let requestID {
             switch name {
             case .aiRequestStarted:
@@ -195,10 +199,33 @@ final class UsageAnalytics {
     func endEditing(token: AnalyticsEditToken) { edits.end(token) }
     func endAllEditing() { edits.endAll() }
 
-    func tick() { heartbeat(); edits.expireIdle(at: uptime()); flush() }
+    func setFeatureActivity(_ activity: AnalyticsFeatureActivity, active: Bool) {
+        let now = uptime()
+        var featureClock = featureClocks[activity] ?? AnalyticsFeatureClock(now: now)
+        guard featureClock.isActive != active else { return }
+        let seconds = featureClock.advance(to: now)
+        if seconds > 0 { enqueue(activity.heartbeatEvent, content: nil, error: nil, duration: seconds) }
+        featureClock.setActive(active, now: now)
+        featureClocks[activity] = featureClock
+    }
+
+    func tick() { heartbeat(); featureHeartbeat(); edits.expireIdle(at: uptime()); flush() }
 
     /// A quit checkpoint waits only for local disk writes, never the network.
-    func persistPendingEvents() async { await storage.waitForPendingWrites() }
+    func persistPendingEvents() async {
+        featureHeartbeat()
+        await storage.waitForPendingWrites()
+    }
+
+    private func featureHeartbeat() {
+        let now = uptime()
+        for activity in AnalyticsFeatureActivity.allCases {
+            guard var featureClock = featureClocks[activity] else { continue }
+            let seconds = featureClock.advance(to: now)
+            featureClocks[activity] = featureClock
+            if seconds > 0 { enqueue(activity.heartbeatEvent, content: nil, error: nil, duration: seconds) }
+        }
+    }
 
     private func heartbeat() {
         let content = clock.content

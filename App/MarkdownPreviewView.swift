@@ -5,18 +5,41 @@ import SwiftUI
 struct NoteMarkdownPreview: View {
     let text: String
     var sketchPreview: ((UUID) -> Data?)? = nil
+    var sketchModifiedAt: ((UUID) -> Date?)? = nil
     var onOpenSketch: ((UUID) -> Void)? = nil
+    var onRenameSketch: ((UUID) -> Void)? = nil
+    var audio: AudioNoteEditorContext? = nil
+    var reminders: ReminderNoteEditorContext? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             ForEach(Array(NoteMarkdown.previewBlocks(of: text).enumerated()), id: \.offset) { _, block in
                 switch block {
+                case let .reminder(id, title):
+                    let reminder = reminders?.reminder(id)
+                    ReminderInlineRow(title: reminder?.title ?? title,
+                        isCompleted: reminder?.isCompleted ?? false, isAvailable: reminder != nil,
+                        onToggle: reminders.map { context in { context.onToggle(id) } },
+                        onEdit: reminders.map { context in { context.onEdit(id) } })
+                case let .audio(id, title):
+                    if let audio { audio.player(id: id, title: title, isDark: colorScheme == .dark) }
+                    else { Label(title, systemImage: "waveform").foregroundStyle(.secondary) }
                 case let .sketch(id, title):
-                    SketchPreviewCard(title: title, preview: sketchPreview?(id)) { onOpenSketch?(id) }
+                    SketchPreviewCard(
+                        title: title,
+                        preview: sketchPreview?(id),
+                        modifiedAt: sketchModifiedAt?(id),
+                        isDark: colorScheme == .dark,
+                        onRename: onRenameSketch.map { rename in { rename(id) } }
+                    ) { onOpenSketch?(id) }
                 case let .paragraph(markdown):
-                    inlineText(markdown)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    if let audio, let id = AudioDraftReference.parse(markdown.trimmingCharacters(in: .whitespacesAndNewlines)), id == audio.draftID {
+                        audio.recorder(isDark: colorScheme == .dark)
+                    } else {
+                        inlineText(markdown)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
                 case let .unorderedList(items):
                     VStack(alignment: .leading, spacing: 6) {
                         ForEach(Array(items.enumerated()), id: \.offset) { _, item in
@@ -144,27 +167,130 @@ struct NoteMarkdownPreview: View {
 struct SketchPreviewCard: View {
     let title: String
     let preview: Data?
+    var modifiedAt: Date? = nil
+    var isDark: Bool = false
+    var onRename: (() -> Void)? = nil
     let onOpen: () -> Void
 
+    private var palette: SketchCardStyle.Palette { SketchCardStyle.palette(dark: isDark) }
+
     var body: some View {
-        Button(action: onOpen) {
-            VStack(alignment: .leading, spacing: 8) {
-                if let preview, let image = NSImage(data: preview) {
-                    Image(nsImage: image).resizable().scaledToFit().frame(maxWidth: .infinity, maxHeight: 180)
-                        .padding(8).background(Color.white)
-                } else {
-                    Label("Preview unavailable · Open sketch", systemImage: "scribble")
-                        .foregroundStyle(.secondary).frame(maxWidth: .infinity, minHeight: 100)
+        VStack(spacing: 0) {
+            Button(action: onOpen) {
+                ZStack(alignment: .bottomTrailing) {
+                    Color(nsColor: palette.paper)
+                    previewImage
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(18)
+                    Image(systemName: "arrow.up.left.and.arrow.down.right")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Color(nsColor: SketchCardStyle.color(0x405249)))
+                        .padding(6)
+                        .background(Color(nsColor: SketchCardStyle.color(0xE0E5D9)), in: RoundedRectangle(cornerRadius: 6))
+                        .padding(10)
                 }
-                Text(title).font(.subheadline.weight(.medium)).foregroundStyle(.primary)
+                .aspectRatio(SketchCardStyle.previewAspectRatio, contentMode: .fit)
+                .frame(minHeight: SketchCardStyle.minimumPreviewHeight)
+                .contentShape(Rectangle())
             }
-            .padding(12)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(0.04))
-            .clipShape(RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.primary.opacity(0.12)))
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open sketch: " + title)
+
+            GeometryReader { geometry in
+                footer(compact: geometry.size.width < 280)
+                    .frame(width: geometry.size.width, height: SketchCardStyle.footerHeight)
+            }
+            .frame(height: SketchCardStyle.footerHeight)
+            .background(Color(nsColor: palette.surface))
         }
-        .buttonStyle(.plain)
-        .accessibilityLabel("Open sketch: " + title)
+        .frame(maxWidth: SketchCardStyle.maximumWidth)
+        .clipShape(RoundedRectangle(cornerRadius: SketchCardStyle.cornerRadius, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: SketchCardStyle.cornerRadius, style: .continuous)
+                .stroke(Color(nsColor: palette.border), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func footer(compact: Bool) -> some View {
+        HStack(spacing: compact ? 8 : 11) {
+            if !compact {
+                Image(systemName: "pencil")
+                    .font(.system(size: 15))
+                    .foregroundStyle(Color(nsColor: palette.actionInk))
+                    .frame(width: 32, height: 36)
+                    .background(Color(nsColor: palette.iconSurface), in: RoundedRectangle(cornerRadius: 8))
+                    .accessibilityHidden(true)
+            }
+
+            Button(action: onOpen) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 13, weight: .medium))
+                        .foregroundStyle(Color(nsColor: palette.ink))
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                    Text(SketchCardStyle.editedLabel(modifiedAt))
+                        .font(.system(size: 11))
+                        .foregroundStyle(Color(nsColor: palette.muted))
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(title)
+            .accessibilityLabel("Open sketch: " + title)
+
+            Button(action: onOpen) {
+                HStack(spacing: 6) {
+                    if !compact { Text("Open") }
+                    Image(systemName: "arrow.up.right")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Color(nsColor: palette.actionInk))
+                .frame(width: compact ? 32 : 76, height: 32)
+                .overlay {
+                    RoundedRectangle(cornerRadius: 9)
+                        .stroke(Color(nsColor: palette.actionBorder), lineWidth: 1)
+                }
+                .contentShape(RoundedRectangle(cornerRadius: 9))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Open sketch: " + title)
+
+            Menu {
+                Button("Open sketch", systemImage: "arrow.up.right", action: onOpen)
+                if let onRename {
+                    Button("Rename…", systemImage: "pencil", action: onRename)
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(Color(nsColor: palette.muted))
+                    .frame(width: 26, height: 30)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Sketch options")
+            .accessibilityLabel("Options for " + title)
+        }
+        .padding(.horizontal, compact ? 12 : 14)
+    }
+
+    @ViewBuilder
+    private var previewImage: some View {
+        if let preview, let image = NSImage(data: preview), image.size.width > 0, image.size.height > 0 {
+            Image(nsImage: image)
+                .resizable()
+                .scaledToFit()
+                .accessibilityHidden(true)
+        } else {
+            Label("Preview unavailable · Open sketch", systemImage: "scribble")
+                .font(.system(size: 12))
+                .foregroundStyle(Color(nsColor: SketchCardStyle.color(0x63705F)))
+        }
     }
 }

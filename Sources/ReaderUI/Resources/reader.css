@@ -298,6 +298,75 @@ table {
   mix-blend-mode: normal;
 }
 
+/* Research actions occupy empty space beside a passage, never its letters. */
+#reader-highlight-layer .reader-reminder-badge {
+  appearance: none !important;
+  -webkit-appearance: none !important;
+  position: absolute !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  box-sizing: border-box !important;
+  width: 22px !important;
+  height: 22px !important;
+  min-width: 0 !important;
+  min-height: 0 !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 1px solid var(--color-link) !important;
+  border-radius: 50% !important;
+  background: var(--color-background) !important;
+  color: var(--color-link) !important;
+  box-shadow: none !important;
+  opacity: 0.8;
+  cursor: pointer !important;
+  pointer-events: auto !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  mix-blend-mode: normal !important;
+  z-index: 3;
+}
+
+#reader-highlight-layer .reader-reminder-badge:hover {
+  background: var(--color-surface) !important;
+  opacity: 1;
+}
+
+#reader-highlight-layer .reader-reminder-badge:focus-visible {
+  outline: 2px solid var(--color-link) !important;
+  outline-offset: 2px;
+  opacity: 1;
+}
+
+#reader-highlight-layer .reader-reminder-badge svg {
+  display: block !important;
+  width: 14px !important;
+  height: 14px !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  fill: none !important;
+  stroke: currentColor !important;
+  stroke-width: 1.5 !important;
+  stroke-linecap: round !important;
+  pointer-events: none !important;
+}
+
+#reader-highlight-layer .reader-reminder-badge[data-grouped] svg {
+  transform: translate(-2px, 1px) scale(0.85);
+}
+
+#reader-highlight-layer .reader-reminder-count {
+  position: absolute !important;
+  top: 0 !important;
+  right: 2px !important;
+  font: 8px/11px -apple-system, BlinkMacSystemFont, sans-serif !important;
+  color: var(--color-link) !important;
+  pointer-events: none !important;
+}
+
 /* A margin flag follows its text anchor without changing pagination. */
 #reader-reading-marker,
 #reader-reading-marker-cue {

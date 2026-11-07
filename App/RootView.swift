@@ -4,28 +4,42 @@ import ReaderUI
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Scope reading time to this window: Settings, minimized windows, and other
-/// apps should not accrue reading time just because a book remains open.
+/// Personal reading goals stay scoped to the main key window. Product
+/// engagement also covers explicitly marked reader-owned editor sheets/tools.
 private struct AnalyticsReadingWindowObserver: NSViewRepresentable {
-    var onChange: (Bool) -> Void
-    var onInteraction: () -> Void
+    var onReadingChange: (Bool) -> Void
+    var onEngagementChange: (Bool) -> Void
+    var onReadingInteraction: () -> Void
+    var onEngagementInteraction: () -> Void
 
-    func makeNSView(context: Context) -> MonitorView { MonitorView(onChange: onChange, onInteraction: onInteraction) }
+    func makeNSView(context: Context) -> MonitorView {
+        MonitorView(onReadingChange: onReadingChange, onEngagementChange: onEngagementChange,
+                    onReadingInteraction: onReadingInteraction, onEngagementInteraction: onEngagementInteraction)
+    }
     func updateNSView(_ view: MonitorView, context: Context) {
-        view.onChange = onChange
-        view.onInteraction = onInteraction
+        view.onReadingChange = onReadingChange
+        view.onEngagementChange = onEngagementChange
+        view.onReadingInteraction = onReadingInteraction
+        view.onEngagementInteraction = onEngagementInteraction
     }
     static func dismantleNSView(_ view: MonitorView, coordinator: ()) { view.stopObserving() }
 
     final class MonitorView: NSView {
-        var onChange: (Bool) -> Void
-        var onInteraction: () -> Void
+        var onReadingChange: (Bool) -> Void
+        var onEngagementChange: (Bool) -> Void
+        var onReadingInteraction: () -> Void
+        var onEngagementInteraction: () -> Void
         private var tokens: [NSObjectProtocol] = []
         private var inputMonitor: Any?
+        private weak var lastEditorWindow: NSWindow?
+        private var publishScheduled = false
 
-        init(onChange: @escaping (Bool) -> Void, onInteraction: @escaping () -> Void) {
-            self.onChange = onChange
-            self.onInteraction = onInteraction
+        init(onReadingChange: @escaping (Bool) -> Void, onEngagementChange: @escaping (Bool) -> Void,
+             onReadingInteraction: @escaping () -> Void, onEngagementInteraction: @escaping () -> Void) {
+            self.onReadingChange = onReadingChange
+            self.onEngagementChange = onEngagementChange
+            self.onReadingInteraction = onReadingInteraction
+            self.onEngagementInteraction = onEngagementInteraction
             super.init(frame: .zero)
         }
         required init?(coder: NSCoder) { fatalError("init(coder:) is unavailable") }
@@ -33,18 +47,33 @@ private struct AnalyticsReadingWindowObserver: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             stopObserving()
-            guard let window else { return }
+            guard window != nil else { return }
             let names: [Notification.Name] = [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
                 NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
-                NSWindow.didChangeOcclusionStateNotification]
+                NSWindow.didChangeOcclusionStateNotification, NSWindow.willBeginSheetNotification,
+                NSWindow.didEndSheetNotification, NSApplication.didBecomeActiveNotification,
+                NSApplication.didResignActiveNotification, NSApplication.didHideNotification,
+                NSApplication.didUnhideNotification, AnalyticsReaderEditorMarker.windowsChanged]
             tokens = names.map { name in
-                NotificationCenter.default.addObserver(forName: name, object: window, queue: .main) { [weak self] _ in
-                    MainActor.assumeIsolated { self?.publish() }
+                NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] note in
+                    MainActor.assumeIsolated {
+                        if name == NSWindow.didBecomeKeyNotification, let key = note.object as? NSWindow {
+                            self?.rememberEditorContext(for: key)
+                        }
+                        self?.schedulePublish()
+                    }
                 }
             }
             inputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]) { [weak self] event in
-                if let self, event.window === self.window, self.window?.isKeyWindow == true {
-                    self.onInteraction()
+                guard let self else { return event }
+                if event.window === self.window, self.window?.isKeyWindow == true {
+                    self.onReadingInteraction()
+                }
+                // Only timing is observed, and only in this reader's context.
+                // Settings and unrelated app windows cannot reset its idle clock.
+                if let eventWindow = event.window, eventWindow === NSApp.keyWindow,
+                   self.engagementIsVisible(), self.isOwnedInteractionWindow(eventWindow) {
+                    self.onEngagementInteraction()
                 }
                 return event
             }
@@ -56,12 +85,82 @@ private struct AnalyticsReadingWindowObserver: NSViewRepresentable {
             tokens.removeAll()
             if let inputMonitor { NSEvent.removeMonitor(inputMonitor) }
             inputMonitor = nil
-            onChange(false)
+            lastEditorWindow = nil
+            onReadingChange(false)
+            onEngagementChange(false)
+        }
+
+        private func schedulePublish() {
+            guard !publishScheduled else { return }
+            publishScheduled = true
+            // A note sheet or toolbar can replace the key window in the same
+            // run-loop turn. Avoid a false inactive gap ending its edit session.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.publishScheduled = false
+                self.publish()
+            }
+        }
+
+        private func isDescendant(_ candidate: NSWindow, of ancestor: NSWindow) -> Bool {
+            var current: NSWindow? = candidate
+            var seen = Set<ObjectIdentifier>()
+            while let next = current, seen.insert(ObjectIdentifier(next)).inserted {
+                if next === ancestor { return true }
+                current = next.sheetParent ?? next.parent
+            }
+            return false
+        }
+
+        private func keyContext(for key: NSWindow?) -> AnalyticsReaderWindowPolicy.KeyContext {
+            guard let root = window, let key else { return .none }
+            // A marked note sheet may own a second, unrelated modal dialog.
+            // Only the deepest sheet's explicit editor marker authorizes it.
+            var sheet = root.attachedSheet
+            while let next = sheet?.attachedSheet { sheet = next }
+            if let sheet, !AnalyticsReaderEditorMarker.isPresent(in: sheet) { return .unrelated }
+            if key === root { return .reader }
+            if isDescendant(key, of: root), AnalyticsReaderEditorMarker.isPresent(in: key) { return .editor }
+            // Reader/editor popovers have an explicit parent relationship but
+            // are not modal sheets. They remain within the same workspace.
+            if key.sheetParent == nil, isDescendant(key, of: root) { return .transient }
+            if let editor = lastEditorWindow, editor.isVisible,
+               isDescendant(editor, of: root), AnalyticsReaderEditorMarker.isPresent(in: editor) {
+                // Color tools float outside the sheet hierarchy. The context is
+                // cleared synchronously if any unrelated window becomes key.
+                if key is NSColorPanel { return .transient }
+            }
+            return .unrelated
+        }
+
+        private func rememberEditorContext(for key: NSWindow) {
+            switch keyContext(for: key) {
+            case .reader, .editor:
+                lastEditorWindow = AnalyticsReaderEditorMarker.isPresent(in: key) ? key : nil
+            case .transient: break
+            case .unrelated, .none: lastEditorWindow = nil
+            }
+        }
+
+        private func engagementIsVisible() -> Bool {
+            guard let window else { return false }
+            return AnalyticsReaderWindowPolicy.isEngaged(readerVisible: window.isVisible && !NSApp.isHidden,
+                readerMinimized: window.isMiniaturized, appActive: NSApp.isActive,
+                keyContext: keyContext(for: NSApp.keyWindow))
+        }
+
+        private func isOwnedInteractionWindow(_ key: NSWindow) -> Bool {
+            switch keyContext(for: key) {
+            case .reader, .editor, .transient: return true
+            case .unrelated, .none: return false
+            }
         }
 
         private func publish() {
-            guard let window else { onChange(false); return }
-            onChange(window.isVisible && window.isKeyWindow && !window.isMiniaturized)
+            guard let window else { onReadingChange(false); onEngagementChange(false); return }
+            if let key = NSApp.keyWindow { rememberEditorContext(for: key) }
+            onReadingChange(window.isVisible && window.isKeyWindow && !window.isMiniaturized)
+            onEngagementChange(engagementIsVisible())
         }
     }
 }
@@ -80,8 +179,6 @@ struct RootView: View {
                     authWelcomeSeen = true
                     model.aiAuth.showingSignIn = false
                 }
-            } else if let browser = model.webBrowser {
-                WebBrowserScreen(browser: browser)
             } else if let book = model.book, let reader = model.reader {
                 ReaderScreen(book: book, reader: reader)
                     // Rebuild the whole reader when the book changes, so the
@@ -94,10 +191,11 @@ struct RootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(model.settings.theme.uiBackground)
         .background {
-            AnalyticsReadingWindowObserver(onChange: {
-                model.analytics.setReadingWindowVisible($0)
-                model.readingProgress.setReadingWindowVisible($0)
-            }, onInteraction: { model.readingProgress.recordInteraction() })
+            AnalyticsReadingWindowObserver(
+                onReadingChange: { model.readingProgress.setReadingWindowVisible($0) },
+                onEngagementChange: { model.analytics.setReadingWindowVisible($0) },
+                onReadingInteraction: { model.readingProgress.recordInteraction() },
+                onEngagementInteraction: { model.analytics.recordInteraction() })
         }
         .foregroundStyle(model.settings.theme.uiForeground)
         .tint(model.settings.theme.accent)
@@ -131,25 +229,27 @@ struct RootView: View {
         .onChange(of: isReadingGoalEligible, initial: true) { _, eligible in
             model.readingProgress.setReaderEligible(eligible)
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if !needsAuthWelcome { UsageAnalyticsNotice() }
+        }
         .sheet(isPresented: Binding(get: { !needsAuthWelcome && model.aiAuth.showingSignIn }, set: { model.aiAuth.showingSignIn = $0 })) {
             AISignInSheet(auth: model.aiAuth)
         }
         .sheet(isPresented: Binding(get: { AIFeatureFlags.paymentsEnabled && model.aiCredits.showingPacks }, set: { model.aiCredits.showingPacks = $0 })) {
             AICreditPacksSheet(credits: model.aiCredits)
         }
-        .sheet(isPresented: $model.isShowingOpenURLSheet) {
-            OpenURLSheet()
-                .environment(model)
-        }
         .sheet(item: $model.documentToRename) { target in
             RenameDocumentSheet(target: target).environment(model)
+        }
+        .sheet(isPresented: $model.isShowingReminders) {
+            RemindersSheet().environment(model)
         }
     }
 
     private var needsAuthWelcome: Bool { !authWelcomeSeen && !model.aiAuth.isSignedIn }
 
     private var isReadingGoalEligible: Bool {
-        guard !needsAuthWelcome, !model.isBrowsing, model.book != nil,
+        guard !needsAuthWelcome, model.book != nil,
               let reader = model.reader else { return false }
         return model.hasReadyReader && !reader.isLoading && reader.errorMessage == nil
     }
@@ -157,9 +257,6 @@ struct RootView: View {
     /// A stable root observer avoids duplicated starts from rebuilt reader views.
     private var analyticsReadingContent: AnalyticsContentType? {
         guard !needsAuthWelcome else { return nil }
-        if let browser = model.webBrowser {
-            return !browser.isLoading && browser.estimatedProgress >= 1 && browser.errorMessage == nil && browser.currentURL != nil ? .web : nil
-        }
         guard let book = model.book, let reader = model.reader,
               model.hasReadyReader, reader.errorMessage == nil else { return nil }
         return model.record?.sourceURL != nil ? .web : (book.kind == .pdf ? .pdf : .epub)

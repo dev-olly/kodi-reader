@@ -44,6 +44,12 @@ public final class LibrarySyncCoordinator {
             // Never silently overwrite a damaged journal and then republish deleted data.
             if FileManager.default.fileExists(atPath: journalURL.path) { journal.requiresAcknowledgement = true }
         }
+        // Earlier clients collected only library/history zones. Revisit known
+        // book tombstones once so their newly supported reminders are removed too.
+        if (journal.reminderCleanupVersion ?? 0) < 1 {
+            journal.collectedTombstones = nil
+            journal.reminderCleanupVersion = 1
+        }
         preferences = journal.preferences
         lastPositionSend = journal.lastPositionSend ?? .distantPast
         status.lastSuccessfulSync = journal.lastSuccessfulSync
@@ -259,7 +265,7 @@ public final class LibrarySyncCoordinator {
         for entity in outgoing where !entity.deleted {
             for blob in try blobs(in: entity) {
                 if entity.kind == .book, preferences.mode != .booksAndNotes { continue }
-                if let source = sourceFiles[blob.hash] {
+                if let source = sourceFiles[blob.hash], FileManager.default.fileExists(atPath: source.path) {
                     let directory = chunkDirectory
                     try await Task.detached { try blob.stage(source, directory: directory) }.value
                 }
@@ -398,7 +404,7 @@ public final class LibrarySyncCoordinator {
             let hasLocalOrigin = book.id != identity || store.existingImportedURL(for: book) != nil
             if hasLocalOrigin || journal.local[metadataID] != nil {
                 let publicSource = book.sourceURL.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
-                try add(SyncedBook(title: book.title, author: book.author, kind: book.documentKind, sourceURL: publicSource, file: file), identity, .book, "metadata")
+                try add(SyncedBook(title: book.title, author: book.author, kind: book.documentKind, sourceURL: publicSource, file: file, addedAt: book.addedAt), identity, .book, "metadata")
             }
             let positionID = "position:\(identity):position"
             if (hasLocalOrigin || journal.local[positionID] != nil) && !(journal.local[positionID]?.deleted == true && book.position == nil) {
@@ -426,9 +432,18 @@ public final class LibrarySyncCoordinator {
                     assets.append(SyncedSketch(id: sketch.id, scene: scene, preview: preview))
                 }
                 if note.sketches.isEmpty && note.hasDrawing { drawing = drawing ?? remembered?.drawing }
-                try add(SyncedAnnotation(annotation: note, drawing: drawing, sketches: assets.isEmpty ? nil : assets), identity, .annotation, note.id.uuidString)
+                let audioAssets = try note.audioRecordings.map { recording in
+                    let url = store.audioStore.recordingURL(bookID: book.id, annotationID: note.id, audioID: recording.id)
+                    let previous = remembered?.audioRecordings?.first { $0.id == recording.id }
+                    var file = FileManager.default.fileExists(atPath: url.path) ? try manifest(for: url) : previous?.recording
+                    if let generation = journal.assetGenerations?[entityID] { file?.generation = generation }
+                    return SyncedAudio(id: recording.id, recording: file)
+                }
+                try add(SyncedAnnotation(annotation: note, drawing: drawing, sketches: assets.isEmpty ? nil : assets,
+                                         audioRecordings: audioAssets.isEmpty ? nil : audioAssets), identity, .annotation, note.id.uuidString)
             }
             for bookmark in book.bookmarks { try add(bookmark, identity, .bookmark, bookmark.id.uuidString) }
+            for reminder in book.reminders { try add(reminder, identity, .reminder, reminder.id.uuidString) }
             if preferences.syncAIHistory || journal.local.values.contains(where: { $0.bookID == identity && $0.kind == .chat }) {
                 for chat in book.conversationThreads { try add(chat, identity, .chat, chat.id.uuidString) }
             }
@@ -501,7 +516,7 @@ public final class LibrarySyncCoordinator {
 
     private func preserveEditsBeforeBookDeletion(_ identity: String) throws {
         let edits = journal.pending.values.filter {
-            $0.bookID == identity && !$0.deleted && [.annotation, .bookmark, .chat].contains($0.kind)
+            $0.bookID == identity && !$0.deleted && [.annotation, .bookmark, .chat, .reminder].contains($0.kind)
         }.sorted { $0.id < $1.id }
         guard !edits.isEmpty, let sourceRecord = store.record(cloudIdentity: identity) else { return }
         var original = sourceRecord
@@ -526,13 +541,23 @@ public final class LibrarySyncCoordinator {
                 try scene.write(to: destination, options: .atomic)
             }
         }
+        for note in original.annotations {
+            for recording in note.audioRecordings {
+                let source = store.audioStore.recordingURL(bookID: oldID, annotationID: note.id, audioID: recording.id)
+                guard FileManager.default.fileExists(atPath: source.path) else { throw SyncFailure.missingFile }
+                try store.audioStore.saveRecording(from: source, bookID: recoveredID, annotationID: note.id, audioID: recording.id)
+            }
+        }
         journal.detachedBooks = (journal.detachedBooks ?? []).union([recoveredID]); try persist()
         try store.applyRemoteChanges([original])
     }
 
     private func apply(_ entity: SyncEntity, token: Int) async throws {
+        var removedAudio: [UUID] = []
+        var audioAnnotationID: UUID?
         var book = store.record(cloudIdentity: entity.bookID) ?? BookRecord(
-            id: entity.bookID, title: "Synced book", author: "", documentKind: entity.bookID.hasPrefix("pdf-") ? .pdf : .epub)
+            id: entity.bookID, title: "Synced book", author: "", documentKind: entity.bookID.hasPrefix("pdf-") ? .pdf : .epub,
+            addedAt: nil)
         book.cloudIdentity = entity.bookID
         if entity.deleted, entity.kind != .book {
             if entity.kind == .position {
@@ -544,12 +569,15 @@ public final class LibrarySyncCoordinator {
                 book.annotations.removeAll { $0.id == id }
                 store.drawingStore.deleteScene(bookID: book.id, annotationID: id)
             case .bookmark: book.bookmarks.removeAll { $0.id == id }
+            case .reminder: book.reminders.removeAll { $0.id == id }
             case .chat:
                 book.chats = book.conversationThreads.filter { $0.id != id }
                 if book.activeChatID == id { book.activeChatID = nil; book.chatMessages = nil }
             default: break
             }
-            try store.applyRemoteChanges([book]); return
+            try store.applyRemoteChanges([book])
+            if entity.kind == .annotation { store.audioStore.deleteRecordings(bookID: book.id, annotationID: id) }
+            return
         }
         if entity.kind == .book {
             if entity.deleted { try store.deleteForSync(book.id); return }
@@ -557,6 +585,7 @@ public final class LibrarySyncCoordinator {
             book.title = value.title; book.author = value.author; book.documentKind = value.kind
             book.sourceURL = value.sourceURL.flatMap { ["http", "https"].contains($0.scheme?.lowercased() ?? "") ? $0 : nil }
             book.cloudFile = value.file
+            book.addedAt = [book.addedAt, value.addedAt].compactMap { $0 }.min()
         } else if entity.kind == .annotation {
             let value = try entity.value(SyncedAnnotation.self)
             let id = value.annotation.id
@@ -574,6 +603,16 @@ public final class LibrarySyncCoordinator {
                     if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url) }
                 }
             }
+            for audio in value.audioRecordings ?? [] {
+                if let recording = audio.recording {
+                    try await materialize(recording, to: store.audioStore.recordingURL(bookID: book.id, annotationID: id, audioID: audio.id),
+                                          token: token, scope: entity.id)
+                }
+            }
+            let incomingAudio = Set(value.annotation.audioRecordings.map(\.id))
+            removedAudio = (book.annotations.first(where: { $0.id == id })?.audioRecordings ?? [])
+                .filter { !incomingAudio.contains($0.id) }.map(\.id)
+            audioAnnotationID = id
             let incoming = Set(value.annotation.sketches.map(\.id))
             for sketch in book.annotations.first(where: { $0.id == id })?.sketches ?? [] where !incoming.contains(sketch.id) {
                 try store.drawingStore.deleteSketch(bookID: book.id, annotationID: id, sketchID: sketch.id)
@@ -585,6 +624,10 @@ public final class LibrarySyncCoordinator {
             let value = try entity.value(Bookmark.self)
             book.bookmarks.removeAll { $0.id == value.id }
             if !entity.deleted { book.bookmarks.append(value) }
+        } else if entity.kind == .reminder {
+            let value = try entity.value(ResearchReminder.self)
+            book.reminders.removeAll { $0.id == value.id }
+            if !entity.deleted { book.reminders.append(value) }
         } else if entity.kind == .position, !entity.deleted {
             let value = try entity.value(SyncedPosition.self)
             book.position = value.locator; book.progress = value.progress; book.lastOpenedAt = value.lastOpenedAt
@@ -596,6 +639,11 @@ public final class LibrarySyncCoordinator {
             book.chatMessages = chats.first(where: { $0.id == book.activeChatID })?.messages
         }
         try check(token); try store.applyRemoteChanges([book])
+        if let id = audioAnnotationID {
+            for recording in removedAudio {
+                try store.audioStore.deleteRecording(bookID: book.id, annotationID: id, audioID: recording)
+            }
+        }
     }
 
     private func blobs(in entity: SyncEntity) throws -> [BlobManifest] {
@@ -604,7 +652,9 @@ public final class LibrarySyncCoordinator {
         case .book: return try entity.value(SyncedBook.self).file.map { [$0] } ?? []
         case .annotation:
             let note = try entity.value(SyncedAnnotation.self)
-            return (note.drawing.map { [$0] } ?? []) + (note.sketches ?? []).flatMap { ($0.scene.map { [$0] } ?? []) + ($0.preview.map { [$0] } ?? []) }
+            return (note.drawing.map { [$0] } ?? [])
+                + (note.sketches ?? []).flatMap { ($0.scene.map { [$0] } ?? []) + ($0.preview.map { [$0] } ?? []) }
+                + (note.audioRecordings ?? []).compactMap(\.recording)
         default: return []
         }
     }

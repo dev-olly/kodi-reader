@@ -28,7 +28,7 @@ final class UsageAnalyticsTests: XCTestCase {
         XCTAssertEqual(Set(properties.keys), Set(["platform", "version", "build", "content_type", "schema_version"]))
         XCTAssertEqual(body["name"] as? String, "reading_heartbeat")
         XCTAssertEqual(properties["platform"] as? String, "macOS")
-        XCTAssertEqual(properties["schema_version"] as? Int, 2)
+        XCTAssertEqual(properties["schema_version"] as? Int, 3)
         XCTAssertEqual(try AnalyticsEvent.decoder().decode(AnalyticsEvent.self, from: data), item)
     }
 
@@ -41,6 +41,79 @@ final class UsageAnalyticsTests: XCTestCase {
         XCTAssertEqual(decoded.properties.schemaVersion, 1)
         XCTAssertNil(decoded.properties.requestID)
         XCTAssertEqual(decoded.id.uuidString, json["id"] as? String)
+    }
+
+    func testFeatureClockExcludesPausesKeepsShortSegmentsAndBoundsDelayedTicks() {
+        var clock = AnalyticsFeatureClock(now: 0)
+        XCTAssertEqual(clock.advance(to: 10), 0)
+        clock.setActive(true, now: 10)
+        XCTAssertEqual(clock.advance(to: 10.6), 0)
+        clock.setActive(false, now: 10.6)
+        XCTAssertEqual(clock.advance(to: 50), 0)
+        clock.setActive(true, now: 50)
+        XCTAssertEqual(clock.advance(to: 50.6), 1)
+        XCTAssertEqual(clock.advance(to: 1000), 60, "A delayed tick cannot backfill an unbounded sleep")
+        clock.reset(now: 2000)
+        XCTAssertEqual(clock.advance(to: 2001), 1)
+        XCTAssertEqual(clock.advance(to: 1999), 0, "Monotonic-clock reversal never creates negative duration")
+    }
+
+    func testRecordingAndListeningClocksFollowActualActivityAndContinueInBackground() async {
+        let (defaults, directory) = context()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var uptime: TimeInterval = 0
+        let analytics = UsageAnalytics(defaults: defaults, directory: directory, collectionAllowed: true,
+            networkAllowed: false, startTimer: false, uptime: { uptime }, date: { self.fixedDate })
+        analytics.setActive(true)
+        analytics.setFeatureActivity(.audioRecording, active: true)
+        uptime = 15; analytics.tick()
+        analytics.setActive(false)
+        uptime = 30; analytics.tick()
+        uptime = 35; analytics.setFeatureActivity(.audioRecording, active: false)
+        uptime = 100; analytics.tick()
+        analytics.setFeatureActivity(.ttsListening, active: true)
+        uptime = 105; analytics.tick()
+        uptime = 112; analytics.setFeatureActivity(.ttsListening, active: false)
+        uptime = 200; analytics.tick()
+        analytics.record(.audioRecordingHeartbeat)
+        analytics.record(.ttsListeningHeartbeat)
+        let recording = analytics.pendingEvents.filter { $0.name == .audioRecordingHeartbeat }
+        let listening = analytics.pendingEvents.filter { $0.name == .ttsListeningHeartbeat }
+        XCTAssertEqual(recording.compactMap(\.durationSeconds).reduce(0, +), 35)
+        XCTAssertEqual(listening.compactMap(\.durationSeconds).reduce(0, +), 12)
+        XCTAssertTrue((recording + listening).allSatisfy { (1...60).contains($0.durationSeconds ?? 0) && $0.properties.schemaVersion == 3 && $0.properties.contentType == nil && $0.properties.requestID == nil })
+        XCTAssertTrue(analytics.pendingEvents.filter { $0.name == .readingHeartbeat }.isEmpty)
+        await analytics.persistPendingEvents()
+    }
+
+    func testFeatureTimingCannotBackfillAcrossConsentChangesOrCollectInDebug() async {
+        let (defaults, directory) = context()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var uptime: TimeInterval = 0
+        let analytics = UsageAnalytics(defaults: defaults, directory: directory, collectionAllowed: true,
+            networkAllowed: false, startTimer: false, uptime: { uptime }, date: { self.fixedDate })
+        analytics.setFeatureActivity(.ttsListening, active: true)
+        uptime = 10; analytics.tick()
+        let previousInstallation = analytics.pendingEvents.first?.installationID
+        analytics.setEnabled(false)
+        uptime = 100; analytics.tick()
+        analytics.record(.reminderCreated)
+        XCTAssertTrue(analytics.pendingEvents.isEmpty)
+        analytics.setEnabled(true)
+        uptime = 105; analytics.tick()
+        uptime = 106; analytics.setFeatureActivity(.ttsListening, active: false)
+        XCTAssertEqual(analytics.pendingEvents.compactMap(\.durationSeconds).reduce(0, +), 6)
+        XCTAssertTrue(analytics.pendingEvents.allSatisfy { $0.installationID != previousInstallation })
+        await analytics.persistPendingEvents()
+
+        let debugDirectory = directory.appendingPathComponent("debug")
+        let debug = UsageAnalytics(defaults: defaults, directory: debugDirectory, collectionAllowed: false,
+            networkAllowed: false, startTimer: false, uptime: { uptime }, date: { self.fixedDate })
+        debug.setFeatureActivity(.audioRecording, active: true)
+        uptime = 120; debug.tick()
+        debug.record(.audioRecordingSaved)
+        await debug.persistPendingEvents()
+        XCTAssertTrue(debug.pendingEvents.isEmpty)
     }
 
     func testTelemetryOnlyAIRequestIDRoundTripsThroughClosedWireSchema() throws {

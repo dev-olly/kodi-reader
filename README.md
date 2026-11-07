@@ -29,7 +29,22 @@ Rename a document from its library context menu (**Rename…**) or while reading
 with **File → Rename Document…**. The name persists and syncs with book details;
 the original file keeps its name, and reading data stays attached.
 
+Search the library by title or author, and sort by title, date added, or date
+last read. Use the arrow to reverse the order. Reading filters include Recently
+read (the last seven days), In progress, Unread, and Finished. Sort and filter
+choices are remembered. Added dates are tracked for new imports; older books
+without a recorded added date appear last.
+
 ![Book reading](docs/screenshots/app-reading.png)
+
+### Listen to EPUBs
+
+Open **Listen → Listen from Here** in the macOS reader to hear the rest of
+the current EPUB chapter. To hear just a passage, select it and click the
+speaker button. Choose from four English voices and adjust playback speed
+in the Listen popover. Paradee downloads its model and pronunciation files
+on first use, with a separate dictionary for UK voices. Speech runs on your Mac
+and works offline after those files are available.
 
 ### Daily reading goals
 Set a daily goal in **Settings → Reading**, from 5 minutes to 24 hours. Your
@@ -68,15 +83,48 @@ first sketch automatically. Use the updated app on all Macs when syncing sketche
 
 ![Visual notes with Excalidraw](docs/screenshots/app-draw.png)
 
+### Audio notes
+
+Type `/audio` in a note, or choose **Record audio** from the note menu, to record
+a thought beside the passage. Allow microphone access when macOS asks. Pause or
+resume in the inline recorder, then choose **Done** to save a compact player.
+Its menu lets you rename, export, or delete the recording; click the waveform to
+seek. Closing a note or book finishes and saves an active take before leaving.
+Each card shows its title, recording date, and duration. Choose **Transcribe** to
+create text on this Mac, then expand or copy the saved transcript. macOS may
+download a speech model the first time; audio is not uploaded for transcription.
+Recordings follow your existing notes sync setting and are included in note
+exports as `.m4a` files in a companion assets folder. Keep that folder beside
+the exported document. Saved transcripts sync with the note and appear in note
+exports. Use the updated app on all Macs editing audio notes.
+
+### Research reminders
+
+Select a passage and choose **Remind** to open **Add Reminder**. The title starts
+with your selected text; rewrite it to describe what you want to research, then
+click **Add Reminder**. The original passage stays attached as context. A small
+magnifying-glass marker beside the passage shows unfinished research; click it
+to view, edit, or complete the reminder. Completed reminders leave the page clear.
+Use the reader’s
+**Reminders** menu to add a reminder for the current page without selecting text.
+In a note, type `/remind Research database sharding` or `/task Research database
+sharding`, then press Enter. A bare `/remind` opens a topic field. Reminders appear
+as linked rows in notes, with a checkbox for completion.
+
+Open **Reminders** from Home, the reader sidebar, or **View → Research Reminders**
+(**⌘⇧R**) to search across books, edit topics, complete tasks, and return to their
+source. The list has Open and Completed views. Removing a source note or downloaded
+book keeps its reminders; deleting the book and its reading data removes them.
+These are research tasks without scheduled notifications.
+
+Reminders work offline and sync with notes through iCloud or Google Drive when
+enabled. Older app versions do not show reminders; update all Macs before managing
+books with reminders across devices.
+
 ### Ask AI
 Opt-in OpenAI-powered chat about the book, with per-book chat threads and surrounding-passage context sent for better answers. Quick prompt badges and personal saved prompts make recurring questions easier to ask.
 
 ![Ask AI](docs/screenshots/app-ask-ai.png)
-
-### Open web apps and websites
-Load an article or page, extract the readable content, and read it in the same paginated view as a book.
-
-![Open web app or website](docs/screenshots/app-web.png)
 
 ### Cloud sync
 Settings → Sync offers Off (the default), iCloud, or Google Drive, with one
@@ -120,9 +168,14 @@ its assets, and the download link on both the apex and `www` domains.
   remain byte-for-byte unchanged; Kodi annotations are stored separately.
 - Release builds share limited usage analytics by default. Settings → Privacy
   lets you turn this off and clear unsent events. A random installation ID,
-  app version, event type, and activity duration help measure active devices,
-  reading, and Ask AI use. Book titles, passages, questions, notes, email
-  addresses, and webpage URLs are not included or linked to these events.
+  app version, event type, engagement duration, and approximate upload country
+  help measure active devices, reader engagement, meaningful note/drawing edits,
+  reminders, audio recording, text-to-speech listening, and Ask AI use.
+  Engagement includes reading, notes, drawing and Ask AI while
+  the reader is active, excluding idle time. No GPS access is requested. These
+  statistics are pseudonymous. Book titles, passages, questions, notes, reminder
+  text, recordings, spoken text, email addresses, and webpage URLs are not
+  included or linked to these events.
   Debug builds do not send analytics. See [analytics setup](docs/analytics.md)
   for the private dashboard and deployment instructions.
 - **Ask AI** is opt-in. Quoted passages and chat are sent to the hosted Kodi AI
@@ -208,19 +261,17 @@ xcodegen generate
 open KodiReader.xcodeproj
 ```
 
-Or build from the command line. Debug builds on this machine should disable
-code signing:
+For local testing, use the single debug launcher:
 
 ```sh
-xcodegen generate
-xcodebuild \
-  -project KodiReader.xcodeproj \
-  -scheme KodiReader \
-  -configuration Debug \
-  -destination 'platform=macOS' \
-  CODE_SIGNING_ALLOWED=NO \
-  build
+bash Scripts/run-debug.sh
 ```
+
+It rebuilds and opens `.xcode-derived-data/Build/Products/Debug/Kodi Reader Debug.app`,
+with code signing disabled. It first quits any running Kodi Reader normally so
+notes finish saving before the debug app opens the same library. Reuse this
+launcher rather than making additional test app copies. The installed release
+in Applications remains available separately.
 
 The `.xcodeproj` is generated from `project.yml` and is not committed, so
 regenerate it after pulling changes that touch the project layout.
@@ -320,5 +371,5 @@ those generated files so the app builds without Node.
 
 No library shelf, DRM/LCP, OCR, password-protected PDF support, sync, OPDS
 catalogues, bundled audiobooks, or fixed-layout EPUB. EPUBs and PDFs are opened
-with `Cmd-O` or by dropping them on the window; articles and websites can be
-opened from a URL. The welcome screen lists what you were reading recently.
+with `Cmd-O` or by dropping them on the window. The welcome screen lists what
+you were reading recently.

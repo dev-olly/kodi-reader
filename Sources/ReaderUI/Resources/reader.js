@@ -30,6 +30,7 @@
     stride: 0,
     columns: 1,
     highlights: [],
+    reminders: [],
     readingMarker: null,
     placingReadingMarker: false,
     ready: false,
@@ -416,12 +417,10 @@
         // Restore the spread, not the selected column at the left edge.
         scrollToOffset(workspaceLayout.columnOffset * currentStride() / workspaceLayout.columns, false);
         notifyPageChanged();
-        if (workspaceClosing && Math.abs(window.innerWidth - workspaceLayout.originalWidth) < 2) {
-          workspaceLayout = null;
-          workspaceClosing = false;
-        } else if (workspaceClosing) {
-          scheduleWorkspaceRelease();
-        }
+        // Both the native viewport update and WebKit's resize debounce may
+        // still configure this width. Keep the workspace until that burst
+        // settles so a later configure follows any deliberate page turn.
+        if (workspaceClosing) scheduleWorkspaceRelease();
       } else if (restore) {
         goToPosition(restore, false);
       } else {
@@ -472,7 +471,15 @@
   function scrollToOffset(offset, animated) {
     var stride = currentStride();
     var target = clamp(offset, 0, maxScrollLeft());
-    var useSmooth = animated && settings.animatePageTurns;
+    // Resize suppresses settled-position captures, but deliberate navigation
+    // must still replace the workspace's restore offset immediately.
+    if (workspaceLayout) {
+      workspaceLayout.columnOffset = target / (stride / workspaceLayout.columns);
+    }
+    // Smooth scrolling and a closing resize would race to restore different
+    // offsets. Page immediately while layout is settling, then resume normal
+    // animated turns once the workspace has been released.
+    var useSmooth = animated && settings.animatePageTurns && !viewportResizePending && !workspaceClosing;
 
     if (useSmooth) {
       pendingPageTarget = clamp(Math.round(target / stride), 0, state.pageCount - 1);
@@ -1266,6 +1273,178 @@
     renderHighlights();
   }
 
+  // Research markers share the ignored chrome layer, never the book DOM.
+  // Updating reminders must not create an annotation or change its color.
+  function setReminders(reminders) {
+    state.reminders = Array.isArray(reminders) ? reminders : [];
+    renderReminders();
+  }
+
+  function activateReminderBadge(button, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }
+    cancelDirectReadingMarkerClick();
+    clearReadingMarkerCue();
+    var rect = button.getBoundingClientRect();
+    post({ type: "reminderTapped", id: button.dataset.reminderId,
+      ids: JSON.parse(button.dataset.reminderIds || "[]"),
+      rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } });
+  }
+
+  function reminderRange(reminder) {
+    var resolved = resolveHighlight(reminder);
+    var quote = normalizeWhitespace(reminder.text);
+    // A path can still exist after an EPUB revision while pointing at different
+    // words. Never attach a research task to those unrelated words.
+    if (quote && (!resolved.range || normalizeWhitespace(resolved.range.toString()) !== quote)) {
+      var repaired = rangeFromQuote(quote);
+      if (!repaired) return null;
+      resolved = { range: repaired, locator: locatorPayloadFromRange(repaired) };
+    }
+    if (resolved.range) {
+      if (!isReadableTextNode(resolved.range.startContainer) ||
+          !isReadableTextNode(resolved.range.endContainer)) return null;
+      if (resolved.locator) {
+        reminder.start = resolved.locator.start;
+        reminder.end = resolved.locator.end;
+      }
+      return resolved.range;
+    }
+    // A page reminder may be a single durable text position without a quote.
+    if (!quote && reminder.start) {
+      var point = rangeFromPosition(reminder.start);
+      if (!point || !isReadableTextNode(point.startContainer) ||
+          point.startContainer.nodeType !== Node.TEXT_NODE || !point.startContainer.length) return null;
+      var offset = Math.min(point.startOffset, point.startContainer.length - 1);
+      point.setStart(point.startContainer, offset);
+      point.setEnd(point.startContainer, offset + 1);
+      return point;
+    }
+    return null;
+  }
+
+  function reminderTextRects() {
+    var rects = [];
+    collectReadableNodes().forEach(function (node) {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      Array.prototype.forEach.call(range.getClientRects(), function (rect) {
+        if (rect.width > 0 && rect.height > 0) rects.push({
+          left: rect.left + getScrollLeft(), right: rect.right + getScrollLeft(),
+          top: rect.top + scrollingRoot().scrollTop, bottom: rect.bottom + scrollingRoot().scrollTop
+        });
+      });
+    });
+    return rects;
+  }
+
+  function reminderEndRect(range) {
+    var rects = highlightRects(range);
+    var stride = currentStride() / Math.max(1, state.columns);
+    var scroll = getScrollLeft();
+    // Reading order advances across physical columns before wrapping back to
+    // the top. Sorting only by y would pick a line in an earlier column.
+    rects.sort(function (a, b) {
+      var aColumn = Math.floor((a.left + scroll + 1) / stride);
+      var bColumn = Math.floor((b.left + scroll + 1) / stride);
+      return aColumn - bColumn || a.top - b.top || a.right - b.right;
+    });
+    return rects.length ? rects[rects.length - 1] : null;
+  }
+
+  function reminderRectOverlaps(a, b, padding) {
+    return a.left < b.right + padding && a.right > b.left - padding &&
+      a.top < b.bottom + padding && a.bottom > b.top - padding;
+  }
+
+  function reminderPlacement(rect, textRects, groups) {
+    var size = 22, gap = 4, scroll = getScrollLeft();
+    var stride = currentStride() / Math.max(1, state.columns);
+    var margin = parsePx(getComputedStyle(document.body).paddingLeft);
+    var columnStart = Math.floor(Math.max(0, rect.left + scroll) / stride) * stride;
+    var top = rect.top + scrollingRoot().scrollTop + (rect.bottom - rect.top - size) / 2;
+    var after = rect.right + scroll + gap;
+    var gutter = Math.min(columnStart + stride - size - 2, columnStart + stride - margin + gap);
+    var candidates = [
+      { left: after, top: top },
+      { left: gutter, top: top },
+      { left: columnStart + margin - size - gap, top: top }
+    ];
+    var flag = document.getElementById("reader-reading-marker");
+    var flagRect = flag && flag.getBoundingClientRect();
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = candidates[i];
+      candidate.right = candidate.left + size;
+      candidate.bottom = candidate.top + size;
+      if (candidate.left < columnStart + 2 || candidate.right > columnStart + stride - 2) continue;
+      if (textRects.some(function (text) { return reminderRectOverlaps(candidate, text, 1); })) continue;
+      if (flagRect && reminderRectOverlaps(candidate, {
+        left: flagRect.left + scroll, right: flagRect.right + scroll,
+        top: flagRect.top + scrollingRoot().scrollTop, bottom: flagRect.bottom + scrollingRoot().scrollTop
+      }, 2)) continue;
+      var collision = groups.find(function (group) { return reminderRectOverlaps(candidate, group.rect, 2); });
+      return collision ? { group: collision } : { rect: candidate };
+    }
+    // Extremely narrow gutters offer no safe target; do not cover book text.
+    return null;
+  }
+
+  function focusedReminderID(layer) {
+    var active = document.activeElement;
+    return active && layer.contains(active) && active.classList.contains("reader-reminder-badge")
+      ? active.dataset.reminderId : null;
+  }
+
+  function renderReminders(restoreFocusID) {
+    var layer = highlightLayer();
+    var focusedID = restoreFocusID || focusedReminderID(layer);
+    if (focusedReminderID(layer)) post({ type: "reminderFocusChanged", focused: false });
+    Array.prototype.forEach.call(layer.querySelectorAll(".reader-reminder-badge"), function (badge) { badge.remove(); });
+    if (!state.reminders.length) return;
+    var textRects = reminderTextRects(), groups = [], seen = Object.create(null);
+    state.reminders.forEach(function (reminder) {
+      if (!reminder || !reminder.id || seen[reminder.id]) return;
+      seen[reminder.id] = true;
+      var range = reminderRange(reminder);
+      var end = range && reminderEndRect(range);
+      if (!end) return;
+      var placement = reminderPlacement(end, textRects, groups);
+      if (!placement) return;
+      if (placement.group) { placement.group.reminders.push(reminder); return; }
+      groups.push({ rect: placement.rect, reminders: [reminder] });
+    });
+    groups.forEach(function (group) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "reader-reminder-badge";
+      button.dataset.reminderId = group.reminders[0].id;
+      button.dataset.reminderIds = JSON.stringify(group.reminders.map(function (reminder) { return reminder.id; }));
+      var titles = group.reminders.map(function (reminder) { return String(reminder.title || "Research this passage"); });
+      button.title = titles.join("\n");
+      button.setAttribute("aria-label", (titles.length > 1 ? "Research reminders: " : "Research reminder: ") + titles.join("; "));
+      button.style.setProperty("left", group.rect.left + "px", "important");
+      button.style.setProperty("top", group.rect.top + "px", "important");
+      button.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="6.7" cy="6.7" r="4.2"></circle><path d="m10 10 3.5 3.5"></path></svg>';
+      if (titles.length > 1) {
+        button.dataset.grouped = "true";
+        var count = document.createElement("span");
+        count.className = "reader-reminder-count";
+        count.textContent = String(titles.length);
+        count.setAttribute("aria-hidden", "true");
+        button.appendChild(count);
+      }
+      button.addEventListener("mousedown", function (event) { event.preventDefault(); });
+      button.addEventListener("focus", function () { post({ type: "reminderFocusChanged", focused: true }); });
+      button.addEventListener("blur", function () { post({ type: "reminderFocusChanged", focused: false }); });
+      button.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") activateReminderBadge(button, event);
+      });
+      layer.appendChild(button);
+      if (focusedID && group.reminders.some(function (reminder) { return reminder.id === focusedID; })) {
+        button.focus({ preventScroll: true });
+      }
+    });
+  }
+
   function normalizeWhitespace(value) {
     return String(value || "")
       .replace(/\s+/g, " ")
@@ -1409,9 +1588,12 @@
 
   function renderHighlights() {
     var layer = highlightLayer();
+    var focusedID = focusedReminderID(layer);
+    if (focusedID) post({ type: "reminderFocusChanged", focused: false });
     layer.textContent = "";
     if (state.highlights.length === 0) {
       renderReadingMarker();
+      renderReminders(focusedID);
       post({ type: "highlightsResolved", results: [] });
       return;
     }
@@ -1458,6 +1640,7 @@
     }
     layer.appendChild(fragment);
     renderReadingMarker();
+    renderReminders(focusedID);
     post({ type: "highlightsResolved", results: results });
   }
 
@@ -1490,6 +1673,63 @@
     var node;
     while ((node = walker.nextNode())) nodes.push(node);
     return nodes;
+  }
+
+  function narrationText(spineIndex) {
+    if (!state.ready || spineIndex !== state.spineIndex) return null;
+    var position = currentPosition();
+    var start = position && nodeAtPath(position.elementPath);
+    var boundary = null;
+    var offset = 0;
+    if (start) {
+      var isText = start.nodeType === Node.TEXT_NODE;
+      offset = clamp(position.offset, 0, isText ? start.length : start.childNodes.length);
+      // The viewport caret can land just inside the first visible word.
+      if (isText && /^[\p{L}\p{N}\p{M}]/u.test(start.data.slice(offset))) {
+        var prefix = start.data.slice(0, offset).match(/[\p{L}\p{N}\p{M}]+$/u);
+        if (prefix) offset -= prefix[0].length;
+      }
+      boundary = document.createRange();
+      boundary.setStart(start, offset);
+      boundary.collapse(true);
+    }
+
+    var blocks = [];
+    var parts = [];
+    var parent = null;
+    var excluded = new WeakMap();
+    function isExcluded(el) {
+      if (!el) return false;
+      if (excluded.has(el)) return excluded.get(el);
+      // EPUB chapters served as XHTML preserve the original tag case.
+      var tag = el.localName.toUpperCase();
+      var result = SKIP_CONTEXT_TAGS[tag] || /^(NAV|IFRAME|OBJECT|BUTTON|SELECT|TEXTAREA)$/.test(tag) ||
+        el.getAttribute("role") === "navigation" || getComputedStyle(el).display === "none" ||
+        isExcluded(el.parentElement);
+      excluded.set(el, result);
+      return result;
+    }
+
+    function appendBlock() {
+      var text = parts.join("").replace(/\u00ad/g, "").replace(/\s+/g, " ").trim();
+      if (text) blocks.push(text);
+      parts = [];
+    }
+
+    collectReadableNodes().forEach(function (node) {
+      if (boundary && boundary.comparePoint(node, node.length) < 0) return;
+      var element = node.parentElement;
+      if (isExcluded(element) || getComputedStyle(element).visibility !== "visible") return;
+      var block = blockParent(node);
+      if (parent !== block) {
+        appendBlock();
+        parent = block;
+      }
+      if (node.previousSibling && node.previousSibling.localName === "br") parts.push(" ");
+      parts.push(node === start ? node.data.slice(offset) : node.data);
+    });
+    appendBlock();
+    return blocks.join("\n\n");
   }
 
   function blockParent(node) {
@@ -1815,6 +2055,8 @@
     var down = markerPointerDown;
     markerPointerDown = null;
     var target = event.target;
+    var reminderButton = target && target.closest ? target.closest(".reader-reminder-badge") : null;
+    if (reminderButton) { activateReminderBadge(reminderButton, event); return; }
     var link = target && target.closest ? target.closest("a") : null;
     if (link && link.getAttribute("href")) {
       event.preventDefault();
@@ -2030,9 +2272,11 @@
       goToPage(state.pageCount - 1, false);
     },
     setHighlights: setHighlights,
+    setReminders: setReminders,
     setReadingMarker: setReadingMarker,
     setReadingMarkerPlacement: setReadingMarkerPlacement,
     clearSelection: clearSelection,
+    narrationText: narrationText,
     extractSurroundingPassage: function (start, end) {
       try {
         return JSON.stringify(extractSurroundingPassage(start, end));

@@ -37,9 +37,11 @@ public struct ReaderWebView: NSViewRepresentable {
 /// Excalidraw, a search field — must keep arrows, space, and page keys.
 public enum ReaderKeyTarget {
     public static let pageWebViewIdentifier = NSUserInterfaceItemIdentifier("kodi-reader-page")
+    public static let researchReminderIdentifierPrefix = "kodi-research-reminder:"
 
     public static func shouldSuppressPageTurns(for responder: NSResponder?) -> Bool {
         guard let view = responder as? NSView else { return false }
+        if view.identifier?.rawValue.hasPrefix(researchReminderIdentifierPrefix) == true { return true }
         if isInsideReaderPage(view) { return false }
         return ownsNavigation(view)
     }
@@ -289,7 +291,7 @@ struct PageTurnKeyMonitor: NSViewRepresentable {
 
         private func handleKey(_ event: NSEvent) -> NSEvent? {
             publishSuppressIfNeeded()
-            guard enabled else { return event }
+            guard enabled, controller?.isReminderBadgeFocused != true else { return event }
 
             let eventWindow = event.window ?? NSApp.keyWindow
             let responder = eventWindow?.firstResponder

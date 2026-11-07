@@ -1,16 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHmac } from 'node:crypto';
 import {
-  createDashboardHandler, createEventsHandler, validateBatch, requireAdmin,
+  createDashboardHandler, createEventsHandler, validateBatch,
   parseDays, getPeriod, readBoundedJSON, MAX_BODY_BYTES, storageConfiguration, requestCountry,
 } from './analytics.mjs';
 
 const now = new Date('2026-10-24T14:30:00Z');
 const env = {
-  ANALYTICS_ADMIN_TOKEN: '12345678901234567890123456789012',
   ANALYTICS_SUPABASE_URL: 'https://example.supabase.co',
   ANALYTICS_SUPABASE_SERVICE_KEY: 'sb_secret_testing_only_1234567890',
+  ANALYTICS_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_testing_only_1234567890',
+  ANALYTICS_ADMIN_EMAIL: 'developer.olly@gmail.com',
+  ANALYTICS_SESSION_SECRET: 'testing-only-session-secret-1234567890',
 };
+const owner = { id: '47f6acae-e80d-4d16-a4c6-500000000006', email: env.ANALYTICS_ADMIN_EMAIL, email_confirmed_at: now.toISOString(), identities: [{ provider: 'google', identity_data: { sub: 'google-owner-sub' } }] };
 function event(overrides = {}) {
   return {
     id: '47f6acae-e80d-4d16-a4c6-500000000001',
@@ -24,9 +28,15 @@ function event(overrides = {}) {
 const post = body => new Request('https://www.kodi-reader.app/api/analytics/events', {
   method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
 });
-const admin = (token = env.ANALYTICS_ADMIN_TOKEN, query = '?days=30') => new Request(`https://www.kodi-reader.app/api/analytics/dashboard${query}`, {
-  headers: { Authorization: `Bearer ${token}` },
-});
+const admin = (query = '?days=30', headers = {}) => new Request(`https://www.kodi-reader.app/api/analytics/dashboard${query}`, { headers });
+function ownerRequest(query = '?days=30') {
+  const sid = '47f6acae-e80d-4d16-a4c6-500000000007';
+  const tokenClaims = { sub: owner.id, session_id: sid, amr: [{ method: 'oauth' }], exp: Math.floor(Date.now() / 1000) + 3600 };
+  const session = { access_token: `e30.${Buffer.from(JSON.stringify(tokenClaims)).toString('base64url')}.test-signature`, refresh_token: 'test-refresh', expires_at: tokenClaims.exp, expires_in: 3600, token_type: 'bearer', user: owner };
+  const markerBody = Buffer.from(JSON.stringify({ v: 1, sub: owner.id, sid, email: env.ANALYTICS_ADMIN_EMAIL, exp: Math.floor(now.getTime() / 1000) + 28800 })).toString('base64url');
+  const marker = `${markerBody}.${createHmac('sha256', env.ANALYTICS_SESSION_SECRET).update(markerBody).digest('base64url')}`;
+  return admin(query, { Cookie: `__Host-kodi-analytics-owner=${marker}; __Host-kodi-analytics-session=base64-${Buffer.from(JSON.stringify(session)).toString('base64url')}` });
+}
 
 test('native-shaped payloads accept known feature and error enums and deduplicate UUIDs', () => {
   const value = event({ id: event().id.toUpperCase(), name: 'reading_heartbeat', duration_seconds: 60 });
@@ -48,10 +58,30 @@ test('v2 feature and AI events keep telemetry IDs bounded and separate from othe
     assert.throws(() => validateBatch({ events: [event({ name, properties: { schema_version: 2 } })] }, now));
     assert.doesNotThrow(() => validateBatch({ events: [event({ name })] }, now)); // Legacy clients remain valid.
   }
-  for (const properties of [{ request_id: requestID }, { schema_version: 3 }, { schema_version: '2' }, { country_code: 'US' }, { latitude: 1 }, { request_id: 'account@example.com' }]) {
+  for (const properties of [{ request_id: requestID }, { schema_version: 4 }, { schema_version: '2' }, { country_code: 'US' }, { latitude: 1 }, { request_id: 'account@example.com' }]) {
     assert.throws(() => validateBatch({ events: [event({ properties })] }, now));
   }
   assert.throws(() => validateBatch({ events: [event()], country_code: 'US' }, now));
+});
+
+test('v3 feature events are closed, versioned and carry only bounded audio durations', () => {
+  const names = ['reminder_created', 'reminder_updated', 'reminder_completed', 'reminder_reopened', 'reminder_deleted', 'reminder_restored', 'reminder_opened', 'sketch_opened', 'sketch_deleted',
+    'audio_recording_started', 'audio_recording_paused', 'audio_recording_resumed', 'audio_recording_saved', 'audio_recording_discarded', 'audio_recording_failed',
+    'tts_listening_started', 'tts_listening_paused', 'tts_listening_resumed', 'tts_listening_stopped', 'tts_listening_completed', 'tts_listening_failed'];
+  for (const name of names) {
+    assert.equal(validateBatch({ events: [event({ name, properties: { schema_version: 3 } })] }, now)[0].name, name);
+    assert.throws(() => validateBatch({ events: [event({ name })] }, now), { status: 400 });
+    assert.throws(() => validateBatch({ events: [event({ name, duration_seconds: 1, properties: { schema_version: 3 } })] }, now), { status: 400 });
+  }
+  for (const name of ['audio_recording_heartbeat', 'tts_listening_heartbeat']) {
+    for (const seconds of [1, 15, 60]) assert.equal(validateBatch({ events: [event({ name, duration_seconds: seconds, properties: { schema_version: 3 } })] }, now)[0].duration_seconds, seconds);
+    for (const seconds of [undefined, 0, -1, 61, 1.5, '15']) assert.throws(() => validateBatch({ events: [event({ name, duration_seconds: seconds, properties: { schema_version: 3 } })] }, now), { status: 400 });
+  }
+  for (const key of ['title', 'reminder_id', 'audio_id', 'sketch_id', 'text', 'transcript', 'voice', 'waveform', 'audio_url']) {
+    assert.throws(() => validateBatch({ events: [event({ name: 'audio_recording_saved', properties: { schema_version: 3, [key]: 'private' } })] }, now), { status: 400 });
+  }
+  assert.throws(() => validateBatch({ events: [event({ name: 'ai_request_started', properties: { schema_version: 3 } })] }, now), { status: 400 });
+  assert.equal(validateBatch({ events: [event({ name: 'ai_request_started', properties: { schema_version: 3, request_id: '47f6acae-e80d-4d16-a4c6-500000000005' } })] }, now)[0].properties.schema_version, 3);
 });
 
 test('country observations use only Vercel country headers and assigned ISO codes', () => {
@@ -98,13 +128,18 @@ test('streamed request bodies are bounded even without Content-Length', async ()
   await assert.rejects(readBoundedJSON(new Request('https://example.com', { method: 'POST', body: '{}' })), { status: 415 });
 });
 
-test('admin token fails closed for absent, short, wrong, malformed and same-prefix secrets', () => {
-  assert.throws(() => requireAdmin(admin(), {}), { status: 503 });
-  assert.throws(() => requireAdmin(admin(), { ANALYTICS_ADMIN_TOKEN: 'short' }), { status: 503 });
-  for (const value of ['', 'x', env.ANALYTICS_ADMIN_TOKEN + 'x', env.ANALYTICS_ADMIN_TOKEN.slice(0, -1)]) {
-    assert.throws(() => requireAdmin(admin(value), env), { status: 401 });
+test('dashboard rejects the retired token and missing OAuth configuration before storage', async () => {
+  let called = false;
+  const fetchImpl = async () => { called = true; throw new Error('Must not reach storage or Auth.'); };
+  const retiredToken = 'retired-test-administrator-token-1234567890';
+  const handler = createDashboardHandler({ env: { ...env, ANALYTICS_ADMIN_TOKEN: retiredToken }, fetchImpl });
+  for (const value of ['', 'wrong', retiredToken]) {
+    const response = await handler(admin('?days=30', { Authorization: `Bearer ${value}` }));
+    assert.equal(response.status, 401);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
   }
-  assert.doesNotThrow(() => requireAdmin(admin(), env));
+  assert.equal((await createDashboardHandler({ env: {}, fetchImpl })(admin())).status, 503);
+  assert.equal(called, false);
 });
 
 test('date periods use UTC calendar days, equal elapsed comparison and reject invalid query values', () => {
@@ -114,7 +149,7 @@ test('date periods use UTC calendar days, equal elapsed comparison and reject in
   });
   assert.equal(parseDays(admin()), 30);
   for (const query of ['?days=8', '?days=7&days=30', '?days=7junk', '?days=']) {
-    assert.throws(() => parseDays(admin(undefined, query)), { status: 400 });
+    assert.throws(() => parseDays(admin(query)), { status: 400 });
   }
 });
 
@@ -185,17 +220,20 @@ test('rate limits are retryable and storage outages never expose upstream conten
 test('dashboard checks authorization before storage and returns aggregate JSON without caching', async () => {
   let called = 0;
   const aggregate = { days: 7, daily: [], summary: { active_users: { value: 0, previous: 0 } } };
-  const handler = createDashboardHandler({ env, fetchImpl: async (_url, options) => {
+  const handler = createDashboardHandler({ env, now: () => now, fetchImpl: async (url, options) => {
+    if (url.endsWith('/auth/v1/user')) return Response.json(owner);
     called++;
     assert.deepEqual(JSON.parse(options.body), { p_days: 7 });
     return Response.json(aggregate);
   } });
-  assert.equal((await handler(admin('wrong', '?days=7'))).status, 401);
+  assert.equal((await handler(admin('?days=7'))).status, 401);
   assert.equal(called, 0);
-  const response = await handler(admin(undefined, '?days=7'));
+  const response = await handler(ownerRequest('?days=7'));
   assert.equal(response.status, 200);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await response.json(), aggregate);
+  assert.equal(called, 1);
+  assert.equal((await handler(ownerRequest('?days=8'))).status, 400);
   assert.equal(called, 1);
   assert.equal((await handler(post({}))).status, 405);
 });

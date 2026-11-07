@@ -12,6 +12,12 @@ struct MarkdownTextEditor: NSViewRepresentable {
     var placeholder: String? = nil
     var onCreateSketch: ((NSRange) -> Void)? = nil
     var onOpenSketch: ((UUID) -> Void)? = nil
+    var onCreateAudio: ((NSRange) -> Void)? = nil
+    var onOpenAudio: ((UUID) -> Void)? = nil
+    var audioDraftID: UUID? = nil
+    var audioContext: AudioNoteEditorContext? = nil
+    var onCreateReminder: ((NSRange) -> Void)? = nil
+    var onOpenReminder: ((UUID) -> Void)? = nil
 
     private static let containerInset = NSSize(width: 8, height: 10)
 
@@ -27,10 +33,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         let textView = NoteTextView()
         textView.delegate = context.coordinator
-        textView.commandEnabled = isActive
+        textView.commandEnabled = isActive && isEditable
         textView.commandIsDark = isDark
         textView.onCreateSketch = onCreateSketch
         textView.onOpenSketch = onOpenSketch
+        textView.onCreateAudio = onCreateAudio
+        textView.onOpenAudio = onOpenAudio
+        textView.audioContext = audioContext
+        textView.onCreateReminder = onCreateReminder
+        textView.onOpenReminder = onOpenReminder
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = .systemFont(ofSize: NSFont.systemFontSize + 1)
@@ -63,12 +74,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
     func updateNSView(_ scroll: NSScrollView, context: Context) {
         context.coordinator.parent = self
         guard let textView = context.coordinator.textView else { return }
+        if !isActive, textView.window?.firstResponder === textView { textView.window?.makeFirstResponder(nil) }
         scroll.isHidden = !isActive
         textView.isEditable = isEditable && isActive
-        textView.commandEnabled = isActive
+        textView.commandEnabled = isActive && isEditable
         textView.commandIsDark = isDark
         textView.onCreateSketch = onCreateSketch
         textView.onOpenSketch = onOpenSketch
+        textView.onCreateAudio = onCreateAudio
+        textView.onOpenAudio = onOpenAudio
+        textView.audioContext = audioContext
+        textView.onCreateReminder = onCreateReminder
+        textView.onOpenReminder = onOpenReminder
         if textView.string != text {
             context.coordinator.loading = true
             textView.insertText(text, replacementRange: NSRange(location: 0, length: textView.string.utf16.count))
@@ -146,6 +163,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
             return insertListAwareNewline(in: textView)
         }
 
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !loading, let id = parent.audioDraftID else { return true }
+            let marker = (textView.string as NSString).range(of: AudioDraftReference.marker(id))
+            guard marker.location != NSNotFound else { return true }
+            return NSIntersectionRange(marker, affectedCharRange).length == 0
+                && !(affectedCharRange.location > marker.location && affectedCharRange.location < NSMaxRange(marker))
+        }
+
         /// Continues `- ` / `* ` / `+ ` / `1. ` lists on Enter; exits on an empty item.
         private func insertListAwareNewline(in textView: NSTextView) -> Bool {
             let ns = textView.string as NSString
@@ -188,22 +213,49 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
 /// Owns slash suggestions in the native editor so their position and keyboard
 /// handling follow the caret, including inside a SwiftUI sheet with buttons.
+private enum NoteInsertCommand: Hashable {
+    case sketch, audio, reminder
+    var label: String {
+        switch self { case .sketch: return "Create sketch"; case .audio: return "Record audio"; case .reminder: return "Add reminder" }
+    }
+    var symbol: String {
+        switch self { case .sketch: return "pencil.tip.crop.circle"; case .audio: return "mic"; case .reminder: return "checklist" }
+    }
+}
+
 class SketchCommandTextView: NSTextView {
     var onCreateSketch: ((NSRange) -> Void)?
+    var onCreateAudio: ((NSRange) -> Void)?
+    var onCreateReminder: ((NSRange) -> Void)?
     var commandEnabled = true { didSet { if !commandEnabled { hideCommandSuggestion() } } }
     var commandIsDark = false
     private var dismissedCommand: NSRange?
     private var suggestionPanel: NSPanel?
+    private var suggestedCommands: [NoteInsertCommand] = []
+    private var selectedCommand = 0
     var isCommandSuggestionVisible: Bool { suggestionPanel?.isVisible == true }
 
     func commandCandidate() -> NSRange? {
         SketchReference.commandSuggestionRange(in: string, selection: selectedRange())
+            ?? AudioReference.commandSuggestionRange(in: string, selection: selectedRange())
+            ?? ReminderReference.commandSuggestionRange(in: string, selection: selectedRange())
+    }
+
+    private func commandsAtCaret() -> [NoteInsertCommand] {
+        var commands: [NoteInsertCommand] = []
+        if onCreateSketch != nil, SketchReference.commandSuggestionRange(in: string, selection: selectedRange()) != nil { commands.append(.sketch) }
+        if onCreateAudio != nil, AudioReference.commandSuggestionRange(in: string, selection: selectedRange()) != nil { commands.append(.audio) }
+        if onCreateReminder != nil, ReminderReference.commandSuggestionRange(in: string, selection: selectedRange()) != nil { commands.append(.reminder) }
+        return commands
     }
 
     func commandChanged() {
         let candidate = commandCandidate()
+        let commands = commandsAtCaret()
+        if suggestedCommands != commands { selectedCommand = 0 }
+        suggestedCommands = commands
         if candidate != dismissedCommand { dismissedCommand = nil }
-        guard commandEnabled, onCreateSketch != nil, candidate != nil,
+        guard commandEnabled, !commands.isEmpty, candidate != nil,
               candidate != dismissedCommand, let window, window.firstResponder === self,
               !isHiddenOrHasHiddenAncestor else { hideCommandSuggestion(); return }
         let panel: NSPanel
@@ -216,13 +268,16 @@ class SketchCommandTextView: NSTextView {
             panel.hasShadow = true
             panel.hidesOnDeactivate = true
             panel.isReleasedWhenClosed = false
-            panel.contentView = NSHostingView(rootView: SketchCommandSuggestion { [weak self] in
-                _ = self?.handleSketchCommand(#selector(NSResponder.insertNewline(_:)))
-            })
             suggestionPanel = panel
         }
+        panel.setContentSize(NSSize(width: 244, height: 44 * commands.count))
+        panel.contentView = NSHostingView(rootView: SketchCommandSuggestion(commands: commands, selected: selectedCommand) { [weak self] command in
+            self?.activate(command)
+        })
         panel.appearance = NSAppearance(named: commandIsDark ? .darkAqua : .aqua)
-        let commandStart = SketchReference.commandSuggestionRange(in: string, selection: selectedRange())?.location ?? selectedRange().location
+        let commandStart = (SketchReference.commandSuggestionRange(in: string, selection: selectedRange())
+            ?? AudioReference.commandSuggestionRange(in: string, selection: selectedRange())
+            ?? ReminderReference.commandSuggestionRange(in: string, selection: selectedRange()))?.location ?? selectedRange().location
         let caret = firstRect(forCharacterRange: NSRange(location: commandStart, length: 0), actualRange: nil)
         // An insertion caret has zero width; its line height supplies the anchor.
         guard caret.height > 0 else { hideCommandSuggestion(); return }
@@ -249,12 +304,30 @@ class SketchCommandTextView: NSTextView {
             hideCommandSuggestion()
             return true
         }
-        if selector == #selector(NSResponder.insertNewline(_:)), let onCreateSketch {
-            hideCommandSuggestion()
-            onCreateSketch(range)
+        let commands = commandsAtCaret()
+        if selector == #selector(NSResponder.moveDown(_:)), !commands.isEmpty {
+            selectedCommand = (selectedCommand + 1) % commands.count
+            commandChanged(); return true
+        }
+        if selector == #selector(NSResponder.moveUp(_:)), !commands.isEmpty {
+            selectedCommand = (selectedCommand + commands.count - 1) % commands.count
+            commandChanged(); return true
+        }
+        if selector == #selector(NSResponder.insertNewline(_:)), !commands.isEmpty {
+            activate(commands[min(selectedCommand, commands.count - 1)], range: range)
             return true
         }
         return false
+    }
+
+    private func activate(_ command: NoteInsertCommand, range: NSRange? = nil) {
+        guard let range = range ?? commandCandidate() else { return }
+        hideCommandSuggestion()
+        switch command {
+        case .sketch: onCreateSketch?(range)
+        case .audio: onCreateAudio?(range)
+        case .reminder: onCreateReminder?(range)
+        }
     }
 
     private func handleCommandKey(_ event: NSEvent) -> Bool {
@@ -262,6 +335,8 @@ class SketchCommandTextView: NSTextView {
         switch event.keyCode {
         case 36, 76: return handleSketchCommand(#selector(NSResponder.insertNewline(_:)))
         case 53: return handleSketchCommand(#selector(NSResponder.cancelOperation(_:)))
+        case 125: return handleSketchCommand(#selector(NSResponder.moveDown(_:)))
+        case 126: return handleSketchCommand(#selector(NSResponder.moveUp(_:)))
         default: return false
         }
     }
@@ -314,33 +389,51 @@ class SketchCommandTextView: NSTextView {
 }
 
 private struct SketchCommandSuggestion: View {
-    var activate: () -> Void
+    let commands: [NoteInsertCommand]
+    let selected: Int
+    var activate: (NoteInsertCommand) -> Void
 
     var body: some View {
-        Button(action: activate) {
-            HStack(spacing: 10) {
-                Image(systemName: "pencil.tip.crop.circle")
-                Text("Create sketch").fontWeight(.medium)
-                Spacer(minLength: 8)
-                Text("↵ Enter").font(.system(size: 11)).foregroundStyle(.secondary)
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 4))
+        VStack(spacing: 0) {
+            ForEach(Array(commands.enumerated()), id: \.element) { index, command in
+                Button { activate(command) } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: command.symbol).frame(width: 18)
+                        Text(command.label).fontWeight(.medium)
+                        Spacer(minLength: 8)
+                        if index == selected { Text("↵ Enter").font(.system(size: 11)).foregroundStyle(.secondary) }
+                    }
+                    .font(.system(size: 13)).padding(.horizontal, 12).frame(height: 44)
+                    .frame(maxWidth: .infinity).contentShape(Rectangle())
+                    .background(index == selected ? Color.primary.opacity(0.06) : .clear)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(command.label + (index == selected ? ", Enter" : ""))
             }
-            .font(.system(size: 13))
-            .padding(.horizontal, 12)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(.primary.opacity(0.12), lineWidth: 1))
-        .accessibilityLabel("Create sketch, Enter")
     }
 }
 
 /// Draws the placeholder in the extra line fragment so it shares the caret’s line.
 final class NoteTextView: SketchCommandTextView {
     var onOpenSketch: ((UUID) -> Void)?
+    var onOpenAudio: ((UUID) -> Void)?
+    var audioContext: AudioNoteEditorContext?
+
+    override func copy(_ sender: Any?) {
+        let selected = (string as NSString).substring(with: selectedRange())
+        AudioNoteClipboard.retain(selected, context: audioContext)
+        super.copy(sender)
+    }
+
+    override func cut(_ sender: Any?) {
+        copy(sender)
+        insertText("", replacementRange: selectedRange())
+    }
+    var onOpenReminder: ((UUID) -> Void)?
 
     override func mouseDown(with event: NSEvent) {
         if event.modifierFlags.contains(.command), let layoutManager, let textContainer {
@@ -348,6 +441,14 @@ final class NoteTextView: SketchCommandTextView {
             let index = layoutManager.characterIndex(for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
             if let reference = SketchReference.references(in: string).first(where: { NSLocationInRange(index, $0.range) }) {
                 onOpenSketch?(reference.id)
+                return
+            }
+            if let reference = ReminderReference.references(in: string).first(where: { NSLocationInRange(index, $0.range) }) {
+                onOpenReminder?(reference.id)
+                return
+            }
+            if let reference = AudioReference.references(in: string).first(where: { NSLocationInRange(index, $0.range) }) {
+                onOpenAudio?(reference.id)
                 return
             }
         }
@@ -452,10 +553,17 @@ struct RichNoteEditor: NSViewRepresentable {
     var isDark: Bool
     var autofocus: Bool
     var isActive: Bool = true
+    var isEditable: Bool = true
     var selectedRange: Binding<NSRange>? = nil
     var preview: ((UUID) -> Data?)? = nil
+    var sketchModifiedAt: ((UUID) -> Date?)? = nil
     var onCreateSketch: ((NSRange) -> Void)? = nil
     var onOpenSketch: ((UUID) -> Void)? = nil
+    var onRenameSketch: ((UUID) -> Void)? = nil
+    var onCreateAudio: ((NSRange) -> Void)? = nil
+    var audio: AudioNoteEditorContext? = nil
+    var onCreateReminder: ((NSRange) -> Void)? = nil
+    var reminders: ReminderNoteEditorContext? = nil
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -464,8 +572,10 @@ struct RichNoteEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.scrollerStyle = .overlay
-        let view = RichNoteTextView()
+        // Sketch layout and caret drawing both use NSLayoutManager.
+        let view = RichNoteTextView(usingTextLayoutManager: false)
         view.isRichText = true
+        view.isEditable = isEditable
         view.importsGraphics = false
         view.allowsUndo = true
         view.drawsBackground = false
@@ -487,7 +597,7 @@ struct RichNoteEditor: NSViewRepresentable {
         context.coordinator.wasActive = isActive
         if autofocus && isActive {
             DispatchQueue.main.async { [weak view] in
-                guard let view else { return }
+                guard let view, !view.isHiddenOrHasHiddenAncestor else { return }
                 view.window?.makeFirstResponder(view)
                 view.setSelectedRange(NSRange(location: view.string.utf16.count, length: 0))
             }
@@ -500,20 +610,31 @@ struct RichNoteEditor: NSViewRepresentable {
         coordinator.parent = self
         scroll.isHidden = !isActive
         if let view = coordinator.view {
+            if !isActive, view.window?.firstResponder === view { view.window?.makeFirstResponder(nil) }
             view.onCreateSketch = onCreateSketch; view.onOpenSketch = onOpenSketch
-            view.commandEnabled = isActive
+            view.onRenameSketch = onRenameSketch
+            view.onCreateAudio = onCreateAudio
+            view.audioContext = audio
+            view.onCreateReminder = onCreateReminder
+            view.reminderContext = reminders
+            view.sketchPreview = preview
+            view.sketchModifiedAt = sketchModifiedAt
+            view.isEditable = isEditable && isActive
+            view.commandEnabled = isActive && isEditable
             view.commandIsDark = isDark
+            var previewChanged = false
             view.textStorage?.enumerateAttribute(.attachment, in: NSRange(location: 0, length: view.string.utf16.count)) { value, _, _ in
                 if let card = value as? SketchTextAttachment, let cell = card.attachmentCell as? SketchAttachmentCell {
-                    cell.preview = preview?(card.id)
-                    let width = max(160, min(280, scroll.contentSize.width - 16))
-                    if cell.cardWidth != width {
-                        cell.cardWidth = width
-                        view.layoutManager?.invalidateLayout(forCharacterRange: NSRange(location: 0, length: view.string.utf16.count), actualCharacterRange: nil)
-                    }
+                    let image = preview?(card.id)
+                    let modifiedAt = sketchModifiedAt?(card.id)
+                    previewChanged = previewChanged || cell.preview != image || cell.modifiedAt != modifiedAt || cell.isDark != isDark
+                    cell.preview = image
+                    cell.modifiedAt = modifiedAt
+                    cell.isDark = isDark
                 }
             }
-            view.needsDisplay = true
+            view.resizeSketchCards()
+            if previewChanged { view.needsDisplay = true }
         }
         if coordinator.lastMarkdown != text {
             coordinator.load(text, dark: isDark)
@@ -525,6 +646,7 @@ struct RichNoteEditor: NSViewRepresentable {
             view.typingAttributes[.foregroundColor] = RichNoteCodec.ink(isDark)
             view.needsDisplay = true
         }
+        coordinator.view?.refreshAudioOverlays(updateContent: true)
         if let selection = selectedRange?.wrappedValue, let view = coordinator.view, let storage = view.textStorage {
             if RichNoteCodec.markdownRange(view.selectedRange(), in: storage) != selection {
                 coordinator.loading = true
@@ -557,16 +679,25 @@ struct RichNoteEditor: NSViewRepresentable {
             loading = true
             let selection = view.selectedRange()
             view.dark = dark
-            let decoded = RichNoteCodec.decode(markdown, dark: dark, preview: parent.preview)
+            let decoded = RichNoteCodec.decode(markdown, dark: dark, preview: parent.preview, sketchModifiedAt: parent.sketchModifiedAt, audioDraftID: parent.audio?.draftID)
             if hasLoaded { view.insertText(decoded, replacementRange: NSRange(location: 0, length: view.string.utf16.count)) }
             else { view.textStorage?.setAttributedString(decoded); hasLoaded = true }
             view.onOpenSketch = parent.onOpenSketch
+            view.onRenameSketch = parent.onRenameSketch
             view.onCreateSketch = parent.onCreateSketch
-            view.commandEnabled = parent.isActive
+            view.onCreateAudio = parent.onCreateAudio
+            view.audioContext = parent.audio
+            view.onCreateReminder = parent.onCreateReminder
+            view.reminderContext = parent.reminders
+            view.sketchPreview = parent.preview
+            view.sketchModifiedAt = parent.sketchModifiedAt
+            view.isEditable = parent.isEditable && parent.isActive
+            view.commandEnabled = parent.isActive && parent.isEditable
             view.commandIsDark = dark
             view.typingAttributes = RichNoteCodec.attributes(dark: dark)
             view.insertionPointColor = RichNoteCodec.ink(dark)
             view.setSelectedRange(NSRange(location: min(selection.location, view.string.utf16.count), length: 0))
+            view.resizeSketchCards()
             lastMarkdown = markdown
             loading = false
         }
@@ -593,14 +724,282 @@ struct RichNoteEditor: NSViewRepresentable {
         func textView(_ textView: NSTextView, doCommandBy selector: Selector) -> Bool {
             view?.handleSketchCommand(selector) ?? false
         }
+
+        func textView(_ textView: NSTextView, shouldChangeTextIn affectedCharRange: NSRange, replacementString: String?) -> Bool {
+            guard !loading, let storage = textView.textStorage, let id = parent.audio?.draftID else { return true }
+            var allowed = true
+            storage.enumerateAttribute(.attachment, in: affectedCharRange) { value, _, _ in
+                if let audio = value as? AudioTextAttachment, audio.isDraft, audio.id == id { allowed = false }
+            }
+            return allowed
+        }
     }
 }
 
 final class RichNoteTextView: SketchCommandTextView {
     var onOpenSketch: ((UUID) -> Void)?
+    var onRenameSketch: ((UUID) -> Void)?
+    var sketchPreview: ((UUID) -> Data?)?
+    var sketchModifiedAt: ((UUID) -> Date?)?
+    var audioContext: AudioNoteEditorContext?
+    var reminderContext: ReminderNoteEditorContext?
+    private var reminderViews: [ObjectIdentifier: NSHostingView<ReminderInlineRow>] = [:]
+    private var reminderAccessibilityActions: [ObjectIdentifier: (complete: ReminderAccessibilityAction, edit: ReminderAccessibilityAction)] = [:]
+    private var refreshingReminderViews = false
+    private var audioViews: [ObjectIdentifier: NSHostingView<AnyView>] = [:]
+    private var audioPresentations: [ObjectIdentifier: AudioOverlayPresentation] = [:]
+    private var refreshingAudioViews = false
+    private var audioDraftAttachments: [WeakAudioDraftAttachment] = []
+
+    private struct AudioOverlayPresentation: Equatable {
+        var audio: NoteAudio?
+        var title: String
+        var fileURL: URL?
+        var isDark: Bool
+        var isDraft: Bool
+        var draftError: String?
+        var expanded: Bool
+        var transcriptionBusy: Bool
+        var transcriptionError: String?
+        var controller: ObjectIdentifier
+        var transcriptionController: ObjectIdentifier?
+        var transcriptionScope: AudioTranscriptionScope?
+        var canTranscribe: Bool
+    }
+
+    override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
+        let font = typingAttributes[.font] as? NSFont ?? RichNoteCodec.bodyFont
+        let lineHeight = layoutManager?.defaultLineHeight(for: font) ?? ceil(font.ascender - font.descender)
+        var caret = rect
+        // Paragraph leading belongs between lines, outside the text caret.
+        // Staying inside AppKit's rect also preserves its blink invalidation.
+        caret.size.height = min(rect.height, lineHeight)
+        super.drawInsertionPoint(in: caret, color: color, turnedOn: flag)
+    }
+
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        resizeSketchCards()
+    }
+
+    override func layout() {
+        super.layout()
+        resizeSketchCards()
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        resizeSketchCards()
+    }
+
+    func resizeSketchCards() {
+        guard let storage = textStorage, let textContainer else { return }
+        let available = min(bounds.width - textContainerInset.width * 2, textContainer.containerSize.width)
+            - textContainer.lineFragmentPadding * 2
+        guard available > 0 else { return }
+        let width = min(SketchCardStyle.maximumWidth, available)
+        var changed = false
+        // Undo snapshots retain attachment objects. Retire their draft identity
+        // too, so Undo can remove a finished recording without reviving a mic
+        // row or serializing an internal marker. A space keeps native indices.
+        audioDraftAttachments.removeAll { $0.value == nil }
+        for reference in audioDraftAttachments {
+            if let attachment = reference.value, attachment.id != audioContext?.draftID, !attachment.isRetiredDraft {
+                attachment.retireDraft()
+                changed = true
+            }
+        }
+        let range = NSRange(location: 0, length: storage.length)
+        storage.enumerateAttribute(.attachment, in: range) { value, _, _ in
+            if let attachment = value as? SketchTextAttachment,
+               let cell = attachment.attachmentCell as? SketchAttachmentCell,
+               cell.cardWidth != width {
+                cell.cardWidth = width
+                changed = true
+            }
+            if let attachment = value as? ReminderTextAttachment,
+               let cell = attachment.attachmentCell as? ReminderAttachmentCell, cell.cardWidth != width {
+                cell.cardWidth = width
+                changed = true
+            }
+            if let attachment = value as? AudioTextAttachment,
+               !attachment.isRetiredDraft, let cell = attachment.attachmentCell as? AudioAttachmentCell {
+                let height = audioContext?.height(id: attachment.id, title: attachment.title, isDraft: attachment.isDraft)
+                    ?? (attachment.isDraft ? 44 : AudioNoteCardLayout.baseHeight)
+                if cell.cardWidth != width || cell.cardHeight != height {
+                    cell.cardWidth = width; cell.cardHeight = height
+                    changed = true
+                }
+            }
+        }
+        if changed {
+            layoutManager?.invalidateLayout(forCharacterRange: range, actualCharacterRange: nil)
+            needsDisplay = true
+            window?.invalidateCursorRects(for: self)
+        }
+        refreshAudioOverlays()
+        refreshReminderOverlays()
+    }
+
+    func refreshAudioOverlays(updateContent: Bool = false) {
+        guard !refreshingAudioViews, let storage = textStorage, let layoutManager, let textContainer else { return }
+        refreshingAudioViews = true
+        defer { refreshingAudioViews = false }
+        var live: Set<ObjectIdentifier> = []
+        layoutManager.ensureLayout(for: textContainer)
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+                guard let attachment = value as? AudioTextAttachment,
+                      let cell = attachment.attachmentCell as? AudioAttachmentCell else { return }
+                let key = ObjectIdentifier(attachment)
+                guard let context = audioContext, !attachment.isRetiredDraft,
+                      !attachment.isDraft || context.draftID == attachment.id else {
+                    if cell.hasLiveOverlay { cell.hasLiveOverlay = false; needsDisplay = true }
+                    return
+                }
+                if attachment.isDraft {
+                    if !audioDraftAttachments.contains(where: { $0.value === attachment }) {
+                        audioDraftAttachments.append(WeakAudioDraftAttachment(attachment))
+                    }
+                }
+                let presentation = AudioOverlayPresentation(audio: context.recordings[attachment.id],
+                    title: attachment.title, fileURL: context.fileURL(attachment.id), isDark: dark,
+                    isDraft: attachment.isDraft, draftError: context.draftError,
+                    expanded: context.expandedTranscripts.contains(attachment.id),
+                    transcriptionBusy: context.transcriptionBusyID == attachment.id,
+                    transcriptionError: context.transcriptionErrors[attachment.id],
+                    controller: ObjectIdentifier(context.controller),
+                    transcriptionController: context.transcription.map(ObjectIdentifier.init),
+                    transcriptionScope: context.transcriptionScope,
+                    canTranscribe: context.onTranscribe != nil)
+                let host: NSHostingView<AnyView>
+                if let existing = audioViews[key] {
+                    host = existing
+                    if audioPresentations[key] != presentation {
+                        host.rootView = audioContent(for: attachment, context: context)
+                        audioPresentations[key] = presentation
+                    }
+                } else {
+                    host = NSHostingView(rootView: audioContent(for: attachment, context: context))
+                    // NSTextView owns attachment geometry; child content must
+                    // not feed intrinsic-size changes back into text layout.
+                    host.sizingOptions = []
+                    host.wantsLayer = true
+                    host.layerContentsRedrawPolicy = .onSetNeedsDisplay
+                    audioViews[key] = host
+                    audioPresentations[key] = presentation
+                    addSubview(host)
+                }
+                let appearance: NSAppearance.Name = dark ? .darkAqua : .aqua
+                if host.appearance?.name != appearance { host.appearance = NSAppearance(named: appearance) }
+                let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+                let frame = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+                    .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+                if host.frame != frame { host.frame = frame }
+                if !cell.hasLiveOverlay { cell.hasLiveOverlay = true; needsDisplay = true }
+                live.insert(key)
+        }
+        for key in Array(audioViews.keys) where !live.contains(key) {
+            audioViews.removeValue(forKey: key)?.removeFromSuperview()
+            audioPresentations[key] = nil
+        }
+    }
+
+    private func audioContent(for attachment: AudioTextAttachment, context: AudioNoteEditorContext) -> AnyView {
+        // Cache presentation, but resolve actions against the latest editor
+        // context so unchanged views never keep stale note/state callbacks.
+        var live = context
+        live.onRename = { [weak self] in self?.audioContext?.onRename($0) }
+        live.onExport = { [weak self] in self?.audioContext?.onExport($0) }
+        live.onDelete = { [weak self] in self?.audioContext?.onDelete($0) }
+        live.onFinishDraft = { [weak self] in self?.audioContext?.onFinishDraft() }
+        live.onDiscardDraft = { [weak self] in self?.audioContext?.onDiscardDraft() }
+        live.onTranscribe = context.onTranscribe.map { _ in { [weak self] id in self?.audioContext?.onTranscribe?(id) } }
+        live.onToggleTranscript = context.onToggleTranscript.map { _ in { [weak self] id in self?.audioContext?.onToggleTranscript?(id) } }
+        return attachment.isDraft ? AnyView(live.recorder(isDark: dark))
+            : AnyView(live.player(id: attachment.id, title: attachment.title, isDark: dark))
+    }
+
+    private func refreshReminderOverlays() {
+        guard !refreshingReminderViews, let storage = textStorage, let layoutManager, let textContainer else { return }
+        refreshingReminderViews = true
+        defer { refreshingReminderViews = false }
+        var live: Set<ObjectIdentifier> = []
+        layoutManager.ensureLayout(for: textContainer)
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard let attachment = value as? ReminderTextAttachment,
+                  let cell = attachment.attachmentCell as? ReminderAttachmentCell else { return }
+            guard let reminderContext else {
+                if cell.hasLiveOverlay { cell.hasLiveOverlay = false; needsDisplay = true }
+                return
+            }
+            let key = ObjectIdentifier(attachment)
+            let reminder = reminderContext.reminder(attachment.id)
+            let content = ReminderInlineRow(title: reminder?.title ?? attachment.title,
+                isCompleted: reminder?.isCompleted ?? false, isAvailable: reminder != nil,
+                onToggle: { [weak self] in self?.reminderContext?.onToggle(attachment.id) },
+                onEdit: { [weak self] in self?.reminderContext?.onEdit(attachment.id) })
+            let host: NSHostingView<ReminderInlineRow>
+            if let existing = reminderViews[key] { host = existing; host.rootView = content }
+            else { host = NSHostingView(rootView: content); reminderViews[key] = host; addSubview(host) }
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            host.frame = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+                .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            host.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+            // The row has a translucent background. Once hosted, the attachment
+            // must reserve space without painting a second title underneath it.
+            if !cell.hasLiveOverlay { cell.hasLiveOverlay = true; needsDisplay = true }
+            let actions: (complete: ReminderAccessibilityAction, edit: ReminderAccessibilityAction)
+            if let existing = reminderAccessibilityActions[key] { actions = existing }
+            else {
+                actions = (ReminderAccessibilityAction(owner: self, role: .checkBox),
+                           ReminderAccessibilityAction(owner: self, role: .button))
+                reminderAccessibilityActions[key] = actions
+            }
+            let title = reminder?.title ?? attachment.title
+            actions.complete.setAccessibilityLabel((reminder?.isCompleted == true ? "Mark reminder incomplete: " : "Complete reminder: ") + title)
+            actions.complete.setAccessibilityValue(NSNumber(value: reminder?.isCompleted == true))
+            actions.complete.actionEnabled = reminder != nil
+            actions.complete.setAccessibilityEnabled(reminder != nil)
+            actions.complete.onPress = { [weak self] in self?.reminderContext?.onToggle(attachment.id) }
+            actions.complete.frameProvider = { [weak host] in
+                guard let host, let window = host.window else { return .zero }
+                let local = NSRect(x: 12, y: (host.bounds.height - 36) / 2, width: 28, height: 36)
+                return window.convertToScreen(host.convert(local, to: nil))
+            }
+            actions.edit.setAccessibilityLabel("Edit reminder: " + title)
+            actions.edit.actionEnabled = reminder != nil
+            actions.edit.setAccessibilityEnabled(reminder != nil)
+            actions.edit.onPress = { [weak self] in self?.reminderContext?.onEdit(attachment.id) }
+            actions.edit.frameProvider = { [weak host] in
+                guard let host, let window = host.window else { return .zero }
+                let local = NSRect(x: host.bounds.width - 40, y: (host.bounds.height - 36) / 2, width: 28, height: 36)
+                return window.convertToScreen(host.convert(local, to: nil))
+            }
+            live.insert(key)
+        }
+        for key in Array(reminderViews.keys) where !live.contains(key) {
+            reminderViews.removeValue(forKey: key)?.removeFromSuperview()
+            reminderAccessibilityActions.removeValue(forKey: key)
+        }
+    }
+
+    override func accessibilityChildren() -> [Any]? {
+        // NSTextView normally exposes attachment text as a leaf and omits its
+        // hosted NSViews. Keep native text semantics while exposing real row
+        // buttons to VoiceOver and other accessibility clients.
+        var children = super.accessibilityChildren() ?? []
+        for (key, host) in reminderViews.sorted(by: { $0.value.frame.minY < $1.value.frame.minY }) where !host.isHiddenOrHasHiddenAncestor {
+            guard let actions = reminderAccessibilityActions[key] else { continue }
+            children.append(actions.complete)
+            if actions.edit.actionEnabled { children.append(actions.edit) }
+        }
+        return children.isEmpty ? nil : children
+    }
 
     override func commandCandidate() -> NSRange? {
-        guard let storage = textStorage, let range = SketchReference.commandSuggestionRange(in: string, selection: selectedRange()),
+        guard let storage = textStorage, let range = SketchReference.commandSuggestionRange(in: string, selection: selectedRange())
+                ?? AudioReference.commandSuggestionRange(in: string, selection: selectedRange())
+                ?? ReminderReference.commandSuggestionRange(in: string, selection: selectedRange()),
               storage.attribute(.noteCode, at: range.location, effectiveRange: nil) as? Bool != true else { return nil }
         return RichNoteCodec.markdownRange(range, in: storage)
     }
@@ -611,19 +1010,85 @@ final class RichNoteTextView: SketchCommandTextView {
            selection.location < (textStorage?.length ?? 0),
            let card = textStorage?.attribute(.attachment, at: selection.location, effectiveRange: nil) as? SketchTextAttachment,
            let onOpenSketch { onOpenSketch(card.id); return true }
+        if selector == #selector(NSResponder.insertNewline(_:)), selection.length == 1,
+           selection.location < (textStorage?.length ?? 0),
+           let attachment = textStorage?.attribute(.attachment, at: selection.location, effectiveRange: nil) as? AudioTextAttachment,
+           !attachment.isDraft, let context = audioContext, let url = context.fileURL(attachment.id) {
+            try? context.controller.play(id: attachment.id, url: url)
+            return true
+        }
+        if selector == #selector(NSResponder.insertNewline(_:)), selection.length == 1,
+           selection.location < (textStorage?.length ?? 0),
+           let attachment = textStorage?.attribute(.attachment, at: selection.location, effectiveRange: nil) as? ReminderTextAttachment,
+           let context = reminderContext { context.onEdit(attachment.id); return true }
         return super.handleSketchCommand(selector)
     }
 
     override func mouseDown(with event: NSEvent) {
-        guard let layoutManager, let textContainer else { super.mouseDown(with: event); return }
         let point = convert(event.locationInWindow, from: nil)
+        if let (attachment, frame) = sketchCard(at: point) {
+            if SketchCardLayout(frame: frame).options.contains(point) {
+                let menu = sketchMenu(for: attachment)
+                menu.popUp(positioning: nil, at: NSPoint(x: frame.maxX - 12, y: frame.maxY - 8), in: self)
+            } else {
+                onOpenSketch?(attachment.id)
+            }
+            return
+        }
+        super.mouseDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        if let (attachment, _) = sketchCard(at: convert(event.locationInWindow, from: nil)) {
+            return sketchMenu(for: attachment)
+        }
+        return super.menu(for: event)
+    }
+
+    private func sketchCard(at point: NSPoint) -> (SketchTextAttachment, NSRect)? {
+        guard let layoutManager, let textContainer else { return nil }
         let index = layoutManager.characterIndex(for: NSPoint(x: point.x - textContainerOrigin.x, y: point.y - textContainerOrigin.y), in: textContainer, fractionOfDistanceBetweenInsertionPoints: nil)
         if index < (textStorage?.length ?? 0), let attachment = textStorage?.attribute(.attachment, at: index, effectiveRange: nil) as? SketchTextAttachment {
             let glyph = layoutManager.glyphRange(forCharacterRange: NSRange(location: index, length: 1), actualCharacterRange: nil)
             let rect = layoutManager.boundingRect(forGlyphRange: glyph, in: textContainer).offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
-            if rect.contains(point) { onOpenSketch?(attachment.id); return }
+            if rect.contains(point) { return (attachment, rect) }
         }
-        super.mouseDown(with: event)
+        return nil
+    }
+
+    private func sketchMenu(for attachment: SketchTextAttachment) -> NSMenu {
+        let menu = NSMenu()
+        let open = NSMenuItem(title: "Open Sketch", action: #selector(openSketchFromMenu(_:)), keyEquivalent: "")
+        open.target = self
+        open.representedObject = attachment.id
+        menu.addItem(open)
+        if onRenameSketch != nil {
+            let rename = NSMenuItem(title: "Rename…", action: #selector(renameSketchFromMenu(_:)), keyEquivalent: "")
+            rename.target = self
+            rename.representedObject = attachment.id
+            menu.addItem(rename)
+        }
+        return menu
+    }
+
+    @objc private func openSketchFromMenu(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? UUID { onOpenSketch?(id) }
+    }
+
+    @objc private func renameSketchFromMenu(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? UUID { onRenameSketch?(id) }
+    }
+
+    override func resetCursorRects() {
+        super.resetCursorRects()
+        guard let storage = textStorage, let layoutManager, let textContainer else { return }
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            guard value is SketchTextAttachment else { return }
+            let glyphs = layoutManager.glyphRange(forCharacterRange: range, actualCharacterRange: nil)
+            let rect = layoutManager.boundingRect(forGlyphRange: glyphs, in: textContainer)
+                .offsetBy(dx: textContainerOrigin.x, dy: textContainerOrigin.y)
+            addCursorRect(rect, cursor: .pointingHand)
+        }
     }
 
     var dark = false
@@ -797,7 +1262,7 @@ final class RichNoteTextView: SketchCommandTextView {
         let value = storage.attributedSubstring(from: selectedRange())
         var containsSketch = false
         value.enumerateAttribute(.attachment, in: NSRange(location: 0, length: value.length)) { attachment, _, _ in
-            if attachment is SketchTextAttachment { containsSketch = true }
+            if attachment is SketchTextAttachment || attachment is AudioTextAttachment || attachment is ReminderTextAttachment { containsSketch = true }
         }
         return containsSketch ? value : nil
     }
@@ -805,6 +1270,7 @@ final class RichNoteTextView: SketchCommandTextView {
     override func copy(_ sender: Any?) {
         guard let value = selectedSketchContent else { super.copy(sender); return }
         let markdown = RichNoteCodec.encode(value)
+        AudioNoteClipboard.retain(markdown, context: audioContext)
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(markdown, forType: .string)
         NSPasteboard.general.setString(markdown, forType: Self.sketchPasteboardType)
@@ -820,7 +1286,7 @@ final class RichNoteTextView: SketchCommandTextView {
     override func paste(_ sender: Any?) {
         defer { suppressPastedCommand() }
         if let markdown = NSPasteboard.general.string(forType: Self.sketchPasteboardType) {
-            insertText(RichNoteCodec.decode(markdown, dark: dark), replacementRange: selectedRange())
+            insertText(RichNoteCodec.decode(markdown, dark: dark, preview: sketchPreview, sketchModifiedAt: sketchModifiedAt, audioDraftID: audioContext?.draftID), replacementRange: selectedRange())
         } else if let raw = NSPasteboard.general.string(forType: .string) {
             insertText(NSAttributedString(string: raw, attributes: typingAttributes), replacementRange: selectedRange())
         }
@@ -852,7 +1318,7 @@ enum RichNoteCodec {
             (#"(?m)^\s*(```|~~~)"#, "code blocks"),
             (#"(?m)^.*\|.*\n\s*\|?\s*:?-+"#, "a table"),
             (#"(?m)^\s*[-*+] \[[ xX]\]"#, "a checklist"),
-            (#"(?m)^\s{2,}\S|^>"#, "indented text or block quotes"),
+            (#"(?m)^[\t ]{2,}\S|^>"#, "indented text or block quotes"),
             (#"(?m)^\s*(---+|___+|\*\*\*+|===+)\s*$"#, "a thematic break or setext heading"),
         ]
         return checks.first { markdown.range(of: $0.0, options: .regularExpression) != nil }?.1
@@ -881,15 +1347,32 @@ enum RichNoteCodec {
         return NSRange(location: start, length: max(0, end - start))
     }
 
-    static func decode(_ markdown: String, dark: Bool, preview: ((UUID) -> Data?)? = nil) -> NSAttributedString {
+    static func decode(_ markdown: String, dark: Bool, preview: ((UUID) -> Data?)? = nil, sketchModifiedAt: ((UUID) -> Date?)? = nil, audioDraftID: UUID? = nil) -> NSAttributedString {
         let result = NSMutableAttributedString(string: "")
         let lines = markdown.components(separatedBy: "\n")
         let sketchOffsets = Set(SketchReference.references(in: markdown).map { $0.range.location })
+        let audioOffsets = Set(AudioReference.references(in: markdown).map { $0.range.location })
+        let reminderOffsets = Set(ReminderReference.references(in: markdown).map { $0.range.location })
         var lineOffset = 0
         for (index, original) in lines.enumerated() {
             defer { lineOffset += original.utf16.count + 1 }
+            if reminderOffsets.contains(lineOffset), let (id, title) = ReminderReference.parseLine(original) {
+                result.append(NSAttributedString(attachment: ReminderTextAttachment(id: id, title: title)))
+                if index < lines.count - 1 { result.append(NSAttributedString(string: "\n", attributes: attributes(dark: dark))) }
+                continue
+            }
+            if audioOffsets.contains(lineOffset), let (id, title) = AudioReference.parseLine(original) {
+                result.append(NSAttributedString(attachment: AudioTextAttachment(id: id, title: title)))
+                if index < lines.count - 1 { result.append(NSAttributedString(string: "\n", attributes: attributes(dark: dark))) }
+                continue
+            }
+            if let id = AudioDraftReference.parse(original), id == audioDraftID {
+                result.append(NSAttributedString(attachment: AudioTextAttachment(id: id, title: "Recording", isDraft: true)))
+                if index < lines.count - 1 { result.append(NSAttributedString(string: "\n", attributes: attributes(dark: dark))) }
+                continue
+            }
             if sketchOffsets.contains(lineOffset), let (id, title) = SketchReference.parseLine(original) {
-                let attachment = SketchTextAttachment(id: id, title: title, preview: preview?(id))
+                let attachment = SketchTextAttachment(id: id, title: title, preview: preview?(id), modifiedAt: sketchModifiedAt?(id), isDark: dark)
                 result.append(NSAttributedString(attachment: attachment))
                 if index < lines.count - 1 { result.append(NSAttributedString(string: "\n", attributes: attributes(dark: dark))) }
                 continue
@@ -946,6 +1429,14 @@ enum RichNoteCodec {
         value.enumerateAttributes(in: NSRange(location: 0, length: value.length)) { attrs, range, _ in
             if let attachment = attrs[.attachment] as? SketchTextAttachment {
                 tokens.append(Token(text: SketchReference.markdown(id: attachment.id, title: attachment.title), marks: []))
+                return
+            }
+            if let attachment = attrs[.attachment] as? ReminderTextAttachment {
+                tokens.append(Token(text: ReminderReference.markdown(id: attachment.id, title: attachment.title), marks: []))
+                return
+            }
+            if let attachment = attrs[.attachment] as? AudioTextAttachment {
+                tokens.append(Token(text: attachment.markdown, marks: []))
                 return
             }
             var marks: [Mark] = []
@@ -1018,42 +1509,347 @@ enum RichNoteCodec {
     }
 }
 
-/// The attachment carries identity independently of its rendered image.
-final class SketchTextAttachment: NSTextAttachment {
+/// NSTextView treats hosted SwiftUI content as attachment text in its native
+/// accessibility tree. Cache explicit actions so assistive clients can operate
+/// the same controls that are visible and clickable in the row.
+final class ReminderAccessibilityAction: NSAccessibilityElement {
+    weak var owner: NSView?
+    var actionEnabled = true
+    var onPress: (() -> Void)?
+    var frameProvider: (() -> NSRect)?
+
+    init(owner: NSView, role: NSAccessibility.Role) {
+        self.owner = owner
+        super.init()
+        setAccessibilityRole(role)
+    }
+
+    override func accessibilityParent() -> Any? { owner }
+    override func accessibilityFrame() -> NSRect { frameProvider?() ?? .zero }
+    override func accessibilityPerformPress() -> Bool {
+        guard actionEnabled, let onPress else { return false }
+        onPress()
+        return true
+    }
+}
+
+/// Resolve live reminder state without coupling the native editor to AppModel.
+struct ReminderNoteEditorContext {
+    var reminder: (UUID) -> ResearchReminder?
+    var onToggle: (UUID) -> Void
+    var onEdit: (UUID) -> Void
+}
+
+/// Used by both the writing surface and Markdown preview.
+struct ReminderInlineRow: View {
+    let title: String
+    let isCompleted: Bool
+    var isAvailable = true
+    var onToggle: (() -> Void)? = nil
+    var onEdit: (() -> Void)? = nil
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button { onToggle?() } label: {
+                Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(isCompleted ? Color.accentColor : .secondary)
+                    .frame(width: 28, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!isAvailable || onToggle == nil)
+            .accessibilityLabel((isCompleted ? "Mark reminder incomplete: " : "Complete reminder: ") + title)
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(isAvailable ? "RESEARCH LATER" : "REMINDER UNAVAILABLE")
+                    .font(.system(size: 9, weight: .medium))
+                    .tracking(0.8)
+                    .foregroundStyle(.secondary)
+                Text(title)
+                    .font(.system(size: 13))
+                    .strikethrough(isCompleted)
+                    .foregroundStyle(isCompleted ? .secondary : .primary)
+                    .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+
+            if let onEdit, isAvailable {
+                Button(action: onEdit) {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 28, height: 36)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Edit reminder")
+                .accessibilityLabel("Edit reminder: " + title)
+            }
+        }
+        .padding(.horizontal, 12)
+        .frame(maxWidth: .infinity, minHeight: 64)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Research reminder: " + title)
+    }
+}
+
+final class ReminderTextAttachment: NSTextAttachment {
     let id: UUID
     let title: String
-    init(id: UUID, title: String, preview: Data?) {
+    init(id: UUID, title: String) {
         self.id = id; self.title = title
         super.init(data: nil, ofType: nil)
-        attachmentCell = SketchAttachmentCell(title: title, preview: preview)
+        attachmentCell = ReminderAttachmentCell(title: title)
     }
     required init?(coder: NSCoder) { return nil }
 }
 
+final class ReminderAttachmentCell: NSTextAttachmentCell {
+    var cardWidth: CGFloat = 280
+    var hasLiveOverlay = false
+    init(title: String) { super.init(textCell: title) }
+    required init(coder: NSCoder) { fatalError("Reminder rows are decoded from Markdown") }
+    override func cellSize() -> NSSize { NSSize(width: cardWidth, height: 64) }
+    override func draw(withFrame frame: NSRect, in controlView: NSView?) {
+        guard !hasLiveOverlay else { return }
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: frame, xRadius: 9, yRadius: 9).fill()
+        (stringValue as NSString).draw(in: frame.insetBy(dx: 14, dy: 18),
+            withAttributes: [.font: NSFont.systemFont(ofSize: 13), .foregroundColor: NSColor.labelColor])
+    }
+}
+
+/// Native controls are hosted over this attachment's glyph rectangle.
+final class AudioTextAttachment: NSTextAttachment {
+    let id: UUID
+    let title: String
+    let isDraft: Bool
+    private(set) var isRetiredDraft = false
+    var markdown: String {
+        isRetiredDraft ? " " : isDraft ? AudioDraftReference.marker(id) : AudioReference.markdown(id: id, title: title)
+    }
+    init(id: UUID, title: String, isDraft: Bool = false) {
+        self.id = id; self.title = title; self.isDraft = isDraft
+        super.init(data: nil, ofType: nil)
+        let cell = AudioAttachmentCell(title: title)
+        cell.cardHeight = isDraft ? 44 : AudioNoteCardLayout.baseHeight
+        attachmentCell = cell
+    }
+    required init?(coder: NSCoder) { return nil }
+    func retireDraft() {
+        guard isDraft else { return }
+        isRetiredDraft = true
+        if let cell = attachmentCell as? AudioAttachmentCell { cell.isRetiredDraft = true }
+    }
+}
+
+private final class WeakAudioDraftAttachment {
+    weak var value: AudioTextAttachment?
+    init(_ value: AudioTextAttachment) { self.value = value }
+}
+
+final class AudioAttachmentCell: NSTextAttachmentCell {
+    var cardWidth: CGFloat = 280
+    var cardHeight: CGFloat = AudioNoteCardLayout.baseHeight
+    var isRetiredDraft = false
+    var hasLiveOverlay = false
+    init(title: String) { super.init(textCell: title) }
+    required init(coder: NSCoder) { fatalError("Audio cards are decoded from Markdown") }
+    override func cellSize() -> NSSize { isRetiredDraft ? NSSize(width: 4, height: 20) : NSSize(width: cardWidth, height: cardHeight) }
+    override func draw(withFrame frame: NSRect, in controlView: NSView?) {
+        guard !isRetiredDraft, !hasLiveOverlay else { return }
+        // The hosted SwiftUI row supplies real accessible buttons and a slider.
+        // Keep a readable fallback for codecs/tests without an editor context.
+        NSColor.controlBackgroundColor.setFill()
+        NSBezierPath(roundedRect: frame, xRadius: 12, yRadius: 12).fill()
+        ("Audio note" as NSString).draw(at: NSPoint(x: frame.minX + 12, y: frame.minY + 14),
+                                      withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+    }
+}
+
+/// The attachment carries identity independently of its rendered image.
+final class SketchTextAttachment: NSTextAttachment {
+    let id: UUID
+    let title: String
+    init(id: UUID, title: String, preview: Data?, modifiedAt: Date? = nil, isDark: Bool = false) {
+        self.id = id; self.title = title
+        super.init(data: nil, ofType: nil)
+        attachmentCell = SketchAttachmentCell(title: title, preview: preview, modifiedAt: modifiedAt, isDark: isDark)
+    }
+    required init?(coder: NSCoder) { return nil }
+}
+
+/// Shared appearance for editable attachments, Markdown previews, and the sketch browser.
+enum SketchCardStyle {
+    static let cornerRadius: CGFloat = 16
+    static let footerHeight: CGFloat = 64
+    static let maximumWidth: CGFloat = 560
+    static let previewAspectRatio: CGFloat = 1.75
+    static let minimumPreviewHeight: CGFloat = 120
+
+    struct Palette {
+        let paper: NSColor
+        let surface: NSColor
+        let border: NSColor
+        let ink: NSColor
+        let muted: NSColor
+        let accent: NSColor
+        let actionInk: NSColor
+        let actionBorder: NSColor
+        let iconSurface: NSColor
+    }
+
+    static func color(_ hex: UInt32) -> NSColor {
+        NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255,
+                green: CGFloat((hex >> 8) & 255) / 255,
+                blue: CGFloat(hex & 255) / 255, alpha: 1)
+    }
+
+    static func palette(dark: Bool) -> Palette {
+        Palette(paper: color(0xEEEEE4),
+                surface: color(dark ? 0x252E27 : 0xF4F5EC),
+                border: color(dark ? 0x465046 : 0xD3D9CB),
+                ink: color(dark ? 0xE3E8E1 : 0x26372D),
+                muted: color(dark ? 0xA6AFA4 : 0x63705F),
+                accent: color(0xFFD645),
+                actionInk: color(dark ? 0xFFD645 : 0x695500),
+                actionBorder: color(dark ? 0x6D7046 : 0xB8A24A),
+                iconSurface: color(dark ? 0x354137 : 0xE7E8D6))
+    }
+
+    static func previewHeight(for width: CGFloat) -> CGFloat {
+        max(minimumPreviewHeight, width / previewAspectRatio)
+    }
+
+    static func editedLabel(_ modifiedAt: Date?, now: Date = Date()) -> String {
+        guard let modifiedAt else { return "Sketch" }
+        if now.timeIntervalSince(modifiedAt) < 60 { return "Edited just now" }
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .short
+        return "Edited " + formatter.localizedString(for: modifiedAt, relativeTo: now)
+    }
+}
+
+/// Attachment drawing and pointer hit testing use the same footer geometry.
+struct SketchCardLayout {
+    let preview: NSRect
+    let footer: NSRect
+    let icon: NSRect
+    let title: NSRect
+    let subtitle: NSRect
+    let open: NSRect
+    let options: NSRect
+
+    init(frame: NSRect) {
+        let previewHeight = max(0, frame.height - SketchCardStyle.footerHeight)
+        preview = NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: previewHeight)
+        footer = NSRect(x: frame.minX, y: preview.maxY, width: frame.width, height: SketchCardStyle.footerHeight)
+        let showIcon = frame.width >= 280
+        icon = NSRect(x: frame.minX + 14, y: footer.minY + 14, width: showIcon ? 32 : 0, height: 36)
+        options = NSRect(x: frame.maxX - 40, y: footer.minY + 17, width: 28, height: 30)
+        let openWidth: CGFloat = frame.width >= 280 ? 76 : 32
+        open = NSRect(x: options.minX - openWidth - 8, y: footer.minY + 16, width: openWidth, height: 32)
+        let textX = showIcon ? icon.maxX + 11 : frame.minX + 14
+        title = NSRect(x: textX, y: footer.minY + 12, width: max(0, open.minX - textX - 10), height: 20)
+        subtitle = NSRect(x: textX, y: footer.minY + 34, width: title.width, height: 17)
+    }
+}
+
 final class SketchAttachmentCell: NSTextAttachmentCell {
     let sketchTitle: String
-    var preview: Data?
-    var cardWidth: CGFloat = 280
-    init(title: String, preview: Data?) {
+    var preview: Data? {
+        didSet { if oldValue != preview { previewImage = preview.flatMap(NSImage.init(data:)) } }
+    }
+    private var previewImage: NSImage?
+    var modifiedAt: Date?
+    var isDark: Bool
+    var cardWidth: CGFloat = 320
+
+    init(title: String, preview: Data?, modifiedAt: Date? = nil, isDark: Bool = false) {
         self.sketchTitle = title; self.preview = preview
+        self.previewImage = preview.flatMap(NSImage.init(data:))
+        self.modifiedAt = modifiedAt; self.isDark = isDark
         super.init(imageCell: nil)
         self.title = title
     }
     required init(coder: NSCoder) { fatalError("Sketch cards are decoded from Markdown") }
-    override func cellSize() -> NSSize { NSSize(width: cardWidth, height: 182) }
+
+    override func cellSize() -> NSSize {
+        NSSize(width: cardWidth, height: SketchCardStyle.previewHeight(for: cardWidth) + SketchCardStyle.footerHeight)
+    }
+
     override func draw(withFrame frame: NSRect, in controlView: NSView?) {
-        NSColor.controlBackgroundColor.setFill()
-        NSBezierPath(roundedRect: frame.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8).fill()
-        NSColor.separatorColor.setStroke()
-        NSBezierPath(roundedRect: frame.insetBy(dx: 1, dy: 1), xRadius: 8, yRadius: 8).stroke()
-        let imageRect = NSRect(x: frame.minX + 10, y: frame.minY + 10, width: frame.width - 20, height: frame.height - 44)
-        if let preview, let image = NSImage(data: preview) {
+        let palette = SketchCardStyle.palette(dark: isDark)
+        let layout = SketchCardLayout(frame: frame)
+        let outline = NSBezierPath(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5),
+                                   xRadius: SketchCardStyle.cornerRadius, yRadius: SketchCardStyle.cornerRadius)
+        NSGraphicsContext.saveGraphicsState()
+        defer { NSGraphicsContext.restoreGraphicsState() }
+        outline.addClip()
+        palette.surface.setFill()
+        frame.fill()
+        palette.paper.setFill()
+        layout.preview.fill()
+
+        let imageRect = layout.preview.insetBy(dx: 20, dy: 18)
+        if let image = previewImage, image.size.width > 0, image.size.height > 0 {
             let ratio = min(imageRect.width / image.size.width, imageRect.height / image.size.height)
             let size = NSSize(width: image.size.width * ratio, height: image.size.height * ratio)
+            NSGraphicsContext.current?.imageInterpolation = .high
             image.draw(in: NSRect(x: imageRect.midX - size.width / 2, y: imageRect.midY - size.height / 2, width: size.width, height: size.height), from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
         } else {
-            ("Preview unavailable · Click to open" as NSString).draw(in: imageRect, withAttributes: [.font: NSFont.systemFont(ofSize: 12), .foregroundColor: NSColor.secondaryLabelColor])
+            drawSymbol("scribble", in: NSRect(x: imageRect.midX - 12, y: imageRect.midY - 26, width: 24, height: 24), color: SketchCardStyle.color(0x63705F), size: 22)
+            drawText("Preview unavailable", in: NSRect(x: imageRect.minX, y: imageRect.midY + 6, width: imageRect.width, height: 20), font: .systemFont(ofSize: 12), color: SketchCardStyle.color(0x63705F), alignment: .center)
         }
-        (sketchTitle as NSString).draw(in: NSRect(x: frame.minX + 10, y: frame.maxY - 28, width: frame.width - 20, height: 22), withAttributes: [.font: NSFont.systemFont(ofSize: 13, weight: .medium), .foregroundColor: NSColor.labelColor])
+
+        let expand = NSRect(x: layout.preview.maxX - 38, y: layout.preview.maxY - 38, width: 26, height: 26)
+        SketchCardStyle.color(0xE0E5D9).setFill()
+        NSBezierPath(roundedRect: expand, xRadius: 6, yRadius: 6).fill()
+        drawSymbol("arrow.up.left.and.arrow.down.right", in: expand.insetBy(dx: 6, dy: 6), color: SketchCardStyle.color(0x405249), size: 12)
+
+        if layout.icon.width > 0 {
+            palette.iconSurface.setFill()
+            NSBezierPath(roundedRect: layout.icon, xRadius: 8, yRadius: 8).fill()
+            drawSymbol("pencil", in: layout.icon.insetBy(dx: 8, dy: 10), color: palette.actionInk, size: 16)
+        }
+        drawText(sketchTitle, in: layout.title, font: .systemFont(ofSize: 13, weight: .semibold), color: palette.ink)
+        drawText(SketchCardStyle.editedLabel(modifiedAt), in: layout.subtitle, font: .systemFont(ofSize: 11), color: palette.muted)
+
+        palette.actionBorder.setStroke()
+        let open = NSBezierPath(roundedRect: layout.open.insetBy(dx: 0.5, dy: 0.5), xRadius: 9, yRadius: 9)
+        open.lineWidth = 1
+        open.stroke()
+        if layout.open.width > 40 {
+            drawText("Open", in: NSRect(x: layout.open.minX + 11, y: layout.open.minY + 7, width: 34, height: 18), font: .systemFont(ofSize: 12, weight: .semibold), color: palette.actionInk)
+            drawSymbol("arrow.up.right", in: NSRect(x: layout.open.maxX - 25, y: layout.open.minY + 10, width: 12, height: 12), color: palette.actionInk, size: 12)
+        } else {
+            drawSymbol("arrow.up.right", in: layout.open.insetBy(dx: 10, dy: 10), color: palette.actionInk, size: 12)
+        }
+        drawSymbol("ellipsis", in: layout.options.insetBy(dx: 6, dy: 7), color: palette.muted, size: 15)
+        palette.border.setStroke()
+        outline.lineWidth = 1
+        outline.stroke()
+    }
+
+    private func drawText(_ text: String, in rect: NSRect, font: NSFont, color: NSColor, alignment: NSTextAlignment = .left) {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.lineBreakMode = .byTruncatingTail
+        paragraph.alignment = alignment
+        (text as NSString).draw(in: rect, withAttributes: [.font: font, .foregroundColor: color, .paragraphStyle: paragraph])
+    }
+
+    private func drawSymbol(_ name: String, in rect: NSRect, color: NSColor, size: CGFloat) {
+        let config = NSImage.SymbolConfiguration(pointSize: size, weight: .medium)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [color]))
+        guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?.withSymbolConfiguration(config),
+              image.size.width > 0, image.size.height > 0 else { return }
+        let scale = min(rect.width / image.size.width, rect.height / image.size.height)
+        let fitted = NSSize(width: image.size.width * scale, height: image.size.height * scale)
+        image.draw(in: NSRect(x: rect.midX - fitted.width / 2, y: rect.midY - fitted.height / 2,
+                             width: fitted.width, height: fitted.height),
+                   from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
     }
 }

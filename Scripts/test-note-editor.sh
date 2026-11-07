@@ -8,6 +8,8 @@ xcrun swiftc -module-cache-path "${TMPDIR:-/tmp}/kodi-note-module-cache" \
   -I ".build/$(uname -m)-apple-macosx/debug/Modules" \
   .build/$(uname -m)-apple-macosx/debug/EpubKit.build/*.swift.o \
   .build/$(uname -m)-apple-macosx/debug/ZIPFoundation.build/*.swift.o \
-  App/MarkdownTextEditor.swift Tests/AppTests/RichNoteEditorTests.swift \
+  App/Analytics/AnalyticsEvent.swift App/Audio/AudioNoteController.swift App/Audio/AudioNoteStrip.swift \
+  App/Audio/AudioTranscriptionController.swift App/Audio/AudioNoteEditorContext.swift App/MarkdownTextEditor.swift \
+  Tests/AppTests/RichNoteEditorTests.swift \
   -o "$TEMP_BUILD/note-editor-tests"
 "$TEMP_BUILD/note-editor-tests"

@@ -23,6 +23,9 @@ packages:
   Supabase:
     url: https://github.com/supabase/supabase-swift.git
     exactVersion: 2.55.2
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    exactVersion: 0.18.2
   EpubReaderCore:
     path: .
 
@@ -35,8 +38,8 @@ configFiles:
 settings:
   base:
     SWIFT_VERSION: "5.9"
-    MARKETING_VERSION: "0.4.8"
-    CURRENT_PROJECT_VERSION: "16"
+    MARKETING_VERSION: "0.4.9"
+    CURRENT_PROJECT_VERSION: "17"
     DEAD_CODE_STRIPPING: YES
     ENABLE_HARDENED_RUNTIME: YES
     CODE_SIGN_STYLE: Automatic
@@ -72,11 +75,20 @@ targets:
     platform: macOS
     sources:
       - path: App
+        excludes:
+          - Audio/Licenses
+      - path: App/Audio/Licenses
+        type: folder
+        buildPhase: resources
+      - path: NOTICE.md
+        buildPhase: resources
     dependencies:
       - package: Sparkle
         product: Sparkle
       - package: Supabase
         product: Auth
+      - package: FluidAudio
+        product: FluidAudio
       - package: EpubReaderCore
         product: EpubKit
       - package: EpubReaderCore

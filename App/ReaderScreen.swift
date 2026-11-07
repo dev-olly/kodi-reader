@@ -10,8 +10,21 @@ struct ReaderScreen: View {
 
     @Environment(AppModel.self) private var model
     @State private var isShowingTypography = false
+    @State private var isShowingReadAloud = false
+    @State private var narration = ReadAloudController()
     @State private var editingAnnotation: Annotation?
     @State private var activeHighlight: ActiveHighlight?
+    @State private var activeReminder: ActiveReminder?
+    @State private var reminderDraft: ReminderCaptureDraft?
+    @State private var reminderDraftTitle = ""
+    @State private var reminderDraftError: String?
+    @State private var capturedReminder: ResearchReminder?
+    @State private var capturedReminderBookID: String?
+    @State private var reminderTitle = ""
+    @State private var isEditingReminder = false
+    @State private var isAddingPageReminder = false
+    @State private var pageReminderLocator: Locator?
+    @State private var pageReminderChapter: String?
     /// True when the note editor should focus its text field on opening.
     @State private var noteEditorAutofocus = false
     /// True when the inspector was opened only to host the sidebar editor.
@@ -46,7 +59,20 @@ struct ReaderScreen: View {
             .task { model.startReading() }
             .onAppear {
                 reader.onHighlightActivated = handleHighlightActivated
-                model.resumeReadingAfterBrowser()
+                reader.onReminderActivated = handleReminderActivated
+                model.suspendNarration = { [weak narration] in
+                    if narration?.phase == .playing { narration?.pause() }
+                    else if narration?.phase == .preparing { narration?.stop() }
+                }
+                narration.beforePlayback = { [weak audioNotes = model.audioNotes] in
+                    guard let audioNotes, audioNotes.recordingID == nil else { return false }
+                    audioNotes.stopPlayback()
+                    return true
+                }
+                narration.onAnalyticsEvent = { [weak analytics = model.analytics] event in analytics?.record(event) }
+                narration.onAnalyticsActivityChanged = { [weak analytics = model.analytics] activity, active in
+                    analytics?.setFeatureActivity(activity, active: active)
+                }
             }
             .sheet(item: sheetAnnotation) { annotation in
                 // Re-read from the model so color/status updates while the sheet is open.
@@ -66,15 +92,48 @@ struct ReaderScreen: View {
             .onChange(of: model.settings.noteEditorPlacement) { _, placement in
                 handlePlacementChange(placement)
             }
+            .onChange(of: model.reminderNoteToOpen, initial: true) { _, id in
+                guard let id else { return }
+                model.reminderNoteToOpen = nil
+                guard let annotation = model.annotation(with: id) else { return }
+                showNoteEditor(annotation, autofocus: false)
+            }
+            .alert("Edit reminder", isPresented: $isEditingReminder) {
+                TextField("Topic to research", text: $reminderTitle)
+                Button("Save") { saveCapturedReminderTitle() }
+                Button("Cancel", role: .cancel) { }
+            }
+            .alert("Add reminder for this page", isPresented: $isAddingPageReminder) {
+                TextField("What would you like to research?", text: $reminderTitle)
+                Button("Add reminder") {
+                    guard let locator = pageReminderLocator else { return }
+                    captureReminder(title: reminderTitle, source: .page, locator: locator,
+                                    quote: locator.text ?? "", chapter: pageReminderChapter)
+                }
+                .disabled(reminderTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                Button("Cancel", role: .cancel) { }
+            } message: {
+                Text("Save a topic and return to this page when you’re ready.")
+            }
             .onChange(of: model.isShowingAskAI) { _, _ in
                 // Backup if a caller toggled visibility without pinning first.
                 reader.pinRestoreCurrentPositionOnce()
             }
             .onChange(of: reader.selection) { _, selection in
-                if selection != nil { activeHighlight = nil }
+                if selection != nil { activeHighlight = nil; activeReminder = nil }
             }
-            .onChange(of: reader.page) { _, _ in activeHighlight = nil }
-            .onChange(of: reader.spineIndex) { _, _ in activeHighlight = nil }
+            .onChange(of: reader.page) { _, _ in dismissPassagePopovers() }
+            .onChange(of: reader.spineIndex) { _, _ in dismissPassagePopovers() }
+            .onChange(of: model.record?.reminders) { _, reminders in
+                if let activeReminder, reminders?.contains(where: { $0.id == activeReminder.id && !$0.isCompleted }) != true {
+                    self.activeReminder = nil
+                }
+            }
+            .task(id: "\(capturedReminder?.id.uuidString ?? "")-\(isEditingReminder)") {
+                guard let id = capturedReminder?.id, !isEditingReminder else { return }
+                do { try await Task.sleep(for: .seconds(8)) } catch { return }
+                if capturedReminder?.id == id { capturedReminder = nil }
+            }
             .onChange(of: model.isShowingAnnotations) { _, showing in
                 reader.pinRestoreCurrentPositionOnce()
                 if !showing, model.workspace == .closed, model.settings.noteEditorPlacement == .sidebar {
@@ -87,6 +146,9 @@ struct ReaderScreen: View {
             }
             .onChange(of: windowWidth) { _, _ in reader.pinRestoreCurrentPositionOnce() }
             .onDisappear {
+                reader.onReminderActivated = nil
+                narration.stop()
+                model.suspendNarration = nil
                 reader.cancelReadingMarkerPlacement()
                 model.isNoteEditorOpen = false
                 model.aiNoteTarget = nil
@@ -149,7 +211,9 @@ struct ReaderScreen: View {
                     .font(.system(size: 9, weight: .medium))
                     .tracking(1)
                 Spacer()
-                Text(String(format: "%02d", model.record?.annotations.count ?? 0))
+                Text(String(format: "%02d", model.workspace == .reminders
+                            ? model.reminderBooks.reduce(0) { $0 + $1.reminders.filter { !$0.isCompleted }.count }
+                            : model.record?.annotations.count ?? 0))
                     .font(.system(size: 9))
             }
             .foregroundStyle(model.settings.theme.muted)
@@ -157,9 +221,9 @@ struct ReaderScreen: View {
             .padding(.top, 28)
             HStack(spacing: 12) {
                 HStack(spacing: 24) {
-                    ForEach([AppModel.Workspace.notes, .askAI], id: \.rawValue) { tab in
+                    ForEach([AppModel.Workspace.notes, .reminders, .askAI], id: \.rawValue) { tab in
                         Button { selectWorkspace(tab) } label: {
-                            Text(tab == .notes ? "Notes" : "Ask AI")
+                            Text(workspaceTitle(tab))
                                 .font(.system(size: 12, weight: .regular))
                                 .foregroundStyle(model.workspace == tab ? model.settings.theme.uiForeground : model.settings.theme.muted)
                                 .frame(minHeight: 36)
@@ -173,7 +237,7 @@ struct ReaderScreen: View {
                                 .contentShape(.rect)
                         }
                         .buttonStyle(.plain)
-                        .accessibilityLabel(tab == .notes ? "Notes" : "Ask AI")
+                        .accessibilityLabel(workspaceTitle(tab))
                         .accessibilityAddTraits(model.workspace == tab ? .isSelected : [])
                     }
                 }
@@ -213,6 +277,10 @@ struct ReaderScreen: View {
                     .opacity(model.workspace == .askAI ? 1 : 0)
                     .allowsHitTesting(model.workspace == .askAI)
                     .accessibilityHidden(model.workspace != .askAI)
+                RemindersListView()
+                    .opacity(model.workspace == .reminders ? 1 : 0)
+                    .allowsHitTesting(model.workspace == .reminders)
+                    .accessibilityHidden(model.workspace != .reminders)
             }
         }
         .background(model.settings.theme.surface)
@@ -260,6 +328,15 @@ struct ReaderScreen: View {
         return Array(Set(titles)).sorted()
     }
 
+    private func workspaceTitle(_ workspace: AppModel.Workspace) -> String {
+        switch workspace {
+        case .notes: return "Notes"
+        case .reminders: return "Reminders"
+        case .askAI: return "Ask AI"
+        case .closed: return ""
+        }
+    }
+
     // MARK: - Page
 
     private static let navRailWidth: CGFloat = 32
@@ -283,10 +360,12 @@ struct ReaderScreen: View {
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .readerKeyboardShortcuts(
                             reader,
+                            enabled: reminderDraft == nil && activeReminder == nil && !reader.isReminderBadgeFocused,
                             spaceAction: reader.nextPage,
                             onSuppressChange: { model.isNoteEditorOpen = $0 }
                         )
                         .overlay(alignment: .topLeading) { selectionPopover }
+                        .overlay(alignment: .bottom) { reminderConfirmation }
                         .overlay(alignment: .bottom) {
                             if reader.isPlacingReadingMarker {
                                 HStack(spacing: 10) {
@@ -360,10 +439,39 @@ struct ReaderScreen: View {
         let rect: CGRect
     }
 
+    private struct ActiveReminder {
+        let id: UUID
+        let rect: CGRect
+    }
+
     /// Anchored to viewport coordinates reported by the reader runtime.
     @ViewBuilder
     private var selectionPopover: some View {
-        if let activeHighlight,
+        if let draft = reminderDraft {
+            HighlightPopoverLayout(anchor: draft.anchor) {
+                ReminderCaptureComposer(title: $reminderDraftTitle, quotedText: draft.quotedText,
+                    isEditing: draft.existingReminderID != nil, errorMessage: reminderDraftError,
+                    onSave: saveReminderDraft, onCancel: cancelReminderDraft)
+                    .id(draft.id)
+            }
+            .background {
+                Color.clear.contentShape(Rectangle()).onTapGesture(perform: cancelReminderDraft)
+            }
+        } else if let activeReminder, let reminder = model.reminder(with: activeReminder.id) {
+            HighlightPopoverLayout(anchor: activeReminder.rect) {
+                ResearchReminderPopover(reminder: reminder,
+                    onEdit: { editReminder(reminder, anchor: activeReminder.rect) },
+                    onComplete: { completeReminder(reminder) },
+                    onShowAll: {
+                        self.activeReminder = nil
+                        if model.workspace != .reminders { model.showReminders() }
+                    },
+                    onDismiss: { self.activeReminder = nil })
+            }
+            .background {
+                Color.clear.contentShape(Rectangle()).onTapGesture { self.activeReminder = nil }
+            }
+        } else if let activeHighlight,
            let annotation = model.annotation(with: activeHighlight.id) {
             HighlightPopoverLayout(anchor: activeHighlight.rect) {
                 HighlightPalette(
@@ -384,6 +492,12 @@ struct ReaderScreen: View {
                     onDelete: {
                         self.activeHighlight = nil
                         deleteAnnotation(annotation.id)
+                    },
+                    onAddReminder: {
+                        beginReminder(title: annotation.text, locator: annotation.locator, quote: annotation.text,
+                                      chapter: annotation.chapterTitle, annotationID: annotation.id,
+                                      anchor: activeHighlight.rect)
+                        self.activeHighlight = nil
                     }
                 )
                 .id(annotation.id)
@@ -401,11 +515,30 @@ struct ReaderScreen: View {
                         model.addSelectionToChat()
                     },
                     onCopy: { copyToPasteboard(selection.text) },
-                    onDismiss: { reader.clearSelection() }
+                    onDismiss: { reader.clearSelection() },
+                    onReadAloud: supportsReadAloud ? { readAloud(selection.text) } : nil,
+                    onAddReminder: {
+                        beginReminder(title: selection.text, locator: selection.locator, quote: selection.text,
+                                      chapter: reader.chapterTitle, anchor: selection.rect)
+                    }
                 )
             }
             .transition(.scale(scale: 0.94).combined(with: .opacity))
         }
+    }
+
+    private var supportsReadAloud: Bool {
+        guard let epub = reader.book else { return false }
+        let language = epub.publication.metadata.language?
+            .trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let code = language?.split(whereSeparator: { $0 == "-" || $0 == "_" }).first
+        return code == nil || code == "en" || code == "eng" || code == "und"
+    }
+
+    private func readAloud(_ text: String) {
+        reader.clearSelection()
+        isShowingReadAloud = true
+        narration.start { text }
     }
 
     private func copyToPasteboard(_ text: String) {
@@ -470,7 +603,10 @@ struct ReaderScreen: View {
                             bookmarks: model.record?.pageBookmarks ?? [],
                             chapterTitles: chapterTitles,
                             onSelect: { reader.go(to: $0) },
-                            onEdit: { openNoteEditor($0, autofocus: !$0.hasContent) },
+                            onEdit: { annotation in
+                                reader.go(to: annotation.locator)
+                                openNoteEditor(annotation, autofocus: !annotation.hasContent)
+                            },
                             onDelete: { deleteAnnotation($0.id) },
                             onExport: { format in
                                 model.exportNotes(format)
@@ -561,6 +697,7 @@ struct ReaderScreen: View {
             deletingActiveTarget = false
         }
         model.deleteAnnotation(id)
+        guard model.annotation(with: id) == nil else { return }
         if deletingActiveTarget {
             editingAnnotation = nil
             isDrawingExpanded = false
@@ -568,7 +705,10 @@ struct ReaderScreen: View {
     }
 
     private func selectWorkspace(_ workspace: AppModel.Workspace) {
-        model.workspace = workspace
+        model.flush { succeeded in
+            guard succeeded else { return }
+            model.workspace = workspace
+        }
         if workspace == .notes,
            editingAnnotation == nil,
            case .annotation(let id) = model.aiNoteTarget,
@@ -580,12 +720,15 @@ struct ReaderScreen: View {
     }
 
     private func closeWorkspace() {
-        model.workspace = .closed
-        editingAnnotation = nil
-        model.aiNoteTarget = nil
-        inspectorOpenedForEditor = false
-        isDrawingExpanded = false
-        reader.pinRestore(to: nil)
+        model.flush { succeeded in
+            guard succeeded else { return }
+            model.workspace = .closed
+            editingAnnotation = nil
+            model.aiNoteTarget = nil
+            inspectorOpenedForEditor = false
+            isDrawingExpanded = false
+            reader.pinRestore(to: nil)
+        }
     }
 
     private func setDrawingExpanded(_ active: Bool, annotation: Annotation) {
@@ -657,6 +800,19 @@ struct ReaderScreen: View {
             }
             UpdateButton()
 
+            if supportsReadAloud {
+                Button { isShowingReadAloud.toggle() } label: {
+                    Label("Listen", systemImage: "headphones")
+                        .foregroundStyle(narration.isActive ? Color.accentColor : Color.primary)
+                }
+                .quickHelp("Listen with Paradee")
+                .popover(isPresented: $isShowingReadAloud, arrowEdge: .bottom) {
+                    ReadAloudPopover(narration: narration, canStart: !reader.isLoading && reader.errorMessage == nil) {
+                        narration.start { await reader.narrationTextFromViewport() }
+                    }
+                }
+            }
+
             Menu {
                 Button(reader.isPlacingReadingMarker ? "Cancel Marker Placement (Esc)" : "Place Reading Marker (M)") {
                     model.toggleReadingMarkerPlacement()
@@ -719,7 +875,144 @@ struct ReaderScreen: View {
                 Label("Notes", systemImage: "list.bullet.rectangle")
             }
             .quickHelp("Notes and highlights")
+
+            Menu {
+                Button("Show Reminders") { model.showReminders() }
+                Button("Add reminder for this page…") { beginPageReminder() }
+                    .disabled(model.currentReminderLocator == nil)
+            } label: {
+                Label("Reminders", systemImage: "bell")
+            } primaryAction: {
+                model.showReminders()
+            }
+            .quickHelp("Research reminders")
         }
+    }
+
+    private func beginReminder(title: String, locator: Locator, quote: String, chapter: String?,
+                               annotationID: UUID? = nil, anchor: CGRect,
+                               source: ResearchReminder.Source = .selection, existingReminderID: UUID? = nil) {
+        reminderDraftTitle = title
+        reminderDraftError = nil
+        activeReminder = nil
+        reminderDraft = ReminderCaptureDraft(bookID: book.bookID, source: source, locator: locator,
+            quotedText: quote, chapterTitle: chapter, annotationID: annotationID,
+            existingReminderID: existingReminderID, anchor: anchor)
+    }
+
+    private func saveReminderDraft() {
+        guard let draft = reminderDraft else { return }
+        guard model.book?.bookID == draft.bookID else {
+            reminderDraftError = "This book is no longer open. Your reminder title has been kept."
+            return
+        }
+        do {
+            if let id = draft.existingReminderID {
+                guard var reminder = model.reminder(with: id, bookID: draft.bookID) else {
+                    reminderDraftError = "This reminder is no longer available."
+                    return
+                }
+                reminder.title = reminderDraftTitle
+                try model.updateReminder(reminder, bookID: draft.bookID)
+                activeReminder = ActiveReminder(id: id, rect: draft.anchor)
+            } else {
+                capturedReminder = try model.createReminder(title: reminderDraftTitle, source: draft.source,
+                    locator: draft.locator, quotedText: draft.quotedText, chapterTitle: draft.chapterTitle,
+                    annotationID: draft.annotationID, id: draft.id)
+                capturedReminderBookID = draft.bookID
+            }
+            reminderDraft = nil
+            reminderDraftError = nil
+            reader.clearSelection()
+        } catch { reminderDraftError = error.localizedDescription }
+    }
+
+    private func cancelReminderDraft() {
+        reminderDraft = nil
+        reminderDraftError = nil
+        reader.clearSelection()
+    }
+
+    private func dismissPassagePopovers() {
+        activeHighlight = nil
+        activeReminder = nil
+        // Reflow can change the page number while the title field is focused.
+        // Keep the draft's original passage until the user saves or cancels.
+    }
+
+    private func handleReminderActivated(_ id: UUID, rect: CGRect) {
+        guard let reminder = model.reminder(with: id), !reminder.isCompleted else { return }
+        reader.clearSelection()
+        activeHighlight = nil
+        reminderDraft = nil
+        activeReminder = ActiveReminder(id: id, rect: rect)
+    }
+
+    private func editReminder(_ reminder: ResearchReminder, anchor: CGRect) {
+        beginReminder(title: reminder.title, locator: reminder.locator, quote: reminder.quotedText,
+                      chapter: reminder.chapterTitle, annotationID: reminder.annotationID, anchor: anchor,
+                      source: reminder.source, existingReminderID: reminder.id)
+    }
+
+    private func completeReminder(_ reminder: ResearchReminder) {
+        guard var current = model.reminder(with: reminder.id) else { return }
+        current.completedAt = Date()
+        do {
+            try model.updateReminder(current, bookID: book.bookID)
+            activeReminder = nil
+        } catch { model.errorMessage = error.localizedDescription }
+    }
+
+    private func beginPageReminder() {
+        guard let locator = model.currentReminderLocator else { return }
+        pageReminderLocator = locator
+        pageReminderChapter = reader.chapterTitle
+        reminderTitle = ""
+        isAddingPageReminder = true
+    }
+
+    private func captureReminder(title: String, source: ResearchReminder.Source, locator: Locator,
+                                 quote: String, chapter: String?, annotationID: UUID? = nil) {
+        do {
+            capturedReminder = try model.createReminder(title: title, source: source, locator: locator,
+                                                       quotedText: quote, chapterTitle: chapter, annotationID: annotationID)
+            capturedReminderBookID = book.bookID
+            reader.clearSelection()
+        } catch { model.errorMessage = error.localizedDescription }
+    }
+
+    @ViewBuilder
+    private var reminderConfirmation: some View {
+        if let reminder = capturedReminder, let bookID = capturedReminderBookID {
+            HStack(spacing: 12) {
+                Label("Reminder saved", systemImage: "checkmark.circle")
+                Button("Edit") {
+                    reminderTitle = reminder.title
+                    isEditingReminder = true
+                }
+                Button("Undo") {
+                    do { try model.deleteReminder(reminder.id, bookID: bookID); capturedReminder = nil }
+                    catch { model.errorMessage = error.localizedDescription }
+                }
+                Button { capturedReminder = nil } label: { Image(systemName: "xmark") }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Dismiss reminder confirmation")
+            }
+            .font(.callout)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+            .background(.regularMaterial, in: .rect(cornerRadius: 10))
+            .shadow(color: .black.opacity(0.1), radius: 6, y: 2)
+            .padding(.bottom, 12)
+        }
+    }
+
+    private func saveCapturedReminderTitle() {
+        guard let capturedReminder, let bookID = capturedReminderBookID,
+              var reminder = model.reminder(with: capturedReminder.id, bookID: bookID) else { return }
+        reminder.title = reminderTitle
+        do { try model.updateReminder(reminder, bookID: bookID); self.capturedReminder = reminder }
+        catch { model.errorMessage = error.localizedDescription }
     }
 }
 

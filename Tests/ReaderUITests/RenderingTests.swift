@@ -805,6 +805,14 @@ final class RenderingTests: XCTestCase {
     }
 
     func testClosingWorkspaceKeepsDeliberatePageNavigation() throws {
+        try checkClosingWorkspaceNavigation(relayoutBeforeNavigation: false)
+    }
+
+    func testClosingWorkspaceRelayoutDoesNotOverridePageNavigation() throws {
+        try checkClosingWorkspaceNavigation(relayoutBeforeNavigation: true)
+    }
+
+    private func checkClosingWorkspaceNavigation(relayoutBeforeNavigation: Bool) throws {
         let (reader, book) = try makeReader(SampleBooks.frankenstein, size: CGSize(width: 1400, height: 900))
         let chapter = largestChapterIndex(in: book)
         reader.start(at: Locator(spineIndex: chapter, start: TextPosition(elementPath: [], offset: 0)), annotations: [])
@@ -831,8 +839,17 @@ final class RenderingTests: XCTestCase {
                 && abs((after["y"] ?? -1000) - (before["y"] ?? 0)) <= 2
         }, "Closing returned to the pre-workspace spread")
         XCTAssertEqual(reader.page, 1)
-        reader.previousPage()
+        if relayoutBeforeNavigation {
+            // The controller and WebKit both coalesce closing resizes. Force
+            // navigation into that interval instead of relying on run-loop timing.
+            reader.evaluateForTesting("__reader.relayout(); __reader.previousPage()") { _ in }
+        } else {
+            reader.previousPage()
+        }
         XCTAssertTrue(wait { reader.page == 0 }, "Page navigation stopped working after closing")
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+        XCTAssertEqual(reader.page, 0, "A pending relayout restored the previous spread")
+        XCTAssertLessThanOrEqual(pagingGeometry(from: reader)["scrollLeft"] ?? .infinity, 2)
     }
 
     func testWorkspaceGeometrySurvivesChapterNavigation() throws {

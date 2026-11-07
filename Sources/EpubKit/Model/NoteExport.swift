@@ -27,10 +27,10 @@ public enum NoteExportFormat: String, CaseIterable, Sendable {
 
     public var instructions: String {
         switch self {
-        case .markdown: return "Includes notes, passages, citations, and sketch images in a companion assets folder."
-        case .word: return "Save a formatted Word document with notes, passages, citations, and sketch images."
-        case .appleNotes: return "In Apple Notes, choose File → Import to Notes and select this HTML file."
-        case .notion: return "Import the Markdown file with its companion sketch assets folder into Notion."
+        case .markdown: return "Includes notes, passages, citations, and a companion folder for sketches and audio."
+        case .word: return "Includes formatted notes and sketches. Keep the companion audio folder beside the document."
+        case .appleNotes: return "Import this HTML file into Apple Notes. Keep the companion audio folder beside it for recording links."
+        case .notion: return "Import the Markdown file with its companion sketch and audio assets folder into Notion."
         }
     }
 }
@@ -39,6 +39,15 @@ public enum NoteExportFormat: String, CaseIterable, Sendable {
 /// AppKit's OOXML writer silently drops NSTextAttachment image contents.
 #if os(macOS)
 public enum SketchDOCX {
+    public struct Link {
+        public var marker: String
+        public var title: String
+        public var target: String
+        public init(marker: String, title: String, target: String) {
+            self.marker = marker; self.title = title; self.target = target
+        }
+    }
+
     public struct Image {
         public var marker: String
         public var title: String
@@ -50,8 +59,8 @@ public enum SketchDOCX {
         }
     }
 
-    public static func embedding(_ images: [Image], in data: Data) throws -> Data {
-        guard !images.isEmpty else { return data }
+    public static func embedding(_ images: [Image], in data: Data, links: [Link] = []) throws -> Data {
+        guard !images.isEmpty || !links.isEmpty else { return data }
         let input = try Archive(data: data, accessMode: .read)
         var parts: [String: Data] = [:]
         for entry in input {
@@ -97,7 +106,34 @@ public enum SketchDOCX {
             relationships.rootElement()?.addChild(relationship)
             parts["word/media/" + filename] = image.png
         }
-        if try types.nodes(forXPath: "//*[local-name()='Default' and @Extension='png']").isEmpty {
+        // AppKit's OOXML writer drops hyperlink destinations. Build real Word
+        // hyperlinks around stable text markers instead of relying on .link.
+        for (index, link) in links.enumerated() {
+            guard link.marker.allSatisfy({ $0.isLetter || $0.isNumber }),
+                  let text = try document.nodes(forXPath: "//*[local-name()='t' and text()='\(link.marker)']").first,
+                  let run = text.parent as? Foundation.XMLElement,
+                  let parent = run.parent as? Foundation.XMLElement,
+                  let position = parent.children?.firstIndex(where: { $0 === run }) else {
+                throw failure("An audio recording's position was lost while exporting.")
+            }
+            let identifier = "rIdAudio\(index + 1)"
+            let hyperlink = try Foundation.XMLElement(xmlString: "<w:hyperlink xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\" r:id=\"\(identifier)\"></w:hyperlink>")
+            text.stringValue = link.title
+            run.detach()
+            hyperlink.addChild(run)
+            parent.insertChild(hyperlink, at: position)
+            if let properties = try run.nodes(forXPath: "./*[local-name()='rPr']").first as? Foundation.XMLElement {
+                for property in try properties.nodes(forXPath: "./*[local-name()='color' or local-name()='u']") { property.detach() }
+                properties.addChild(try Foundation.XMLElement(xmlString: "<w:color xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" w:val=\"245744\"/>"))
+                properties.addChild(try Foundation.XMLElement(xmlString: "<w:u xmlns:w=\"http://schemas.openxmlformats.org/wordprocessingml/2006/main\" w:val=\"single\"/>"))
+            }
+            let relationship = Foundation.XMLElement(name: "Relationship", uri: "http://schemas.openxmlformats.org/package/2006/relationships")
+            for (name, value) in [("Id", identifier), ("Type", "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink"), ("Target", link.target), ("TargetMode", "External")] {
+                relationship.addAttribute(Foundation.XMLNode.attribute(withName: name, stringValue: value) as! Foundation.XMLNode)
+            }
+            relationships.rootElement()?.addChild(relationship)
+        }
+        if !images.isEmpty, try types.nodes(forXPath: "//*[local-name()='Default' and @Extension='png']").isEmpty {
             let type = Foundation.XMLElement(name: "Default", uri: "http://schemas.openxmlformats.org/package/2006/content-types")
             type.addAttribute(Foundation.XMLNode.attribute(withName: "Extension", stringValue: "png") as! Foundation.XMLNode)
             type.addAttribute(Foundation.XMLNode.attribute(withName: "ContentType", stringValue: "image/png") as! Foundation.XMLNode)
@@ -124,7 +160,7 @@ public enum SketchDOCX {
 #endif
 
 public enum NoteExport {
-    public static func html(bookTitle: String, author: String, annotations: [Annotation], sketchImages: [UUID: Data] = [:]) -> String {
+    public static func html(bookTitle: String, author: String, annotations: [Annotation], sketchImages: [UUID: Data] = [:], audioPaths: [UUID: String] = [:], audioPlayers: Bool = true, reminders: [ResearchReminder] = []) -> String {
         let author = author.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Unknown Author" : author
         let notes = annotations.filter(\.hasContent).sorted {
             ($0.locator.spineIndex, $0.createdAt) < ($1.locator.spineIndex, $1.createdAt)
@@ -138,7 +174,7 @@ public enum NoteExport {
             // Source text is always literal; book passages can contain Markdown or HTML.
             body += "<blockquote>\(escape(note.text).replacingOccurrences(of: "\n", with: "<br>"))</blockquote>"
             body += "<p><em>\(escape("— \(section), \(author), \(bookTitle)"))</em></p>"
-            body += render(note.note ?? "", sketchImages: sketchImages)
+            body += render(ReminderReference.exporting(note.note ?? "", reminders: reminders), sketchImages: sketchImages, audioPaths: audioPaths, audioPlayers: audioPlayers, audioRecordings: note.audioRecordings)
             if note.hasDrawing && note.sketches.isEmpty { body += "<p><em>Visual note attached in Kodi Reader; drawing is not included in this export.</em></p>" }
             body += "<hr>"
         }
@@ -150,14 +186,34 @@ public enum NoteExport {
         """
     }
 
-    private static func render(_ markdown: String, sketchImages: [UUID: Data]) -> String {
-        NoteMarkdown.previewBlocks(of: markdown).map { block in
+    private static func render(_ markdown: String, sketchImages: [UUID: Data], audioPaths: [UUID: String], audioPlayers: Bool, audioRecordings: [NoteAudio]) -> String {
+        let recordings = Dictionary(audioRecordings.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        var includedTranscripts: Set<UUID> = []
+        func transcript(for id: UUID) -> String {
+            guard let text = recordings[id]?.transcript?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !text.isEmpty, includedTranscripts.insert(id).inserted else { return "" }
+            let literal = escape(text.replacingOccurrences(of: "\r\n", with: "\n").replacingOccurrences(of: "\r", with: "\n"))
+                .replacingOccurrences(of: "\n", with: "<br>")
+            return "<div class=\"audio-transcript\"><p><strong>Transcript</strong></p><p>\(literal)</p></div>"
+        }
+        return NoteMarkdown.previewBlocks(of: markdown).map { block in
             switch block {
+            case .reminder(_, let title):
+                return "<p>☐ \(escape(title))</p>"
             case .sketch(let id, let title):
                 if let image = sketchImages[id] {
                     return "<figure><img style=\"max-width:100%;height:auto\" alt=\"\(escape(title))\" src=\"data:image/png;base64,\(image.base64EncodedString())\"><figcaption>\(escape(title))</figcaption></figure>"
                 }
                 return "<p><em>\(escape(title)) — sketch image unavailable.</em></p>"
+            case .audio(let id, let title):
+                let savedTranscript = transcript(for: id)
+                guard let path = audioPaths[id], safeAudioPath(path) else {
+                    return "<p><em>\(escape(title)) — audio recording unavailable.</em></p>" + savedTranscript
+                }
+                let source = escape(path), label = escape(title)
+                let link = "<a href=\"\(source)\">\(label)</a>"
+                if !audioPlayers { return "<p>\(link)</p>" + savedTranscript }
+                return "<figure><audio controls preload=\"none\" aria-label=\"\(label)\" src=\"\(source)\"></audio><figcaption>\(link)</figcaption></figure>" + savedTranscript
             case .paragraph(let text):
                 return text.components(separatedBy: "\n").map { line in
                     if let prefix = line.range(of: #"^#{1,6} "#, options: .regularExpression) {
@@ -180,6 +236,12 @@ public enum NoteExport {
                     + rows.map { "<tr>" + $0.map { "<td>\(inline($0))</td>" }.joined() + "</tr>" }.joined() + "</table>"
             }
         }.joined()
+    }
+
+    private static func safeAudioPath(_ path: String) -> Bool {
+        guard !path.hasPrefix("/"), let url = URL(string: path) else { return false }
+        if let scheme = url.scheme { return ["http", "https"].contains(scheme.lowercased()) && url.host != nil }
+        return !url.pathComponents.contains("..") && url.pathExtension.lowercased() == "m4a"
     }
 
     private static func inline(_ text: String) -> String {

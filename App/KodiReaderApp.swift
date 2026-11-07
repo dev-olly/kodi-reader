@@ -77,16 +77,8 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(!authWelcomeSeen && !model.aiAuth.isSignedIn)
 
-            Button("Open Webpage…") { model.presentOpenURL() }
-                .keyboardShortcut("o", modifiers: [.command, .shift])
-                .disabled(!authWelcomeSeen && !model.aiAuth.isSignedIn)
-
-            Button("Save Webpage to Library") { model.saveCurrentWebPage() }
-                .keyboardShortcut("s", modifiers: [.command, .shift])
-                .disabled(!model.isBrowsing || model.isSavingWebPage)
-
             Button("Rename Document…") { model.documentToRename = model.record }
-                .disabled(model.record == nil || model.isBrowsing)
+                .disabled(model.record == nil)
 
             Divider()
 
@@ -94,9 +86,7 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("h", modifiers: [.command, .shift])
                 .disabled(!model.canGoHome)
 
-            Button(model.isBrowsing ? "Close Webpage" : "Close Document") {
-                if model.isBrowsing { model.closeBrowser() } else { model.closeBook() }
-            }
+            Button("Close Document") { model.closeBook() }
                 .keyboardShortcut("w", modifiers: [.command, .shift])
                 .disabled(!model.canGoHome)
         }
@@ -112,9 +102,9 @@ struct KodiReaderApp: App {
                 .disabled(model.reader == nil)
             Divider()
             Button("Place Reading Marker (M)") { model.toggleReadingMarkerPlacement() }
-                .disabled(model.reader == nil || model.isBrowsing || model.reader?.isLoading == true)
+                .disabled(model.reader == nil || model.reader?.isLoading == true)
             Button("Return to Reading Marker (⇧M)") { model.goToReadingMarker() }
-                .disabled(model.record?.readingMarker == nil || model.isBrowsing || model.reader?.isLoading == true)
+                .disabled(model.record?.readingMarker == nil || model.reader?.isLoading == true)
             Divider()
             Button(model.book?.kind == .pdf ? "Next Section" : "Next Chapter") {
                 model.reader?.goToNextChapter()
@@ -133,6 +123,8 @@ struct KodiReaderApp: App {
                 .keyboardShortcut("t", modifiers: [.command, .shift])
             Button("Notes & Highlights") { model.toggleAnnotations() }
                 .keyboardShortcut("l", modifiers: [.command, .shift])
+            Button("Research Reminders") { model.showReminders() }
+                .keyboardShortcut("r", modifiers: [.command, .shift])
             Toggle(
                 "Notes in Sidebar",
                 isOn: Binding(
@@ -184,7 +176,6 @@ struct KodiReaderApp: App {
 /// so we never resurrect the phantom AppWindow-N scenes from earlier launches.
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowObserver: NSObjectProtocol?
-    private var analyticsInputMonitor: Any?
     private var analyticsSleepObserver: NSObjectProtocol?
     private var analyticsWakeObserver: NSObjectProtocol?
     weak var readingProgress: ReadingProgress?
@@ -207,11 +198,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.registerForRemoteNotifications()
         }
         disableRestoration(on: NSApp.windows)
-        // Observe input timing only; key values, locations, and content are never retained.
-        analyticsInputMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]) { event in
-            UsageAnalytics.shared.recordInteraction()
-            return event
-        }
         let workspace = NSWorkspace.shared.notificationCenter
         analyticsSleepObserver = workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
@@ -260,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        AudioNoteClipboard.clear()
         UsageAnalytics.shared.setActive(false)
         readingProgress?.setActive(false)
         readingProgress?.checkpoint()
@@ -267,7 +254,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         if let windowObserver {
             NotificationCenter.default.removeObserver(windowObserver)
         }
-        if let analyticsInputMonitor { NSEvent.removeMonitor(analyticsInputMonitor) }
         if let analyticsSleepObserver { NSWorkspace.shared.notificationCenter.removeObserver(analyticsSleepObserver) }
         if let analyticsWakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(analyticsWakeObserver) }
     }

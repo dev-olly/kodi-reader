@@ -40,6 +40,10 @@
 	<string>$(SUPABASE_PUBLISHABLE_KEY)</string>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>en</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Record spoken thoughts and reflections in your book notes.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Transcribe your recorded book notes on this Mac.</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>

@@ -47,6 +47,23 @@ test('PostgreSQL migration, RLS, deduplication, UTC aggregation, >1000 rows and 
     sql(usageMigration);
     sql(readFileSync(join(root, 'docs/analytics/verify.sql'), 'utf8'));
     sql(readFileSync(join(root, 'docs/analytics/verify-usage-v2.sql'), 'utf8'));
+    const featureMigration = readFileSync(join(root, 'docs/analytics/004_feature_usage.sql'), 'utf8');
+    sql(featureMigration);
+    // Reapplication also preserves already-received V3 intervals and actions.
+    sql(`
+      insert into public.analytics_events (id, installation_id, session_id, occurred_at, name, duration_seconds, schema_version)
+      values ('f4444444-4444-4444-8444-444444444444', 'a4444444-4444-4444-8444-444444444444',
+        'b4444444-4444-4444-8444-444444444444', now(), 'audio_recording_heartbeat', 12, 3);
+    `);
+    sql(featureMigration);
+    sql(`do $$ begin
+      assert (select duration_seconds from public.analytics_events where id='f4444444-4444-4444-8444-444444444444') = 12,
+        'reapplying feature migration preserves stored V3 data';
+    end; $$;
+    delete from public.analytics_events where id='f4444444-4444-4444-8444-444444444444';`);
+    sql(readFileSync(join(root, 'docs/analytics/verify.sql'), 'utf8'));
+    sql(readFileSync(join(root, 'docs/analytics/verify-usage-v2.sql'), 'utf8'));
+    sql(readFileSync(join(root, 'docs/analytics/verify-feature-usage.sql'), 'utf8'));
     // Minimal existing application schemas. The production auth / credits
     // migration owns these tables; analytics never creates or changes them.
     sql(`
@@ -60,7 +77,9 @@ test('PostgreSQL migration, RLS, deduplication, UTC aggregation, >1000 rows and 
     sql(serverMigration);
     sql(serverMigration);
     sql(usageMigration); // Preserve the optional existing history panel as well.
+    sql(featureMigration); // V3 preserves that same optional panel and ACLs.
     sql(readFileSync(join(root, 'docs/analytics/verify-server-usage.sql'), 'utf8'));
+    sql(readFileSync(join(root, 'docs/analytics/verify-feature-usage.sql'), 'utf8'));
   } finally {
     if (started) run('pg_ctl', ['-D', data, '-m', 'immediate', '-w', 'stop']);
     rmSync(directory, { recursive: true, force: true });

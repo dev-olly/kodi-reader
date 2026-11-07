@@ -31,6 +31,8 @@ public final class LibraryStore: @unchecked Sendable {
     private var pendingSave: DispatchWorkItem?
     /// Excalidraw scenes live next to `library.json`, keyed by book.
     public let drawingStore: DrawingStore
+    /// Recorded thoughts live in file sidecars alongside the library.
+    public let audioStore: AudioStore
 
     /// Directory containing `library.json` and the `Books/` import folder.
     public var rootDirectory: URL {
@@ -70,6 +72,7 @@ public final class LibraryStore: @unchecked Sendable {
         }
         durableRecords = payload.books
         drawingStore = DrawingStore(rootDirectory: fileURL.deletingLastPathComponent())
+        audioStore = AudioStore(rootDirectory: fileURL.deletingLastPathComponent())
         let backup = fileURL.deletingLastPathComponent().appendingPathComponent("library.before-icloud.json")
         if FileManager.default.fileExists(atPath: fileURL.path), !FileManager.default.fileExists(atPath: backup.path) {
             do { try FileManager.default.copyItem(at: fileURL, to: backup) }
@@ -213,17 +216,23 @@ public final class LibraryStore: @unchecked Sendable {
     /// Applies a change and writes the library immediately, surfacing disk
     /// errors to UI flows that need an accurate saved/failed state.
     public func updateAndFlush(_ bookID: String, _ transform: (inout BookRecord) -> Void) throws {
+        ioLock.lock(); defer { ioLock.unlock() }
         lock.lock()
         guard var record = payload.books[bookID] else {
             lock.unlock()
             throw LibraryStoreError.missingBook
         }
+        let previous = record
         transform(&record)
         payload.books[bookID] = record
         lock.unlock()
         pendingSave?.cancel()
         pendingSave = nil
-        try writeToDisk()
+        do { try writeToDisk() }
+        catch {
+            lock.lock(); payload.books[bookID] = previous; lock.unlock()
+            throw error
+        }
     }
 
     public func remove(bookID: String) {
@@ -236,6 +245,7 @@ public final class LibraryStore: @unchecked Sendable {
             removeImportedBook(bookID: bookID, kind: removed?.documentKind ?? .epub)
         }
         drawingStore.deleteAllScenes(bookID: bookID)
+        audioStore.deleteAllRecordings(bookID: bookID)
         scheduleSave()
     }
 
@@ -254,6 +264,61 @@ public final class LibraryStore: @unchecked Sendable {
     public func allBooks() -> [BookRecord] {
         lock.lock(); defer { lock.unlock() }
         return payload.books.values.sorted { $0.lastOpenedAt > $1.lastOpenedAt }
+    }
+
+    /// Pasted audio references need an independent sidecar in their destination
+    /// note. Stage those files before the caller checkpoints the returned metadata.
+    /// Unknown identities are left for the active note's Undo archive to restore.
+    public func importReferencedAudio(in annotation: Annotation, note: String, bookID: String) throws -> Annotation {
+        let references = AudioReference.references(in: note)
+        let existing = Set(annotation.audioRecordings.map(\.id))
+        let missing = Set(references.map(\.id)).subtracting(existing)
+        guard !missing.isEmpty else { return annotation }
+
+        var donors: [UUID: [(recording: NoteAudio, url: URL)]] = [:]
+        for book in allBooks() {
+            for source in book.annotations {
+                for recording in source.audioRecordings where missing.contains(recording.id) {
+                    let url = audioStore.recordingURL(bookID: book.id, annotationID: source.id, audioID: recording.id)
+                    donors[recording.id, default: []].append((recording, url))
+                }
+            }
+        }
+
+        let manager = FileManager.default
+        var imports: [(recording: NoteAudio, url: URL)] = []
+        var seen = existing
+        for reference in references where seen.insert(reference.id).inserted {
+            guard let candidates = donors[reference.id] else { continue }
+            guard let donor = candidates.first(where: { candidate in
+                guard let attributes = try? manager.attributesOfItem(atPath: candidate.url.path) else { return false }
+                return attributes[.type] as? FileAttributeType == .typeRegular
+                    && ((attributes[.size] as? NSNumber)?.int64Value ?? 0) > 0
+            }) else {
+                throw NSError(domain: "KodiAudio", code: 2, userInfo: [
+                    NSLocalizedDescriptionKey: "The audio recording ‘\(reference.title)’ is not downloaded. Sync its source book before copying it into this note."
+                ])
+            }
+            var recording = donor.recording
+            recording.title = reference.title
+            imports.append((recording, donor.url))
+        }
+
+        var created: [UUID] = []
+        do {
+            for item in imports {
+                let destination = audioStore.recordingURL(bookID: bookID, annotationID: annotation.id, audioID: item.recording.id)
+                let existed = manager.fileExists(atPath: destination.path)
+                try audioStore.saveRecording(from: item.url, bookID: bookID, annotationID: annotation.id, audioID: item.recording.id)
+                if !existed { created.append(item.recording.id) }
+            }
+        } catch {
+            for id in created { try? audioStore.deleteRecording(bookID: bookID, annotationID: annotation.id, audioID: id) }
+            throw error
+        }
+        var updated = annotation
+        updated.audioRecordings.append(contentsOf: imports.map(\.recording))
+        return updated
     }
 
     public func durableBooks() -> [BookRecord] {
@@ -297,6 +362,7 @@ public final class LibraryStore: @unchecked Sendable {
             try? FileManager.default.removeItem(at: file)
         }
         drawingStore.deleteAllScenes(bookID: id)
+        audioStore.deleteAllRecordings(bookID: id)
     }
 
     public func checkpoint() throws {

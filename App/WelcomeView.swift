@@ -5,11 +5,18 @@ import SwiftUI
 /// Shown when no document is open: a way in, plus whatever you were reading last.
 struct WelcomeView: View {
     @Environment(AppModel.self) private var model
-    @State private var urlText = ""
-    @State private var urlError: String?
-    @State private var isFieldHovered = false
     @State private var bookToDelete: BookRecord?
-    @FocusState private var urlFieldFocused: Bool
+    @State private var searchText = ""
+    @AppStorage("librarySort") private var librarySort: LibrarySort = .dateRead
+    @AppStorage("librarySortAscending") private var sortAscending = false
+    @AppStorage("libraryFilter") private var libraryFilter: LibraryFilter = .all
+    @FocusState private var searchFocused: Bool
+
+    private var visibleBooks: [BookRecord] {
+        LibraryQuery(searchText: searchText, sort: librarySort,
+                     ascending: sortAscending, filter: libraryFilter)
+            .apply(to: model.recents)
+    }
 
     var body: some View {
         ScrollView {
@@ -23,6 +30,10 @@ struct WelcomeView: View {
                 Spacer()
                 AIAccountMenu(auth: model.aiAuth).frame(maxWidth: 220)
                 UpdateButton()
+                Button { model.showReminders() } label: {
+                    Label("Reminders", systemImage: "bell")
+                }
+                .controlSize(.large)
                 Button { model.presentOpenPanel() } label: {
                     Label("Open Document", systemImage: "plus")
                 }
@@ -36,8 +47,6 @@ struct WelcomeView: View {
                 Text(model.recents.isEmpty ? "Your books. Your thoughts." : "Pick up where you left off.")
                     .foregroundStyle(model.settings.theme.muted)
             }
-            urlField
-                .frame(maxWidth: 520)
             if model.settings.showReadingProgress {
                 ReadingProgressCard()
             }
@@ -69,90 +78,177 @@ struct WelcomeView: View {
                 }
             }
         } message: {
-            Text("This deletes the book, notes, drawings, bookmarks, and saved conversations. Synced deletions reach other Macs when they reconnect. Use Remove Download to keep your reading data.")
+            Text("This deletes the book, notes, reminders, drawings, bookmarks, and saved conversations. Synced deletions reach other Macs when they reconnect. Use Remove Download to keep your reading data.")
         }
-    }
-
-    private var urlField: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 10) {
-                Image(systemName: "globe")
-                    .foregroundStyle(.secondary)
-                    .imageScale(.medium)
-
-                TextField("Paste or type a URL", text: $urlText)
-                    .textFieldStyle(.plain)
-                    .focused($urlFieldFocused)
-                    .onSubmit { submitURL() }
-                    .onChange(of: urlText) { _, _ in urlError = nil }
-
-                Button(action: submitURL) {
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 12, weight: .bold))
-                        .foregroundStyle(hasURLText ? Color.white : Color.secondary)
-                        .frame(width: 24, height: 24)
-                        .background(
-                            hasURLText
-                                ? AnyShapeStyle(Color.accentColor)
-                                : AnyShapeStyle(.quaternary),
-                            in: .circle
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(!hasURLText)
-                .help("Open URL")
-            }
-            .padding(.leading, 16)
-            .padding(.trailing, 6)
-            .padding(.vertical, 6)
-            .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
-            .overlay {
-                RoundedRectangle(cornerRadius: 8)
-                    .strokeBorder(
-                        urlFieldFocused || isFieldHovered
-                            ? Color.secondary.opacity(0.45)
-                            : Color.clear,
-                        lineWidth: 1
-                    )
-            }
-            .onHover { isFieldHovered = $0 }
-
-            if let urlError {
-                Text(urlError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 16)
-            }
-        }
-    }
-
-    private var hasURLText: Bool {
-        !urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-
-    private func submitURL() {
-        guard let url = WebPageURL.normalized(from: urlText) else {
-            urlError = ArticleError.invalidURL.localizedDescription
-            return
-        }
-        urlError = nil
-        model.openWebBrowser(url: url)
     }
 
     private var recents: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Your library")
-                .font(.caption)
-                .fontWeight(.semibold)
-                .foregroundStyle(.secondary)
-                .textCase(.uppercase)
+        let books = visibleBooks
+        return VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Text("Your library")
+                    .font(.caption)
+                    .fontWeight(.semibold)
+                    .textCase(.uppercase)
+                Spacer()
+                Text(books.count == model.recents.count
+                     ? "\(books.count) \(books.count == 1 ? "book" : "books")"
+                     : "\(books.count) of \(model.recents.count) books")
+                    .font(.caption)
+                    .monospacedDigit()
+            }
+            .foregroundStyle(model.settings.theme.muted)
 
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 12) {
+                    searchField.frame(minWidth: 220)
+                    filterMenu
+                    sortControls
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    searchField
+                    HStack(spacing: 12) {
+                        filterMenu
+                        Spacer(minLength: 0)
+                        sortControls
+                    }
+                }
+            }
+
+            if librarySort == .dateAdded, model.recents.contains(where: { $0.addedAt == nil }) {
+                Text("Older books without an added date appear last.")
+                    .font(.caption)
+                    .foregroundStyle(model.settings.theme.muted)
+            }
+
+            if books.isEmpty {
+                ContentUnavailableView {
+                    Label("No matching books", systemImage: "magnifyingglass")
+                } description: {
+                    Text("Try another title or author, or choose a different reading filter.")
+                } actions: {
+                    Button("Clear search and filters") {
+                        searchText = ""
+                        libraryFilter = .all
+                    }
+                    .buttonStyle(.bordered)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 240), spacing: 16)], spacing: 16) {
-                    ForEach(model.recents) { record in
+                    ForEach(books) { record in
                         recentRow(record)
                     }
                 }
+            }
+
         }
+        .onChange(of: librarySort) { _, sort in
+            sortAscending = sort == .title
+        }
+    }
+
+    private var searchField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "magnifyingglass")
+                .foregroundStyle(model.settings.theme.muted)
+            TextField("Search title or author", text: $searchText)
+                .textFieldStyle(.plain)
+                .focused($searchFocused)
+                .accessibilityLabel("Search your library")
+                .onKeyPress(.escape) {
+                    guard !searchText.isEmpty else { return .ignored }
+                    searchText = ""
+                    return .handled
+                }
+            if !searchText.isEmpty {
+                Button { searchText = ""; searchFocused = true } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .foregroundStyle(model.settings.theme.muted)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Clear book search")
+                .help("Clear search")
+            }
+        }
+        .font(.system(size: 13))
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .strokeBorder(searchFocused ? model.settings.theme.accent.opacity(0.6) : model.settings.theme.border,
+                              lineWidth: 1)
+        }
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("Reading filter", selection: $libraryFilter) {
+                ForEach(LibraryFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
+                }
+            }
+            .pickerStyle(.inline)
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "line.3.horizontal.decrease")
+                Text(libraryFilter.title)
+                Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+            }
+            .font(.system(size: 13))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .accessibilityLabel("Filter books: \(libraryFilter.title)")
+        .help(libraryFilter == .recentlyRead ? "Books read in the last 7 days" : "Filter by reading status")
+    }
+
+    private var sortControls: some View {
+        HStack(spacing: 8) {
+            Menu {
+                Picker("Sort by", selection: $librarySort) {
+                    ForEach(LibrarySort.allCases) { sort in
+                        Text(sort.title).tag(sort)
+                    }
+                }
+                .pickerStyle(.inline)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(librarySort.title)
+                    Image(systemName: "chevron.down").font(.system(size: 9, weight: .semibold))
+                }
+                .font(.system(size: 13))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .accessibilityLabel("Sort books: \(librarySort.title)")
+
+            Button { sortAscending.toggle() } label: {
+                Image(systemName: sortAscending ? "arrow.up" : "arrow.down")
+                    .font(.system(size: 13, weight: .medium))
+                    .frame(width: 36, height: 36)
+                    .background(model.settings.theme.uiBackground, in: .rect(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Reverse sort order")
+            .accessibilityValue(sortDirection)
+            .help("\(sortDirection). Click to reverse.")
+        }
+        .fixedSize()
+    }
+
+    private var sortDirection: String {
+        if librarySort == .title { return sortAscending ? "A to Z" : "Z to A" }
+        return sortAscending ? "Oldest first" : "Newest first"
     }
 
     private func recentRow(_ record: BookRecord) -> some View {

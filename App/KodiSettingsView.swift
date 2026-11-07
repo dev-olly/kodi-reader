@@ -147,15 +147,15 @@ struct KodiSettingsView: View {
     private var privacySettings: some View {
         Form {
             Section("Usage analytics") {
-                Toggle("Share anonymous usage analytics", isOn: Binding(
+                Toggle("Share usage analytics", isOn: Binding(
                     get: { model.analytics.isEnabled },
                     set: { model.analytics.setEnabled($0) }
                 ))
-                Text("Help improve Kodi by sharing app activity, reading time, and feature counts such as Ask AI usage. A random identifier distinguishes this installation without linking it to your account.")
+                Text("Help improve Kodi by sharing feature counts, reader engagement time, and approximate connection country. Engagement includes reading, notes, drawing, and Ask AI while the reader is active; idle time is excluded. A random identifier distinguishes this installation without linking it to your account.")
                     .font(.callout).foregroundStyle(.secondary)
-                Text("Your books, titles, reading passages, notes, sketches, webpage addresses, AI questions and answers, and account details are never included in usage analytics.")
+                Text("These statistics are pseudonymous. Your books, titles, reading passages, note text, sketches, webpage addresses, AI questions and answers, and account details are never included. Country is inferred when data uploads; no GPS permission, city, precise location, or raw IP address is stored in analytics.")
                     .font(.callout).foregroundStyle(.secondary)
-                Text("Turning this off clears analytics waiting to send and removes this Mac’s analytics identifier. If you enable it again, a new identifier is created. Previously received anonymous statistics are retained.")
+                Text("Turning this off clears analytics waiting to send and removes this Mac’s analytics identifier. If you enable it again, a new identifier is created. Previously received statistics are retained for up to 180 days. Reading, notes, drawings, Ask AI, and your local reading goals still work with analytics off.")
                     .font(.caption).foregroundStyle(.secondary)
                 Link("Privacy Policy", destination: URL(string: "https://www.kodi-reader.app/privacy")!)
             }

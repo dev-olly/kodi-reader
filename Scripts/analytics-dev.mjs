@@ -42,8 +42,8 @@ createServer(async (incoming, outgoing) => {
       finish(200, { ...data, data_source: { kind: 'local_snapshot', captured_at: snapshot.captured_at, project: 'Kodi Reader' } });
       return;
     }
-    if (/^\/api\/analytics\/(events|dashboard)$/.test(url.pathname)) {
-      const route = url.pathname.split('/').at(-1);
+    if (/^\/api\/analytics\/(?:(?:events|dashboard)|auth\/(?:login|callback|session|logout))$/.test(url.pathname)) {
+      const route = url.pathname.slice('/api/analytics/'.length);
       const module = await import(new URL(`../website/api/analytics/${route}.js`, import.meta.url));
       const handler = module[incoming.method];
       if (!handler) { outgoing.writeHead(405); outgoing.end(); return; }
@@ -57,7 +57,10 @@ createServer(async (incoming, outgoing) => {
       const request = new Request(url, { method: incoming.method, headers: incoming.headers,
         ...(!['GET', 'HEAD'].includes(incoming.method) ? { body: Buffer.concat(chunks) } : {}) });
       const response = await handler(request);
-      outgoing.writeHead(response.status, Object.fromEntries(response.headers));
+      const headers = Object.fromEntries(response.headers);
+      const cookies = response.headers.getSetCookie();
+      if (cookies.length) headers['set-cookie'] = cookies;
+      outgoing.writeHead(response.status, headers);
       outgoing.end(Buffer.from(await response.arrayBuffer()));
       return;
     }

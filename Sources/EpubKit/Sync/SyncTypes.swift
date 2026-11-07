@@ -44,7 +44,7 @@ public final class SyncStatus {
     public init() {}
 }
 
-public enum SyncEntityKind: String, Codable, Sendable { case book, annotation, bookmark, position, chat }
+public enum SyncEntityKind: String, Codable, Sendable { case book, annotation, bookmark, position, chat, reminder }
 
 /// Only portable data is encoded here. The local BookRecord is never uploaded.
 public struct SyncEntity: Codable, Equatable, Sendable {
@@ -70,12 +70,19 @@ struct SyncedBook: Codable, Equatable {
     var kind: DocumentKind
     var sourceURL: URL?
     var file: BlobManifest?
+    var addedAt: Date? = nil
 }
 
 struct SyncedAnnotation: Codable, Equatable {
     var annotation: Annotation
     var drawing: BlobManifest?
     var sketches: [SyncedSketch]? = nil
+    var audioRecordings: [SyncedAudio]? = nil
+}
+
+struct SyncedAudio: Codable, Equatable {
+    var id: UUID
+    var recording: BlobManifest?
 }
 
 struct SyncedSketch: Codable, Equatable {
@@ -106,6 +113,8 @@ struct SyncJournal: Codable {
     // Recovery libraries remain local after a concurrent whole-book deletion.
     var detachedBooks: Set<String>?
     var collectedTombstones: Set<String>?
+    /// New reminder storage needs existing whole-book deletions collected again.
+    var reminderCleanupVersion: Int?
     var assetGenerations: [String: String]?
     var pendingRestorations: [String: String]?
     var requiresAcknowledgement = false

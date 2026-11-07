@@ -46,6 +46,9 @@ public final class ReaderController {
     public private(set) var isLoading: Bool = false
     public private(set) var selection: ReaderSelection?
     public private(set) var annotations: [Annotation] = []
+    public private(set) var reminders: [ResearchReminder] = []
+    /// Focused research controls own Space and navigation keys until focus leaves.
+    public private(set) var isReminderBadgeFocused = false
     public private(set) var errorMessage: String?
     public private(set) var visiblePageRange: ClosedRange<Int> = 0...0
     public private(set) var isPlacingReadingMarker = false
@@ -80,6 +83,8 @@ public final class ReaderController {
     public var onSettingsChanged: ((ReaderSettings) -> Void)?
     /// Fires when a highlight is clicked, with viewport coordinates.
     public var onHighlightActivated: ((UUID, CGRect) -> Void)?
+    /// Fires when a research icon is clicked, with top-left viewport coordinates.
+    public var onReminderActivated: ((UUID, CGRect) -> Void)?
     /// Fires after highlights are painted, with resolve/repair/orphan results.
     public var onAnchorsResolved: (([AnchorResolution]) -> Void)?
     /// Fires when an external web link is tapped, so the app can open it in-app.
@@ -99,6 +104,7 @@ public final class ReaderController {
     @ObservationIgnored private var pdfMarkerCommitGeneration = 0
     #if os(macOS)
     @ObservationIgnored private var pdfReadingMarkerMonitor: Any?
+    @ObservationIgnored private var pdfReminderButtons: [UUID: ResearchReminderPDFButton] = [:]
     #endif
     @ObservationIgnored private var schemeHandler: EPUBSchemeHandler?
     @ObservationIgnored private var messageProxy: MessageProxy?
@@ -138,7 +144,9 @@ public final class ReaderController {
             #endif
             return existing
         }
+        let replacingDocument = self.book != nil || pdfBook != nil
         tearDownViews()
+        if replacingDocument { reminders = [] }
         self.book = book
         pdfBook = nil
         computeSpineWeights(for: book)
@@ -178,7 +186,9 @@ public final class ReaderController {
     /// Builds the native PDF view, or returns the existing instance.
     public func makePDFView(for book: PDFBook) -> PDFView {
         if let existing = pdfView, pdfBook?.bookID == book.bookID { return existing }
+        let replacingDocument = self.book != nil || pdfBook != nil
         tearDownViews()
+        if replacingDocument { reminders = [] }
         pdfBook = book
         self.book = nil
 
@@ -214,13 +224,17 @@ public final class ReaderController {
         tearDownViews()
         book = nil
         pdfBook = nil
+        reminders = []
     }
 
     private func tearDownViews() {
+        isReminderBadgeFocused = false
         cancelReadingMarkerPlacement()
         if let marker = pdfReadingMarkerAnnotation { marker.page?.removeAnnotation(marker) }
         pdfReadingMarkerAnnotation = nil
         #if os(macOS)
+        pdfReminderButtons.values.forEach { $0.removeFromSuperview() }
+        pdfReminderButtons.removeAll()
         if let pdfReadingMarkerMonitor { NSEvent.removeMonitor(pdfReadingMarkerMonitor) }
         pdfReadingMarkerMonitor = nil
         #endif
@@ -306,6 +320,8 @@ public final class ReaderController {
         // Drop any live selection chip before the document changes.
         cancelReadingMarkerPlacement()
         clearSelection()
+        isReminderBadgeFocused = false
+        evaluate("__reader.setReminders([])")
 
         isLoading = true
         spineIndex = index
@@ -471,6 +487,13 @@ public final class ReaderController {
         } else {
             pushHighlights()
         }
+        pushReminders()
+    }
+
+    /// Reminder icons are independent of highlights and never create or recolor one.
+    public func setReminders(_ reminders: [ResearchReminder]) {
+        self.reminders = reminders
+        pushReminders()
     }
 
     public func clearSelection() {
@@ -480,6 +503,16 @@ public final class ReaderController {
         } else {
             evaluate("__reader.clearSelection()")
         }
+    }
+
+    /// Read the loaded EPUB section from the viewport without changing reading progress.
+    @MainActor
+    public func narrationTextFromViewport() async -> String? {
+        guard book != nil, !isLoading, let webView else { return nil }
+        let chapter = spineIndex
+        let result = try? await webView.evaluateJavaScript("__reader.narrationText(\(chapter))")
+        guard !isLoading, spineIndex == chapter, self.webView === webView else { return nil }
+        return result as? String
     }
 
     /// A few paragraphs around `locator`, capped so prompts stay small.
@@ -578,6 +611,38 @@ public final class ReaderController {
         evaluate("__reader.setHighlights(\(json))")
     }
 
+    private func reminderAnchor(_ reminder: ResearchReminder) -> (locator: Locator, quote: String) {
+        if let id = reminder.annotationID,
+           let annotation = annotations.first(where: { $0.id == id && !$0.isOrphaned }) {
+            return (annotation.locator, annotation.text)
+        }
+        return (reminder.locator, reminder.quotedText)
+    }
+
+    private func pushReminders() {
+        if pdfView != nil {
+            pushPDFReminders()
+            return
+        }
+        guard webView != nil, !isLoading else { return }
+        let payloads: [[String: Any]] = reminders.filter { !$0.isCompleted }.compactMap { reminder in
+            let anchor = reminderAnchor(reminder)
+            guard anchor.locator.kind == .epub, anchor.locator.spineIndex == spineIndex else { return nil }
+            var value: [String: Any] = [
+                "id": reminder.id.uuidString, "title": reminder.title,
+                "text": anchor.quote, "source": reminder.source.rawValue,
+                "start": ["elementPath": anchor.locator.start.elementPath, "offset": anchor.locator.start.offset],
+            ]
+            if let end = anchor.locator.end {
+                value["end"] = ["elementPath": end.elementPath, "offset": end.offset]
+            }
+            return value
+        }
+        guard let data = try? JSONSerialization.data(withJSONObject: payloads),
+              let encoded = String(data: data, encoding: .utf8) else { return }
+        evaluate("__reader.setReminders(\(encoded))")
+    }
+
     // MARK: - Settings
 
     private func applySettings() {
@@ -632,7 +697,26 @@ public final class ReaderController {
             center.addObserver(forName: .PDFViewAnnotationHit, object: view, queue: .main) { [weak self] note in
                 self?.handlePDFAnnotationHit(note)
             },
+            center.addObserver(forName: .PDFViewScaleChanged, object: view, queue: .main) { [weak self] _ in
+                self?.pushPDFReminders()
+            },
+            center.addObserver(forName: .PDFViewVisiblePagesChanged, object: view, queue: .main) { [weak self] _ in
+                self?.pushPDFReminders()
+            },
         ]
+        #if os(macOS)
+        view.postsFrameChangedNotifications = true
+        pdfObserverTokens.append(center.addObserver(forName: NSView.frameDidChangeNotification, object: view, queue: .main) { [weak self] _ in
+            self?.pushPDFReminders()
+        })
+        // The PDF's clip view can be recreated when display mode changes.
+        // Observe its bounds without retaining an obsolete scroll view.
+        pdfObserverTokens.append(center.addObserver(forName: NSView.boundsDidChangeNotification, object: nil, queue: .main) { [weak self, weak view] note in
+            guard let view, let clip = note.object as? NSClipView, clip.isDescendant(of: view) else { return }
+            self?.pushPDFReminders()
+        })
+        view.documentView?.enclosingScrollView?.contentView.postsBoundsChangedNotifications = true
+        #endif
     }
 
     private func startPDF(at locator: Locator?) {
@@ -641,6 +725,7 @@ public final class ReaderController {
         goToPDFPage(locator?.spineIndex ?? 0)
         pushPDFHighlights()
         pushPDFReadingMarker()
+        pushPDFReminders()
         isLoading = false
     }
 
@@ -656,6 +741,7 @@ public final class ReaderController {
             goToPDFPage(index, report: false)
         }
         updatePDFVisibleRange()
+        pushPDFReminders()
     }
 
     private func currentPDFPageIndex() -> Int {
@@ -701,6 +787,7 @@ public final class ReaderController {
         pageCount = max(1, pdfBook.pageCount)
         chapterTitle = pdfBook.sectionTitle(forPageIndex: index)
         progress = pageCount <= 1 ? 0 : Double(index) / Double(pageCount - 1)
+        pushPDFReminders()
         onPositionChanged?(.pdfPage(index, totalProgression: progress))
     }
 
@@ -726,6 +813,7 @@ public final class ReaderController {
               let view = pdfView, let window = view.window, event.window === window,
               let content = window.contentView,
               let hit = content.hitTest(content.convert(event.locationInWindow, from: nil)),
+              !(hit is ResearchReminderPDFButton),
               hit === view || hit.isDescendant(of: view)
         else {
             pendingPDFLineStartClick = nil
@@ -893,6 +981,66 @@ public final class ReaderController {
         pdfReadingMarkerAnnotation = annotation
     }
 
+    private func pushPDFReminders() {
+        #if os(macOS)
+        isReminderBadgeFocused = false
+        pdfReminderButtons.values.forEach { $0.removeFromSuperview() }
+        pdfReminderButtons.removeAll()
+        guard let pdfBook, let view = pdfView, !view.bounds.isEmpty else { return }
+        let visible = Set(view.visiblePages.map { pdfBook.document.index(for: $0) })
+        var occupied: [CGRect] = []
+        let open = reminders.filter { !$0.isCompleted }.sorted {
+            $0.createdAt == $1.createdAt ? $0.id.uuidString < $1.id.uuidString : $0.createdAt < $1.createdAt
+        }
+        for reminder in open {
+            let anchor = reminderAnchor(reminder)
+            guard anchor.locator.kind == .pdf else { continue }
+            let locator: Locator
+            if reminder.source == .page, anchor.locator.pdfRanges?.isEmpty != false {
+                locator = anchor.locator
+            } else {
+                guard let resolved = resolvePDFLocator(anchor.locator, quote: anchor.quote).locator else { continue }
+                locator = resolved
+            }
+            let last = locator.pdfRanges?.last
+            let index = last?.pageIndex ?? locator.spineIndex
+            guard visible.contains(index), let page = pdfBook.document.page(at: index) else { continue }
+            let pageRect = view.convert(page.bounds(for: view.displayBox), from: page)
+            guard pageRect.width >= 28, pageRect.height >= 28 else { continue }
+            let size: CGFloat = 22
+            var frame: CGRect
+            if let last,
+               let selection = page.selection(for: NSRange(location: last.location, length: last.length)),
+               let line = selection.selectionsByLine().last {
+                let rect = view.convert(line.bounds(for: page), from: page)
+                guard !rect.isEmpty else { continue }
+                frame = CGRect(x: rect.maxX + 6, y: rect.midY - size / 2, width: size, height: size)
+            } else if reminder.source == .page {
+                frame = CGRect(x: pageRect.maxX - size - 12,
+                               y: view.isFlipped ? pageRect.minY + 12 : pageRect.maxY - size - 12,
+                               width: size, height: size)
+            } else { continue }
+            frame.origin.x = min(max(pageRect.minX + 3, frame.minX), pageRect.maxX - size - 3)
+            frame.origin.y = min(max(pageRect.minY + 3, frame.minY), pageRect.maxY - size - 3)
+            for _ in 0..<open.count where occupied.contains(where: { $0.insetBy(dx: -2, dy: -2).intersects(frame) }) {
+                frame.origin.y += view.isFlipped ? size + 4 : -(size + 4)
+            }
+            guard pageRect.contains(frame), view.visibleRect.intersects(frame) else { continue }
+            let button = ResearchReminderPDFButton(reminder: reminder)
+            button.frame = frame
+            button.onPress = { [weak self, weak view, weak button] in
+                guard let self, let view, let button,
+                      self.reminders.contains(where: { $0.id == reminder.id && !$0.isCompleted }) else { return }
+                self.onReminderActivated?(reminder.id, self.pdfOverlayRect(button.frame, in: view))
+            }
+            button.onFocusChange = { [weak self] in self?.isReminderBadgeFocused = $0 }
+            view.addSubview(button)
+            pdfReminderButtons[reminder.id] = button
+            occupied.append(frame)
+        }
+        #endif
+    }
+
     private func updatePDFVisibleRange() {
         guard let pdfBook, let view = pdfView else { return }
         let visible = view.visiblePages.compactMap { page -> Int? in
@@ -988,7 +1136,14 @@ public final class ReaderController {
             let status: AnchorStatus = result.repaired ? .repaired : .resolved
             resolutions.append(AnchorResolution(id: annotation.id, status: status, locator: result.repaired ? locator : nil))
         }
-        if !resolutions.isEmpty { onAnchorsResolved?(resolutions) }
+        if !resolutions.isEmpty {
+            for resolution in resolutions {
+                guard let index = annotations.firstIndex(where: { $0.id == resolution.id }) else { continue }
+                annotations[index].anchorStatus = resolution.status
+                if let locator = resolution.locator { annotations[index].locator = locator }
+            }
+            onAnchorsResolved?(resolutions)
+        }
     }
 
     private func resolvePDFLocator(_ locator: Locator, quote: String) -> (locator: Locator?, repaired: Bool) {
@@ -1087,6 +1242,12 @@ public final class ReaderController {
             handleReadingMarkerPlaced(body)
         case "highlightTapped":
             handleHighlightTapped(body)
+        case "reminderTapped":
+            handleReminderTapped(body)
+        case "reminderFocusChanged":
+            if book != nil, webView != nil, !isLoading {
+                isReminderBadgeFocused = body["focused"] as? Bool ?? false
+            }
         case "highlightsResolved":
             handleHighlightsResolved(body)
         case "link":
@@ -1138,6 +1299,7 @@ public final class ReaderController {
         // first page would never emit a position or update progress.
         evaluate("__reader.notifyState()")
         isLoading = false
+        pushReminders()
     }
 
     private func handlePageChanged(_ body: [String: Any]) {
@@ -1198,6 +1360,12 @@ public final class ReaderController {
         onHighlightActivated?(id, decodeRect(body["rect"] as? [String: Any]))
     }
 
+    private func handleReminderTapped(_ body: [String: Any]) {
+        guard let raw = body["id"] as? String, let id = UUID(uuidString: raw),
+              reminders.contains(where: { $0.id == id && !$0.isCompleted }) else { return }
+        onReminderActivated?(id, decodeRect(body["rect"] as? [String: Any]))
+    }
+
     private func handleHighlightsResolved(_ body: [String: Any]) {
         guard let rawResults = body["results"] as? [[String: Any]] else { return }
 
@@ -1234,6 +1402,7 @@ public final class ReaderController {
                 }
             }
             onAnchorsResolved?(resolutions)
+            pushReminders()
         }
     }
 
@@ -1382,7 +1551,7 @@ public final class ReaderController {
         return jsonString(object) ?? "{}"
     }
 
-    private func jsonString(_ object: [String: Any]) -> String? {
+    private func jsonString(_ object: Any) -> String? {
         guard let data = try? JSONSerialization.data(withJSONObject: object) else { return nil }
         return String(data: data, encoding: .utf8)
     }
@@ -1480,6 +1649,43 @@ private final class ReadingMarkerPDFAnnotation: PDFAnnotation {
 }
 
 #if os(macOS)
+/// Accessible controls stay outside the PDF document and never enter exports.
+private final class ResearchReminderPDFButton: NSButton {
+    var onPress: (() -> Void)?
+    var onFocusChange: ((Bool) -> Void)?
+
+    init(reminder: ResearchReminder) {
+        super.init(frame: .zero)
+        identifier = NSUserInterfaceItemIdentifier(ReaderKeyTarget.researchReminderIdentifierPrefix + reminder.id.uuidString)
+        image = NSImage(systemSymbolName: "magnifyingglass", accessibilityDescription: nil)
+        imagePosition = .imageOnly
+        imageScaling = .scaleProportionallyDown
+        isBordered = false
+        contentTintColor = .secondaryLabelColor
+        toolTip = reminder.title
+        setAccessibilityLabel("Research reminder: " + reminder.title)
+        target = self
+        action = #selector(activate)
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    override var acceptsFirstResponder: Bool { true }
+
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted { onFocusChange?(true) }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let accepted = super.resignFirstResponder()
+        if accepted { onFocusChange?(false) }
+        return accepted
+    }
+
+    @objc private func activate() { onPress?() }
+}
+
 private extension HighlightColor {
     var nsColor: NSColor {
         switch self {

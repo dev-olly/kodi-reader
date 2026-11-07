@@ -13,13 +13,23 @@ const EVENT_NAMES = {
   app_active: 'App opened', reading_started: 'Reader engagement started', reading_heartbeat: 'Reader engagement',
   page_turned: 'Page turns', book_imported: 'Book imports', highlight_created: 'Highlights',
   note_created: 'New notes', note_edit_session: 'Note editing sessions', sketch_created: 'New drawings', sketch_edit_session: 'Drawing editing sessions', note_saved: 'Legacy note autosaves', sketch_saved: 'Legacy drawing autosaves', web_opened: 'Web reader opens',
+  reminder_created: 'Reminders created', reminder_updated: 'Reminders edited', reminder_completed: 'Reminders completed', reminder_reopened: 'Reminders reopened', reminder_deleted: 'Reminders deleted', reminder_restored: 'Reminders restored', reminder_opened: 'Reminder sources opened',
+  sketch_opened: 'Drawings opened', sketch_deleted: 'Drawings deleted',
+  audio_recording_started: 'Recordings started', audio_recording_saved: 'Recordings saved', audio_recording_discarded: 'Recordings discarded', audio_recording_paused: 'Recording pauses', audio_recording_resumed: 'Recording resumes', audio_recording_failed: 'Recording errors', audio_recording_heartbeat: 'Active recording intervals',
+  tts_listening_started: 'Read-aloud sessions started', tts_listening_paused: 'Read-aloud pauses', tts_listening_resumed: 'Read-aloud resumes', tts_listening_stopped: 'Read-aloud sessions stopped', tts_listening_completed: 'Read-aloud sessions completed', tts_listening_failed: 'Read-aloud errors', tts_listening_heartbeat: 'Read-aloud playback intervals',
   account_created: 'Account registered', ai_request_charged: 'AI requests charged', ai_request_released: 'AI requests refunded', new_accounts: 'New registrations', new_account: 'New registration', ai_requests: 'AI requests', ai_request_reserved: 'AI requests reserved', ai_charged: 'Charged AI requests', ai_released: 'Refunded AI requests', ai_request_started: 'AI requests started', ai_request_completed: 'AI requests completed', ai_request_failed: 'AI requests failed', ai_request_cancelled: 'AI requests stopped',
 };
 const FEATURE_NAMES = ['book_imported', 'page_turned', 'highlight_created', 'note_created', 'note_edit_session', 'sketch_created', 'sketch_edit_session', 'web_opened'];
 const SEMANTIC_FEATURES = new Set(['note_created', 'note_edit_session', 'sketch_created', 'sketch_edit_session']);
 const LEGACY_FEATURES = ['note_saved', 'sketch_saved'];
+const FEATURE_USAGE_GROUPS = {
+  reminders: { title: 'Reminders', primary: 'created', caption: 'reminders created', overview: ['devices', 'completed', 'opened'], metrics: { devices: 'Devices', created: 'Created', updated: 'Edited', completed: 'Completed', reopened: 'Reopened', deleted: 'Deleted', restored: 'Restored', opened: 'Sources opened' } },
+  sketching: { title: 'Drawing', primary: 'created', caption: 'drawings created', overview: ['devices', 'edit_sessions', 'opened'], metrics: { devices: 'Devices', created: 'Created', edit_sessions: 'Editing sessions', opened: 'Opened', deleted: 'Deleted' } },
+  recording: { title: 'Audio recording', primary: 'seconds', caption: 'active recording time', overview: ['devices', 'saved', 'started'], metrics: { devices: 'Devices', started: 'Started', saved: 'Saved', discarded: 'Discarded', paused: 'Pauses', resumed: 'Resumes', failed: 'Errors', seconds: 'Active seconds' } },
+  listening: { title: 'Read aloud', primary: 'seconds', caption: 'playback time', overview: ['devices', 'started', 'completed'], metrics: { devices: 'Devices', started: 'Started', paused: 'Pauses', resumed: 'Resumes', stopped: 'Stopped', completed: 'Completed', failed: 'Errors', seconds: 'Playback seconds' } },
+};
 const countryNames = typeof Intl.DisplayNames === 'function' ? new Intl.DisplayNames(undefined, { type: 'region' }) : null;
-const state = { token: '', days: 30, data: null, controller: null, request: 0, loading: false, lastAttempt: 0, error: false, timer: null, snapshotMode: false, chartSource: 'device', series: new Set(DEVICE_SERIES) };
+const state = { authenticated: false, email: '', checkingSession: false, signingOut: false, logoutFailed: false, authController: null, authRequest: 0, days: 30, data: null, controller: null, request: 0, loading: false, lastAttempt: 0, error: false, timer: null, snapshotMode: false, chartSource: 'device', series: new Set(DEVICE_SERIES) };
 
 function setText(id, value) { $(id).textContent = value; }
 function count(value) { return number.format(value); }
@@ -73,17 +83,24 @@ function svgElement(type, attrs = {}, text) {
 }
 function setAccessVisible(visible) {
   $('access-panel').hidden = !visible;
-  $('sign-out').hidden = !state.token;
-  $('mobile-lock').hidden = !state.token;
+  updateAuthControls();
+}
+function updateAuthControls() {
+  const busy = state.checkingSession || state.signingOut;
+  $('google-sign-in').setAttribute('aria-disabled', String(busy));
+  for (const id of ['sign-out', 'mobile-sign-out']) {
+    $(id).hidden = !state.authenticated && !state.signingOut && !state.logoutFailed;
+    $(id).disabled = state.signingOut;
+  }
+  $('session-account').hidden = !state.authenticated || !state.email;
+  $('session-account').textContent = state.email;
+  $('session-account').title = state.email;
 }
 function setLoading(loading) {
   state.loading = loading;
   document.body.classList.toggle('is-loading', loading);
-  $('refresh').disabled = loading || (!state.token && !state.snapshotMode);
+  $('refresh').disabled = loading || (!state.authenticated && !state.snapshotMode);
   $('refresh').dataset.loading = String(loading);
-  $('unlock').disabled = loading;
-  $('unlock').firstChild.textContent = loading ? 'Connecting ' : 'Unlock ';
-  $('admin-token').disabled = loading;
   $('export').disabled = loading || !state.data;
   $('main').setAttribute('aria-busy', String(loading));
 }
@@ -100,12 +117,14 @@ function resetValues() {
     $(`change-${key}`).removeAttribute('title');
   }
   setText('date-range', `Last ${state.days} days · UTC`);
-  setText('updated-at', state.token ? 'Waiting for analytics' : 'Connect to view usage');
+  setText('updated-at', state.authenticated ? 'Waiting for analytics' : 'Sign in to view usage');
   setText('adoption-note', 'Share of active devices that used AI.');
   setText('ai-device-note', 'Across devices that asked Kodi AI for help.');
   setText('ai-success', '— outcomes');
   setText('chart-total', '—');
   setText('footer-status', 'PRIVATE · KODI READER');
+  setText('reading-coverage', '');
+  $('reading-coverage').hidden = true;
   $('adoption-bar').style.width = '0%';
   $('adoption-track').setAttribute('aria-label', 'AI adoption unavailable');
   $('ai-completed-bar').style.width = '0%';
@@ -113,18 +132,21 @@ function resetValues() {
   $('ai-cancelled-bar').style.width = '0%';
   $('ai-unknown-bar').style.width = '0%';
   $('outcome-track').setAttribute('aria-label', 'AI request outcomes unavailable');
-  sectionEmpty($('feature-list'), 'Unlock the dashboard to see feature activity.');
+  sectionEmpty($('feature-list'), 'Sign in to see feature activity.');
   sectionEmpty($('version-list'), 'Version distribution appears with app activity.');
-  sectionEmpty($('country-list'), 'Unlock the dashboard to see country totals.');
+  sectionEmpty($('country-list'), 'Sign in to see country totals.');
+  renderFeatureUsage();
   $('legacy-features').hidden = true;
   setText('history-ledger', '');
   emptyTable($('recent-table'), 3, 'Activity appears as events reach the server.');
-  emptyTable($('daily-table'), 6, 'Unlock to view daily data.');
+  emptyTable($('daily-table'), 6, 'Sign in to view daily data.');
   renderChart();
   $('export').disabled = true;
 }
-function lock({ message = '', focus = true } = {}) {
-  state.token = '';
+function clearDashboard({ message = '', focus = true } = {}) {
+  state.authenticated = false;
+  state.email = '';
+  state.logoutFailed = false;
   state.snapshotMode = false;
   state.data = null;
   state.error = false;
@@ -133,13 +155,89 @@ function lock({ message = '', focus = true } = {}) {
   state.controller = null;
   clearInterval(state.timer);
   state.timer = null;
-  $('admin-token').value = '';
   setLoading(false);
   resetValues();
   setAccessVisible(true);
   status('Private dashboard', 'locked');
   notice(message, message ? 'error' : '');
-  if (focus) $('admin-token').focus();
+  if (focus) $('google-sign-in').focus();
+}
+function authErrorMessage(code) {
+  if (code === 'access_denied') return 'This Google account does not have access to analytics. Sign in with the dashboard owner’s account.';
+  if (code === 'not_configured') return 'Google sign-in is not available yet. Please try again later.';
+  if (code === 'session_expired') return 'Your session has expired. Sign in with Google again to continue.';
+  return 'Google sign-in could not be completed. Please try again.';
+}
+function callbackMessage() {
+  const url = new URL(location.href);
+  if (!url.searchParams.has('auth_error')) return '';
+  const message = authErrorMessage(url.searchParams.get('auth_error'));
+  url.searchParams.delete('auth_error');
+  history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+  return message;
+}
+async function restoreSession({ message = '' } = {}) {
+  state.authController?.abort();
+  const controller = new AbortController();
+  state.authController = controller;
+  const request = ++state.authRequest;
+  state.checkingSession = true;
+  updateAuthControls();
+  status('Checking sign-in', 'loading');
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch('/api/analytics/auth/session', { credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal, referrerPolicy: 'no-referrer' });
+    if (request !== state.authRequest) return;
+    if (response.status === 401 || response.status === 403) { clearDashboard({ message: message || (response.status === 403 ? authErrorMessage('access_denied') : ''), focus: false }); return; }
+    if (!response.ok) throw new Error('session_unavailable');
+    const session = await response.json();
+    if (request !== state.authRequest) return;
+    if (typeof session?.authenticated !== 'boolean') throw new Error('invalid_session');
+    if (!session.authenticated) { clearDashboard({ message, focus: false }); return; }
+    state.authenticated = true;
+    state.email = typeof session.email === 'string' ? session.email : '';
+    state.checkingSession = false;
+    setAccessVisible(false);
+    await load();
+  } catch {
+    if (request !== state.authRequest) return;
+    clearDashboard({ message: message || 'Could not check your sign-in. You can sign in with Google to try again.', focus: false });
+  } finally {
+    clearTimeout(timeout);
+    if (request === state.authRequest) {
+      state.authController = null;
+      state.checkingSession = false;
+      updateAuthControls();
+    }
+  }
+}
+async function signOut() {
+  if (state.signingOut) return;
+  state.authRequest += 1;
+  state.authController?.abort();
+  state.authController = null;
+  state.checkingSession = false;
+  state.signingOut = true;
+  clearDashboard({ focus: false });
+  status('Signing out', 'loading');
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 15000);
+  try {
+    const response = await fetch('/api/analytics/auth/logout', { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' }, cache: 'no-store', signal: controller.signal, referrerPolicy: 'no-referrer' });
+    if (!response.ok) throw new Error('logout_failed');
+    notice('You are signed out.');
+    status('Private dashboard', 'locked');
+  } catch {
+    state.logoutFailed = true;
+    notice('Could not finish signing out. Your analytics are hidden. Try signing out again.', 'error');
+    status('Sign-out incomplete', 'error');
+    return;
+  } finally {
+    clearTimeout(timeout);
+    state.signingOut = false;
+    updateAuthControls();
+  }
+  $('google-sign-in').focus();
 }
 function validateData(input, requestedDays) {
   if (!input || input.days !== requestedDays || !input.summary || !Array.isArray(input.daily) || !Array.isArray(input.features) || !Array.isArray(input.versions) || !Array.isArray(input.recent) || !Number.isFinite(date(input.generated_at || '').getTime())) throw new Error('invalid_data');
@@ -162,6 +260,19 @@ function validateData(input, requestedDays) {
   }
   if (input.coverage) {
     if (!['first_event_at', 'last_received_at'].every(key => input.coverage[key] === null || (typeof input.coverage[key] === 'string' && Number.isFinite(date(input.coverage[key]).getTime()))) || !nonnegative(input.coverage.instrumented_devices) || !nonnegative(input.coverage.legacy_devices) || typeof input.coverage.semantic_features_available !== 'boolean') throw new Error('invalid_data');
+    if (input.coverage.feature_usage_available !== undefined && typeof input.coverage.feature_usage_available !== 'boolean') throw new Error('invalid_data');
+    if (input.coverage.feature_usage_previous_available !== undefined && typeof input.coverage.feature_usage_previous_available !== 'boolean') throw new Error('invalid_data');
+    for (const key of ['feature_usage_devices', 'feature_usage_legacy_devices']) if (input.coverage[key] !== undefined && !nonnegative(input.coverage[key])) throw new Error('invalid_data');
+  }
+  if (input.feature_usage !== undefined) {
+    if (!input.feature_usage || typeof input.feature_usage !== 'object' || Array.isArray(input.feature_usage)) throw new Error('invalid_data');
+    for (const [key, definition] of Object.entries(FEATURE_USAGE_GROUPS)) {
+      const group = input.feature_usage[key];
+      if (group === undefined) continue;
+      if (!group || typeof group.available !== 'boolean') throw new Error('invalid_data');
+      if (group.previous_available !== undefined && typeof group.previous_available !== 'boolean') throw new Error('invalid_data');
+      for (const metric of Object.keys(definition.metrics)) if (!nonnegative(group[metric]?.value) || !nonnegative(group[metric]?.previous)) throw new Error('invalid_data');
+    }
   }
   if (input.countries !== undefined) {
     if (!Array.isArray(input.countries) || input.countries.length > 260) throw new Error('invalid_data');
@@ -184,20 +295,19 @@ function validateData(input, requestedDays) {
   return input;
 }
 function failureMessage(code, statusCode) {
-  if (code === 'not_configured') return 'Analytics is not configured on the server yet. Set ANALYTICS_ADMIN_TOKEN and the analytics database connection, then refresh.';
+  if (code === 'not_configured') return 'Analytics is not available on the server yet. Please try again later.';
   if (code === 'storage_unavailable') return 'The analytics database is unavailable. Check the server configuration and try again.';
   if (statusCode === 429) return 'The server is receiving too many requests. Please wait a moment and refresh.';
   if (statusCode === 404) return 'The analytics endpoint is unavailable. Deploy the analytics API with this dashboard, then refresh.';
   return 'Could not load analytics. Check your connection and the analytics server, then refresh.';
 }
 async function load({ snapshot = state.snapshotMode, bootstrap = false } = {}) {
-  if ((!state.token && !snapshot) || (snapshot && !LOCAL_HOST)) return;
+  if ((!state.authenticated && !snapshot) || (snapshot && !LOCAL_HOST)) return false;
   state.controller?.abort();
   const controller = new AbortController();
   state.controller = controller;
   const request = ++state.request;
   const requestedDays = state.days;
-  const token = state.token;
   state.lastAttempt = Date.now();
   state.error = false;
   setLoading(true);
@@ -208,13 +318,12 @@ async function load({ snapshot = state.snapshotMode, bootstrap = false } = {}) {
   controller.signal.addEventListener('abort', () => { timedOut = true; }, { once: true });
   try {
     const endpoint = snapshot ? 'local-snapshot' : 'dashboard';
-    const headers = { Accept: 'application/json', ...(!snapshot ? { Authorization: `Bearer ${token}` } : {}) };
-    const response = await fetch(`/api/analytics/${endpoint}?days=${requestedDays}`, { method: 'GET', headers, credentials: 'omit', cache: 'no-store', signal: controller.signal, referrerPolicy: 'no-referrer' });
+    const response = await fetch(`/api/analytics/${endpoint}?days=${requestedDays}`, { method: 'GET', headers: { Accept: 'application/json' }, credentials: 'same-origin', cache: 'no-store', signal: controller.signal, referrerPolicy: 'no-referrer' });
     if (request !== state.request) return;
-    if (bootstrap && !response.ok) { status('Private dashboard', 'locked'); setAccessVisible(true); return; }
+    if (bootstrap && !response.ok) { status('Private dashboard', 'locked'); setAccessVisible(true); return false; }
     if (!snapshot && (response.status === 401 || response.status === 403)) {
-      lock({ message: 'That admin token was not accepted. Enter the configured token to unlock the dashboard.' });
-      return;
+      clearDashboard({ message: authErrorMessage(response.status === 403 ? 'access_denied' : 'session_expired') });
+      return false;
     }
     let payload;
     try { payload = await response.json(); } catch { throw new Error(response.ok ? 'invalid_data' : 'server_error'); }
@@ -233,15 +342,16 @@ async function load({ snapshot = state.snapshotMode, bootstrap = false } = {}) {
     status(snapshot ? 'Database snapshot' : 'Connected · auto-refresh', snapshot ? 'snapshot' : 'live');
     if (!snapshot && data.summary.active_users.value === 0) notice(hasTelemetry() ? 'No device activity was recorded in this period. The recorded totals are zero.' : 'App telemetry has not started yet. Reader engagement and feature usage will appear as analytics-enabled Kodi apps send activity.');
     if (!snapshot && !state.timer) state.timer = setInterval(() => { if (!document.hidden && !state.loading && Date.now() - state.lastAttempt >= 60000) load(); }, 15000);
+    return true;
   } catch (error) {
     if (request !== state.request) return;
     state.error = true;
-    if (bootstrap) { status('Private dashboard', 'locked'); setAccessVisible(true); return; }
+    if (bootstrap) { status('Private dashboard', 'locked'); setAccessVisible(true); return false; }
     const message = error.message === 'invalid_data' ? 'The server returned an unexpected analytics response. Check that the dashboard and API versions match.' : error.publicMessage ? error.message : timedOut ? 'The analytics request timed out. Check the server and refresh to try again.' : failureMessage();
     const hasStaleData = Boolean(state.data);
     notice(`${message}${hasStaleData ? ' Showing the last successfully loaded data below.' : ''}`, hasStaleData ? 'stale' : 'error');
     status(hasStaleData ? 'Last data · refresh failed' : 'Unable to connect', 'error');
-    if (!hasStaleData && !snapshot) setAccessVisible(true);
+    return false;
   } finally {
     clearTimeout(timeout);
     if (request === state.request) { state.controller = null; setLoading(false); }
@@ -339,6 +449,7 @@ function render() {
   const server = historicalLead() ? data.server_metrics : null;
   const measured = hasTelemetry();
   const coverage = data.coverage;
+  $('reading-coverage').hidden = state.snapshotMode || !measured;
   for (const node of document.querySelectorAll('.is-unmeasured')) node.classList.remove('is-unmeasured');
   configureSourceLayout();
   metric('active', summary.active_users);
@@ -389,12 +500,14 @@ function render() {
   } else {
     const detail = coverage ? `${count(coverage.instrumented_devices)} version-2 devices and ${count(coverage.legacy_devices)} legacy devices in this period.` : 'This response uses legacy event definitions.';
     setText('telemetry-note', `Pseudonymous app events measure reader engagement and feature usage separately from account records. ${detail}`);
+    setText('reading-coverage', `Version coverage: ${detail}`);
     if (coverage?.legacy_devices > 0 || !coverage) setText('change-time', 'Includes legacy reader timing; see version coverage');
     setText('feature-tag', coverage?.semantic_features_available ? 'MEANINGFUL ACTIONS' : 'PARTIAL COVERAGE');
     renderFeatures();
     renderVersions();
   }
   renderCountries();
+  renderFeatureUsage();
   renderRecent();
   renderDaily();
   renderChart();
@@ -451,6 +564,93 @@ function renderFeatures() {
   $('legacy-feature-list').replaceChildren();
   if (!$('legacy-features').hidden) appendFeatureRows($('legacy-feature-list'), legacy);
   setText('feature-note', semantic ? `Notes and drawings count new items and meaningful editing sessions. Repeated autosaves, restored data, empty drafts, and failed saves are excluded.${state.data.coverage.legacy_devices > 0 ? ' Partial coverage: legacy devices do not report these new measurements.' : ''}` : 'New note and drawing metrics have not been measured by version-2 devices in this period. General feature events and any legacy autosave counts are shown separately.');
+}
+function featureUsageMetrics(groupName) {
+  const metrics = Object.fromEntries(Object.keys(FEATURE_USAGE_GROUPS[groupName].metrics).map(key => [key, { value: null, previous: null }]));
+  const source = state.data?.feature_usage?.[groupName];
+  if (source) {
+    for (const key of Object.keys(metrics)) metrics[key] = {
+      value: source.available ? source[key].value : null,
+      previous: source.previous_available === true ? source[key].previous : null,
+    };
+  }
+  if (groupName === 'sketching') {
+    if (!source && state.data?.coverage?.semantic_features_available) {
+      for (const [key, event] of Object.entries({ created: 'sketch_created', edit_sessions: 'sketch_edit_session' })) {
+        metrics[key] = { value: state.data.features.find(item => item.name === event)?.count ?? 0, previous: null };
+      }
+    }
+    for (const key of ['opened', 'deleted']) metrics[key] = {
+      value: state.data?.coverage?.feature_usage_available ? metrics[key].value : null,
+      previous: state.data?.coverage?.feature_usage_previous_available ? metrics[key].previous : null,
+    };
+  }
+  return metrics;
+}
+function featureUsageValue(value, { seconds = false } = {}) {
+  return value === null ? state.data ? 'Not measured yet' : '—' : seconds ? duration(value) : count(value);
+}
+function renderFeatureUsage() {
+  const container = $('feature-usage-cards');
+  const expanded = new Set(state.data ? [...container.querySelectorAll('details[open]')].map(item => item.dataset.group) : []);
+  container.replaceChildren();
+  for (const [key, definition] of Object.entries(FEATURE_USAGE_GROUPS)) {
+    const metrics = featureUsageMetrics(key);
+    const primary = metrics[definition.primary];
+    const measured = Object.values(metrics).some(item => item.value !== null);
+    const complete = Object.values(metrics).every(item => item.value !== null);
+    const card = document.createElement('article');
+    card.className = 'panel feature-usage-card';
+    const heading = document.createElement('h3');
+    heading.id = `feature-usage-${key}-title`;
+    heading.textContent = definition.title;
+    card.setAttribute('aria-labelledby', heading.id);
+    const header = document.createElement('div'); header.className = 'feature-usage-card-header';
+    const badge = document.createElement('span'); badge.className = 'feature-usage-status';
+    badge.textContent = !state.data ? 'PRIVATE' : !measured ? 'NOT MEASURED YET' : complete ? 'MEASURED' : 'PARTIAL COVERAGE';
+    header.append(heading, badge);
+    const value = document.createElement('p'); value.className = 'feature-usage-primary';
+    value.classList.toggle('is-unmeasured', primary.value === null);
+    value.textContent = featureUsageValue(primary.value, { seconds: definition.primary === 'seconds' });
+    const caption = document.createElement('p'); caption.className = 'feature-usage-caption'; caption.textContent = definition.caption;
+    const comparison = document.createElement('p'); comparison.className = 'feature-usage-comparison';
+    comparison.textContent = primary.previous !== null ? `Previous period: ${featureUsageValue(primary.previous, { seconds: definition.primary === 'seconds' })}` : primary.value === null ? state.data ? 'Awaiting feature measurements.' : 'Sign in to view usage.' : 'Previous period unavailable in this report.';
+    const summary = document.createElement('dl'); summary.className = 'feature-usage-summary';
+    for (const metric of definition.overview) {
+      const row = document.createElement('div');
+      const amount = cell(featureUsageValue(metrics[metric].value), 'dd');
+      if (metrics[metric].value === null) amount.className = 'feature-usage-unavailable';
+      row.append(cell(definition.metrics[metric], 'dt'), amount);
+      summary.append(row);
+    }
+    const details = document.createElement('details'); details.className = 'feature-usage-details'; details.dataset.group = key; details.open = expanded.has(key);
+    const toggle = document.createElement('summary'); toggle.textContent = 'View all measurements';
+    const scroll = document.createElement('div'); scroll.className = 'table-scroll';
+    const table = document.createElement('table'); table.className = 'feature-usage-table';
+    const tableCaption = document.createElement('caption'); tableCaption.className = 'sr-only'; tableCaption.textContent = `${definition.title} measurements for this and the previous period`;
+    const head = document.createElement('thead'); const headerRow = document.createElement('tr');
+    for (const label of ['Measurement', 'This period', 'Previous']) { const item = cell(label, 'th'); item.scope = 'col'; headerRow.append(item); }
+    head.append(headerRow);
+    const body = document.createElement('tbody');
+    for (const [metric, label] of Object.entries(definition.metrics)) {
+      const row = document.createElement('tr'); const name = cell(label, 'th'); name.scope = 'row';
+      row.append(name, cell(featureUsageValue(metrics[metric].value)), cell(metrics[metric].previous === null && metrics[metric].value !== null ? 'Unavailable' : featureUsageValue(metrics[metric].previous)));
+      body.append(row);
+    }
+    table.append(tableCaption, head, body); scroll.append(table); details.append(toggle, scroll);
+    card.append(header, value, caption, comparison, summary, details); container.append(card);
+  }
+  if (!state.data) { setText('feature-usage-coverage', 'Sign in to see feature activity.'); return; }
+  const coverage = state.data.coverage;
+  const snapshot = state.snapshotMode ? 'Saved snapshot. ' : '';
+  if (coverage?.feature_usage_available) {
+    const measured = coverage.feature_usage_devices;
+    const devices = typeof measured === 'number' ? `${count(measured)} ${measured === 1 ? 'device reports' : 'devices report'} the newer feature measurements.` : 'Updated Kodi apps report these feature measurements.';
+    const partial = coverage.feature_usage_legacy_devices > 0 ? ` ${count(coverage.feature_usage_legacy_devices)} older devices do not report reminder, audio, or drawing open/delete actions.` : '';
+    setText('feature-usage-coverage', `${snapshot}${devices}${partial} Counts describe recorded actions; they do not measure completed research or drawing time.`);
+  } else {
+    setText('feature-usage-coverage', `${snapshot}${coverage?.semantic_features_available ? 'Drawing creation and editing sessions are measured. Reminder, recording, read-aloud, and drawing open/delete measurements have not started in this period.' : 'Not measured yet. Feature counts appear when analytics-enabled Kodi apps send the corresponding activity.'} Missing measurements are not zero.`);
+  }
 }
 function renderCountries() {
   const container = $('country-list');
@@ -550,7 +750,7 @@ function renderChart() {
   const chartWidth = Math.max(280, $('chart-stage').clientWidth);
   svg.setAttribute('viewBox', `0 0 ${chartWidth} 244`);
   const title = svgElement('title', { id: 'chart-title' }, 'Daily app usage');
-  const description = svgElement('desc', { id: 'chart-description' }, state.data ? historicalLead() ? `New registrations, reserved AI requests, and distinct AI accounts per UTC day for the last ${state.days} days. Full values are available in the daily data table below.` : `Distinct active, reader, and AI devices each UTC day for the last ${state.days} days. Full values are available in the daily data table below.` : 'Unlock the dashboard to see daily active, reading, and AI devices.');
+  const description = svgElement('desc', { id: 'chart-description' }, state.data ? historicalLead() ? `New registrations, reserved AI requests, and distinct AI accounts per UTC day for the last ${state.days} days. Full values are available in the daily data table below.` : `Distinct active, reader, and AI devices each UTC day for the last ${state.days} days. Full values are available in the daily data table below.` : 'Sign in to see daily active, reading, and AI devices.');
   svg.replaceChildren(title, description);
   $('chart-tooltip').hidden = true;
   const daily = (historicalLead() ? state.data?.server_metrics?.daily : state.data?.daily) || [];
@@ -634,6 +834,15 @@ function exportCsv() {
   for (const [key, label] of Object.entries(summaryNames)) rows.push([label, hasTelemetry() ? data.summary[key].value : '', hasTelemetry() ? data.summary[key].previous : '']);
   if (data.summary.returning_users) rows.push(['Returning devices', hasTelemetry() ? data.summary.returning_users.value : '', hasTelemetry() ? data.summary.returning_users.previous : '']);
   if (data.coverage) { rows.push([], ['Coverage', 'Value']); for (const [key, value] of Object.entries(data.coverage)) rows.push([key, value]); }
+  rows.push([], ['Feature group', 'Measurement', 'Selected period', 'Previous period', 'Measurement status']);
+  for (const [group, definition] of Object.entries(FEATURE_USAGE_GROUPS)) {
+    const metrics = featureUsageMetrics(group);
+    for (const [key, label] of Object.entries(definition.metrics)) {
+      const metric = metrics[key];
+      const status = metric.value === null ? metric.previous === null ? 'Not measured yet' : 'Current period unavailable; previous measured' : metric.previous === null ? 'Measured; previous period unavailable' : 'Measured';
+      rows.push([definition.title, label, metric.value ?? '', metric.previous ?? '', status]);
+    }
+  }
   if (data.ai_outcomes) { rows.push([], ['AI request cohort outcome', 'Count']); for (const [key, value] of Object.entries(data.ai_outcomes)) rows.push([key, hasTelemetry() ? value : '']); }
   rows.push([], ['Connection country (upload origin)', 'Distinct active devices']);
   if (Array.isArray(data.countries)) for (const country of data.countries) rows.push([country.country_code || 'Unknown', country.devices]);
@@ -656,30 +865,23 @@ function exportCsv() {
   link.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-$('access-form').addEventListener('submit', (event) => {
-  event.preventDefault();
-  const token = $('admin-token').value.trim();
-  if (!token) { $('admin-token').focus(); return; }
-  state.token = token;
-  state.snapshotMode = false;
-  state.data = null;
-  $('admin-token').value = '';
-  setAccessVisible(true);
-  load();
+$('google-sign-in').addEventListener('click', (event) => {
+  if (state.checkingSession || state.signingOut) event.preventDefault();
 });
 $('period').addEventListener('change', () => {
   state.days = Number($('period').value);
   state.data = null;
   state.request += 1;
   state.controller?.abort();
+  setLoading(false);
   resetValues();
   notice();
-  if (state.token || state.snapshotMode) load();
+  if (state.authenticated || state.snapshotMode) load();
 });
 $('refresh').addEventListener('click', () => load());
-$('connect-live').addEventListener('click', () => lock());
-$('sign-out').addEventListener('click', () => lock());
-$('mobile-lock').addEventListener('click', () => lock());
+$('connect-live').addEventListener('click', () => { clearDashboard({ focus: false }); restoreSession(); });
+$('sign-out').addEventListener('click', signOut);
+$('mobile-sign-out').addEventListener('click', signOut);
 $('export').addEventListener('click', exportCsv);
 for (const button of document.querySelectorAll('[data-series]')) button.addEventListener('click', () => {
   const key = button.dataset.series;
@@ -699,10 +901,24 @@ if ('IntersectionObserver' in window) {
       if (selected) { for (const link of navLinks) link.removeAttribute('aria-current'); selected.setAttribute('aria-current', 'page'); }
     }
   }, { rootMargin: '-10% 0px -65% 0px', threshold: 0 });
-  for (const id of ['overview', 'reading', 'ai', 'countries', 'features', 'activity']) observer.observe($(id));
+  for (const id of ['overview', 'reading', 'ai', 'countries', 'features', 'feature-usage', 'activity']) observer.observe($(id));
 }
-document.addEventListener('visibilitychange', () => { if (!document.hidden && state.token && !state.loading && Date.now() - state.lastAttempt >= 60000) load(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && state.authenticated && !state.loading && Date.now() - state.lastAttempt >= 60000) load(); });
 window.addEventListener('resize', renderChart);
-window.addEventListener('pagehide', () => lock({ focus: false }));
-resetValues();
-if (LOCAL_HOST) load({ snapshot: true, bootstrap: true });
+window.addEventListener('pagehide', () => {
+  state.authRequest += 1;
+  state.authController?.abort();
+  state.authController = null;
+  state.checkingSession = false;
+  clearDashboard({ focus: false });
+});
+window.addEventListener('pageshow', (event) => { if (event.persisted) initialize(); });
+async function initialize() {
+  const request = state.authRequest;
+  resetValues();
+  const message = callbackMessage();
+  if (LOCAL_HOST && !message && await load({ snapshot: true, bootstrap: true })) return;
+  if (request !== state.authRequest) return;
+  await restoreSession({ message });
+}
+initialize();

@@ -7,6 +7,9 @@ import OSLog
 public final class CloudKitSyncTransport: SyncTransport, CKSyncEngineDelegate {
     public static let containerIdentifier = "iCloud.com.olly.KodiReader"
     public static let libraryZone = "KodiLibraryV1"
+    /// Older readers fetch only their known zones, so new reminder records
+    /// cannot make their library sync fail on an unknown entity kind.
+    public static let reminderZone = "KodiRemindersV1"
     public static let chatZone = "KodiAIHistoryV1"
     public static let assetZone = "KodiAssetsV1"
     public static let engineStateKey = "KodiPrivateV1"
@@ -48,7 +51,7 @@ public final class CloudKitSyncTransport: SyncTransport, CKSyncEngineDelegate {
         self.aiEnabled = aiEnabled
         guard engine == nil else { return }
         let token = epoch
-        for name in [Self.libraryZone] + (aiEnabled ? [Self.chatZone] : []) {
+        for name in [Self.libraryZone, Self.reminderZone] + (aiEnabled ? [Self.chatZone] : []) {
             let id = zoneID(name)
             let previouslyKnown = states["known:\(name)"] != nil || states[name] != nil
                 || (name == Self.libraryZone && states[Self.engineStateKey] != nil)
@@ -90,7 +93,7 @@ public final class CloudKitSyncTransport: SyncTransport, CKSyncEngineDelegate {
         for entity in entities {
             try Task.checkCancellation()
             guard token == epoch else { throw CancellationError() }
-            let name = entity.kind == .chat ? Self.chatZone : Self.libraryZone
+            let name = Self.zoneName(for: entity.kind)
             guard let engine, allowedZone(name) else { continue }
             let id = CKRecord.ID(recordName: entity.id, zoneID: zoneID(name))
             let record = try await makeRecord(entity, id: id, fields: serverFields[entity.id])
@@ -243,7 +246,7 @@ public final class CloudKitSyncTransport: SyncTransport, CKSyncEngineDelegate {
         var confirmed: [SyncEntity] = []
         for entity in tombstones {
             try check(token)
-            let zone = entity.kind == .chat ? Self.chatZone : Self.libraryZone
+            let zone = Self.zoneName(for: entity.kind)
             let id = CKRecord.ID(recordName: entity.id, zoneID: zoneID(zone))
             let result = try await db.records(for: [id], desiredKeys: ["deleted"])
             try check(token)
@@ -253,7 +256,7 @@ public final class CloudKitSyncTransport: SyncTransport, CKSyncEngineDelegate {
         // Delete-everywhere includes history that this Mac has never opted to download.
         // Read identifiers only, and replace those child records with content-free tombstones.
         if !deletedBooks.isEmpty {
-            for zone in [Self.libraryZone, Self.chatZone] {
+            for zone in [Self.libraryZone, Self.reminderZone, Self.chatZone] {
                 let children = try await scan(zone: zone, keys: ["bookID", "kind", "deleted"])
                 try check(token)
                 for child in children {
@@ -377,11 +380,18 @@ public final class CloudKitSyncTransport: SyncTransport, CKSyncEngineDelegate {
     }
 
     private func zoneID(_ name: String) -> CKRecordZone.ID { .init(zoneName: name, ownerName: CKCurrentUserDefaultName) }
-    private var enabledZones: [String] { [Self.libraryZone] + (aiEnabled ? [Self.chatZone] : []) }
+    static func zoneName(for kind: SyncEntityKind) -> String {
+        switch kind {
+        case .chat: chatZone
+        case .reminder: reminderZone
+        default: libraryZone
+        }
+    }
+    private var enabledZones: [String] { [Self.libraryZone, Self.reminderZone] + (aiEnabled ? [Self.chatZone] : []) }
     private func allowedZone(_ name: String) -> Bool { enabledZones.contains(name) }
     private var fetchScope: CKSyncEngine.FetchChangesOptions.Scope { Self.metadataFetchScope(aiEnabled: aiEnabled) }
     static func metadataFetchScope(aiEnabled: Bool, requested: CKSyncEngine.FetchChangesOptions.Scope = .all) -> CKSyncEngine.FetchChangesOptions.Scope {
-        let zones = ([libraryZone] + (aiEnabled ? [chatZone] : [])).map {
+        let zones = ([libraryZone, reminderZone] + (aiEnabled ? [chatZone] : [])).map {
             CKRecordZone.ID(zoneName: $0, ownerName: CKCurrentUserDefaultName)
         }
         return .zoneIDs(zones.filter { requested.contains($0) })

@@ -137,6 +137,52 @@ private final class DriveURLProtocol: URLProtocol {
 
 @MainActor
 final class GoogleDriveSyncTransportTests: XCTestCase {
+    func testReminderRevisionsUsePrefixIgnoredByOlderClientsAndSync() async throws {
+        DriveURLProtocol.files["marker"] = ("kodi-v1-marker", "marker", Data("1".utf8))
+        let task = ResearchReminder(title: "Research sharding", locator: .startOfBook())
+        let entity = SyncEntity(bookID: "book", kind: .reminder, key: task.id.uuidString,
+            body: try SyncCoding.encode(task), deviceID: "mac-a")
+        let first = transport()
+        try await first.configure(aiEnabled: false, states: [:])
+        try await first.fetch()
+        try await first.send([entity], serverFields: [:])
+        let stored = try XCTUnwrap(DriveURLProtocol.files.values.first { $0.type == "reminder" })
+        XCTAssertTrue(stored.name.hasPrefix("kodi-v1-reminder-"))
+        XCTAssertFalse(stored.name.hasPrefix("kodi-v1-entity-"))
+        XCTAssertFalse(stored.name.hasPrefix("kodi-v1-position-"))
+        let second = transport()
+        var received: [SyncEntity] = []
+        second.onEvent = { event in if case .received(let value, _) = event { received.append(value) } }
+        try await second.configure(aiEnabled: false, states: [:])
+        try await second.fetch()
+        XCTAssertEqual(received, [entity])
+    }
+
+    func testUpgradeRescansForRemindersAnOlderCursorSkipped() async throws {
+        DriveURLProtocol.files["marker"] = ("kodi-v1-marker", "marker", Data("1".utf8))
+        let task = ResearchReminder(title: "Previously skipped reminder", locator: .startOfBook())
+        let entity = SyncEntity(bookID: "book", kind: .reminder, key: task.id.uuidString,
+            body: try SyncCoding.encode(task), deviceID: "mac-a")
+        let logicalID = SyncCoding.hash(try SyncCoding.encode(entity))
+        DriveURLProtocol.files["reminder"] = ("kodi-v1-reminder-\(logicalID)", "reminder",
+            try SyncCoding.encode(Envelope(logicalID: logicalID, entity: entity, parents: [], ancestor: nil)))
+        let drive = transport()
+        var received: [SyncEntity] = [], states = ["drive.cursor": Data("old-cursor".utf8)]
+        drive.onEvent = { event in
+            if case .received(let value, _) = event { received.append(value) }
+            if case .state(let key, let value) = event { states[key] = value }
+        }
+        try await drive.configure(aiEnabled: false, states: states)
+        try await drive.fetch()
+        XCTAssertEqual(received, [entity])
+        XCTAssertEqual(DriveURLProtocol.startTokenRequests, 1)
+        XCTAssertEqual(states["drive.remindersV1"], Data([1]))
+        let restarted = transport()
+        try await restarted.configure(aiEnabled: false, states: states)
+        try await restarted.fetch()
+        XCTAssertEqual(DriveURLProtocol.startTokenRequests, 1)
+    }
+
     private struct Envelope: Codable {
         var schema = 1
         var logicalID: String

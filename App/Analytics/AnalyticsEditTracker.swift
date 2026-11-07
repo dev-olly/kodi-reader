@@ -43,8 +43,11 @@ struct AnalyticsEditTracker {
             return session.token
         }
         let token = AnalyticsEditToken(id: UUID(), generation: generation)
+        let wasCreated = sessions.values.contains {
+            $0.kind == kind && $0.itemKey == itemKey && $0.isNew && $0.emitted
+        }
         sessions[token.id] = Session(token: token, kind: kind, itemKey: itemKey,
-                                     isNew: isNew, content: content, lastInteraction: now)
+                                     isNew: isNew && !wasCreated, content: content, lastInteraction: now)
         order.append(token.id)
         active[kind] = token.id
         while order.count > 512 {

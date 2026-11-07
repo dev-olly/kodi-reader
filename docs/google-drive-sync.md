@@ -37,6 +37,20 @@ Kodi Reader's app-data folder from the Google account and re-enable sync
 explicitly afterward. Kodi pauses rather than silently republishing a known
 deleted cloud copy.
 
+## Research reminders
+
+Research reminders sync with either notes mode, including their source passage,
+title, and completion status. Removing a book download keeps its reminders;
+deleting the book everywhere removes them. Deleting a source note keeps the task
+and its saved passage.
+
+Update Kodi on every Mac before using reminders across devices. Older versions
+continue syncing their existing library data but do not show reminders. If an
+older Mac deletes and reimports a book before an updated Mac receives the
+deletion, earlier reminders may reappear.
+
+## Account changes
+
 If you change Google accounts, Kodi pauses sync and requires explicit
 re-enablement before copying this Mac's local library to the new account. It
 does not delete the previous account's data or local files. **Disconnect Google

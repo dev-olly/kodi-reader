@@ -19,18 +19,16 @@ final class AppModel {
     private(set) var reader: ReaderController?
     private(set) var hasReadyReader = false
     private(set) var recents: [BookRecord] = []
-    private(set) var webBrowser: WebBrowserController?
-    private(set) var isSavingWebPage = false
-    var isShowingOpenURLSheet = false
-    var pendingWebURLText = ""
+    private(set) var reminderBooks: [BookRecord] = []
+    var isShowingReminders = false
+    var reminderNoteToOpen: UUID?
+    @ObservationIgnored private var pendingReminderDestination: (bookID: String, reminder: ResearchReminder)?
     var documentToRename: BookRecord?
-
-    var isBrowsing: Bool { webBrowser != nil }
 
     var errorMessage: String?
     var isShowingContents = false
     var aiNoteTarget: AINoteTarget?
-    enum Workspace: String { case closed, notes, askAI }
+    enum Workspace: String { case closed, notes, reminders, askAI }
     private var visibleWorkspace: Workspace = .closed
     @ObservationIgnored private var workspaceTransition = 0
     @ObservationIgnored private var requestedWorkspace: Workspace = .closed
@@ -46,14 +44,18 @@ final class AppModel {
                 guard let self, self.workspaceTransition == transition else { return }
                 self.visibleWorkspace = newValue
             }
-            guard let reader else { commit(); return }
-            if newValue == .closed {
-                reader.endWorkspaceRestore(completion: commit)
-            } else if visibleWorkspace == .closed || previousRequest == .closed {
-                reader.beginWorkspaceRestore(completion: commit)
-            } else {
-                commit()
+            let navigate = { [weak self] in
+                guard let self, self.workspaceTransition == transition else { return }
+                guard let reader = self.reader else { commit(); return }
+                if newValue == .closed {
+                    reader.endWorkspaceRestore(completion: commit)
+                } else if self.visibleWorkspace == .closed || previousRequest == .closed {
+                    reader.beginWorkspaceRestore(completion: commit)
+                } else { commit() }
             }
+            if visibleWorkspace == .notes, newValue != .notes {
+                flush { succeeded in if succeeded { navigate() } }
+            } else { navigate() }
         }
     }
     var isShowingAnnotations: Bool {
@@ -79,10 +81,18 @@ final class AppModel {
     let savedPrompts: SavedPromptStore
     let analytics = UsageAnalytics.shared
     let readingProgress: ReadingProgress
+    let audioNotes = AudioNoteController()
+    let audioTranscription = AudioTranscriptionController()
+    private(set) var audioTranscriptionErrors: [AudioTranscriptionScope: [UUID: String]] = [:]
+    @ObservationIgnored var suspendNarration: (() -> Void)?
 
     private var analyticsContentType: AnalyticsContentType? {
         guard let book else { return nil }
         return record?.sourceURL != nil ? .web : (book.kind == .pdf ? .pdf : .epub)
+    }
+
+    private func analyticsContentType(for record: BookRecord) -> AnalyticsContentType {
+        record.sourceURL != nil ? .web : (record.documentKind == .pdf ? .pdf : .epub)
     }
 
     var notesInSidebar: Bool {
@@ -107,11 +117,18 @@ final class AppModel {
     @ObservationIgnored private var noteEditingSessions: [UUID: UUID] = [:]
     @ObservationIgnored private var noteAnalyticsEdits: [UUID: AnalyticsEditToken] = [:]
     @ObservationIgnored private var sketchAnalyticsEdits: [UUID: [UUID: AnalyticsEditToken]] = [:]
+    private struct PendingSketchAnalytics {
+        let token: AnalyticsEditToken
+        let originalSignature: Data?
+        let wasNew: Bool
+    }
+    // A drawing file can be written before the library checkpoint fails. Keep
+    // the original comparison until the complete save succeeds, so retrying the
+    // same checkpoint does not lose or invent a meaningful editing event.
+    @ObservationIgnored private var pendingSketchAnalytics: [String: PendingSketchAnalytics] = [:]
     @ObservationIgnored private var openingID: UUID?
     @ObservationIgnored private var sketchUndoArchive: [String: SketchUndoHistory] = [:]
-
-    /// Reading position captured before an in-app browser preview, restored on close.
-    @ObservationIgnored private var positionBeforeBrowser: Locator?
+    @ObservationIgnored private var audioUndoArchive: [String: AudioUndoHistory] = [:]
 
     init() {
         let root = AppDataDirectory.prepare()
@@ -126,6 +143,7 @@ final class AppModel {
             $0.applyAppearanceDefaults()
         }) ?? store.loadSettings(ReaderSettings.self) ?? ReaderSettings()
         recents = store.recentBooks(limit: .max)
+        reminderBooks = store.allBooks()
 
         let aiConfig = AIConfigStore(directory: root)
         self.aiConfig = aiConfig
@@ -182,6 +200,11 @@ final class AppModel {
                 chapterTitle: self?.reader?.chapterTitle
             )
         }
+        audioNotes.beforeAudioActivity = { [weak self] in self?.suspendNarration?() }
+        audioNotes.onAnalyticsEvent = { [weak self] event in self?.analytics.record(event) }
+        audioNotes.onAnalyticsActivityChanged = { [weak self] activity, active in
+            self?.analytics.setFeatureActivity(activity, active: active)
+        }
     }
 
     // MARK: - Opening and closing
@@ -198,78 +221,13 @@ final class AppModel {
         open(url: url)
     }
 
-    func presentOpenURL() {
-        pendingWebURLText = webBrowser?.currentURL?.absoluteString ?? ""
-        isShowingOpenURLSheet = true
-    }
-
-    func submitOpenURL() {
-        guard let url = WebPageURL.normalized(from: pendingWebURLText) else {
-            errorMessage = ArticleError.invalidURL.localizedDescription
-            return
-        }
-        isShowingOpenURLSheet = false
-        pendingWebURLText = ""
-        openWebBrowser(url: url)
-    }
-
-    func openWebBrowser(url: URL) {
-        analytics.record(.webOpened, content: .web)
-        positionBeforeBrowser = record?.position
-        reader?.pinRestoreCurrentPositionOnce()
-        if let webBrowser {
-            webBrowser.load(url)
-            return
-        }
-        let controller = WebBrowserController()
-        webBrowser = controller
-        controller.load(url)
-    }
-
-    func closeBrowser() {
-        webBrowser?.tearDown()
-        webBrowser = nil
-        isSavingWebPage = false
-    }
-
-    /// Called when the reader is on screen again after a browser preview.
-    func resumeReadingAfterBrowser() {
-        guard let reader, let locator = positionBeforeBrowser else { return }
-        positionBeforeBrowser = nil
-        reader.restorePosition(locator)
-    }
-
     func openOriginalInBrowser(_ record: BookRecord) {
         guard let url = record.sourceURL else { return }
-        openWebBrowser(url: url)
-    }
-
-    func saveCurrentWebPage() {
-        guard let browser = webBrowser, !isSavingWebPage else { return }
-        isSavingWebPage = true
-        errorMessage = nil
-        browser.extractArticle { [weak self] result in
-            Task { @MainActor in
-                await self?.finishSavingWebpage(result)
-            }
-        }
-    }
-
-    private func finishSavingWebpage(_ result: Result<ArticleContent, Error>) async {
-        defer { isSavingWebPage = false }
-        do {
-            let article = try result.get()
-            let tempURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("kodi-web-\(UUID().uuidString).epub")
-            defer { try? FileManager.default.removeItem(at: tempURL) }
-            try await ArticleEPUBBuilder.build(article, to: tempURL)
-            open(url: tempURL, sourceURL: article.sourceURL)
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        NSWorkspace.shared.open(url)
     }
 
     func open(url: URL, sourceURL: URL? = nil, expectedIdentity: String? = nil, preferredLocalID: String? = nil) {
+        if preferredLocalID != pendingReminderDestination?.bookID { pendingReminderDestination = nil }
         closeBook { [self] in
             beginOpening(url: url, sourceURL: sourceURL, expectedIdentity: expectedIdentity, preferredLocalID: preferredLocalID)
         }
@@ -285,11 +243,17 @@ final class AppModel {
                 let identity = try await Task.detached { try BlobManifest.bookIdentity(file: url, kind: kind) }.value
                 guard openingID == operation else { return }
                 if let expectedIdentity, identity != expectedIdentity {
+                    pendingReminderDestination = nil
                     errorMessage = "This is a different edition or file. Locate the same book to attach its synced notes."
                     return
                 }
                 openPrepared(url: url, sourceURL: sourceURL, identity: identity, preferredLocalID: preferredLocalID)
-            } catch { if openingID == operation { errorMessage = error.localizedDescription } }
+            } catch {
+                if openingID == operation {
+                    pendingReminderDestination = nil
+                    errorMessage = error.localizedDescription
+                }
+            }
         }
     }
 
@@ -378,11 +342,13 @@ final class AppModel {
             self.record = record
             reader = controller
             recents = store.recentBooks(limit: .max)
+            reminderBooks = store.allBooks()
             errorMessage = nil
             chat.load(threads: record.conversationThreads, activeID: record.activeChatID)
             if existing == nil { analytics.record(.bookImported, content: analyticsContentType) }
         } catch {
             if didScope { url.stopAccessingSecurityScopedResource() }
+            pendingReminderDestination = nil
             errorMessage = error.localizedDescription
         }
     }
@@ -434,7 +400,10 @@ final class AppModel {
             panel.nameFieldStringValue = URL(fileURLWithPath: path).lastPathComponent
         }
 
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else {
+            pendingReminderDestination = nil
+            return
+        }
         open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
     }
 
@@ -451,10 +420,12 @@ final class AppModel {
         }
     }
 
-    var canGoHome: Bool { book != nil || isBrowsing }
+    var canGoHome: Bool { book != nil }
 
-    /// Leaves the current book or webpage and returns to the welcome screen.
+    /// Leaves the current book and returns to the welcome screen.
     func goHome() {
+        pendingReminderDestination = nil
+        reminderNoteToOpen = nil
         closeBook()
     }
 
@@ -474,12 +445,16 @@ final class AppModel {
         }
         noteAnalyticsEdits.removeAll()
         sketchAnalyticsEdits.removeAll()
+        pendingSketchAnalytics.removeAll()
         analytics.endAllEditing()
         readingProgress.setReaderEligible(false)
         hasReadyReader = false
         noteFlushHandlers.removeAll()
         noteEditingSessions.removeAll()
         sketchUndoArchive.removeAll()
+        for history in audioUndoArchive.values { history.discard() }
+        audioUndoArchive.removeAll()
+        audioNotes.stopPlayback()
         openingID = nil
         chat.stop()
         persistChat(chat.threads, activeID: chat.activeThreadID)
@@ -494,8 +469,6 @@ final class AppModel {
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
         recents = store.recentBooks(limit: .max)
-        positionBeforeBrowser = nil
-        closeBrowser()
     }
 
     func removeFromRecents(_ record: BookRecord) {
@@ -507,6 +480,7 @@ final class AppModel {
         try store.renameBook(target.id, to: title)
         if record?.id == target.id { record = store.record(for: target.id) }
         recents = store.recentBooks(limit: .max)
+        reminderBooks = store.allBooks()
     }
 
     func importedURL(for record: BookRecord) -> URL? {
@@ -542,7 +516,11 @@ final class AppModel {
         guard noteEditingSessions[id] == session else { return }
         endAnalyticsEditing(id)
         noteEditingSessions[id] = nil
-        if let bookID = book?.bookID { sketchUndoArchive["\(bookID):\(id)"] = nil }
+        if let bookID = book?.bookID {
+            let key = "\(bookID):\(id)"
+            sketchUndoArchive[key] = nil
+            audioUndoArchive.removeValue(forKey: key)?.discard()
+        }
         noteFlushHandlers[id] = nil
         sync.resumeDeferredChanges()
     }
@@ -551,6 +529,11 @@ final class AppModel {
     func endSketchEditing(_ id: UUID, session: UUID) {
         guard noteEditingSessions[id] == session else { return }
         endSketchAnalyticsEditing(id)
+    }
+
+    func endTextNoteEditing(_ id: UUID, session: UUID) {
+        guard noteEditingSessions[id] == session else { return }
+        if let token = noteAnalyticsEdits.removeValue(forKey: id) { analytics.endEditing(token: token) }
     }
 
     private func endAnalyticsEditing(_ id: UUID) {
@@ -579,6 +562,7 @@ final class AppModel {
 
     func refreshAfterSync() {
         recents = store.recentBooks(limit: .max)
+        reminderBooks = store.allBooks()
         guard let currentID = record?.id else { return }
         guard let updated = store.record(for: currentID) else {
             closeBook()
@@ -586,17 +570,25 @@ final class AppModel {
         }
         record = updated
         reader?.setAnnotations(updated.annotations)
+        reader?.setReminders(updated.reminders)
         reader?.readingMarker = updated.readingMarker?.locator
         if !chat.isStreaming { chat.mergeStoredThreads(updated.conversationThreads) }
     }
 
     func downloadForOffline(_ record: BookRecord, openAfter: Bool = false) {
         guard sync.status.downloads[record.id] == nil else { return }
+        let wasReminderNavigation = pendingReminderDestination?.bookID == record.id
         Task {
             do {
                 let url = try await sync.download(record)
-                if openAfter { open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id) }
-            } catch { errorMessage = error.localizedDescription }
+                if pendingReminderDestination?.bookID == record.id || (openAfter && !wasReminderNavigation) {
+                    open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
+                }
+            } catch {
+                if wasReminderNavigation, pendingReminderDestination?.bookID != record.id { return }
+                if pendingReminderDestination?.bookID == record.id { pendingReminderDestination = nil }
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -655,9 +647,6 @@ final class AppModel {
         controller.onAnchorsResolved = { [weak self] resolutions in
             self?.applyAnchorResolutions(resolutions)
         }
-        controller.onExternalLink = { [weak self] url in
-            self?.openWebBrowser(url: url)
-        }
         controller.onReadingMarkerPlaced = { [weak self, weak controller] locator in
             guard let self, self.record?.id == bookID else { return }
             let marker = Bookmark(
@@ -674,7 +663,140 @@ final class AppModel {
     func startReading() {
         guard let reader, let record else { return }
         reader.readingMarker = record.readingMarker?.locator
-        reader.start(at: record.position, annotations: record.annotations)
+        reader.setReminders(record.reminders)
+        if let destination = pendingReminderDestination, destination.bookID == record.id {
+            pendingReminderDestination = nil
+            let source = record.annotations.first { $0.id == destination.reminder.annotationID }
+            reader.start(at: source?.locator ?? destination.reminder.locator, annotations: record.annotations)
+            if let id = destination.reminder.annotationID, annotation(with: id) != nil {
+                reminderNoteToOpen = id
+            }
+            analytics.record(.reminderOpened, content: analyticsContentType(for: record))
+        } else {
+            reader.start(at: record.position, annotations: record.annotations)
+        }
+    }
+
+    // MARK: - Research reminders
+
+    var currentReminderLocator: Locator? {
+        guard let reader, !reader.isLoading, reader.errorMessage == nil else { return nil }
+        return currentPosition(reader)
+    }
+
+    func reminder(with id: UUID, bookID: String? = nil) -> ResearchReminder? {
+        guard let bookID = bookID ?? book?.bookID else { return nil }
+        return store.record(for: bookID)?.reminders.first { $0.id == id }
+    }
+
+    @discardableResult
+    func createReminder(title: String, source: ResearchReminder.Source, locator: Locator,
+                        quotedText: String = "", chapterTitle: String? = nil,
+                        annotationID: UUID? = nil, id: UUID = UUID(), noteUpdate: String? = nil) throws -> ResearchReminder {
+        guard let bookID = book?.bookID, let stored = store.record(for: bookID) else {
+            throw LibraryStoreError.missingBook
+        }
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw ReminderPersistenceError.emptyTitle }
+        if noteUpdate != nil, !stored.annotations.contains(where: { $0.id == annotationID }) {
+            throw NotePersistenceError.missingAnnotation
+        }
+        let reminder = ResearchReminder(id: id, title: title, source: source, locator: locator,
+                                        quotedText: quotedText, chapterTitle: chapterTitle, annotationID: annotationID)
+        try store.updateAndFlush(bookID) { stored in
+            stored.reminders.removeAll { $0.id == id }
+            stored.reminders.append(reminder)
+            if let noteUpdate, let index = stored.annotations.firstIndex(where: { $0.id == annotationID }) {
+                stored.annotations[index].note = noteUpdate
+                stored.annotations[index].modifiedAt = Date()
+            }
+        }
+        refreshReminders(bookID: bookID)
+        if noteUpdate != nil, let annotations = record?.annotations { reader?.setAnnotations(annotations) }
+        if !stored.reminders.contains(where: { $0.id == id }) {
+            analytics.record(.reminderCreated, content: analyticsContentType(for: stored))
+        }
+        return reminder
+    }
+
+    func updateReminder(_ reminder: ResearchReminder, bookID: String) throws {
+        guard let stored = store.record(for: bookID),
+              let previous = stored.reminders.first(where: { $0.id == reminder.id }) else {
+            throw ReminderPersistenceError.missingReminder
+        }
+        let title = reminder.title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else { throw ReminderPersistenceError.emptyTitle }
+        try store.updateAndFlush(bookID) { stored in
+            guard let index = stored.reminders.firstIndex(where: { $0.id == reminder.id }) else { return }
+            stored.reminders[index].title = title
+            stored.reminders[index].completedAt = reminder.completedAt
+            stored.reminders[index].modifiedAt = Date()
+        }
+        refreshReminders(bookID: bookID)
+        let content = analyticsContentType(for: stored)
+        if previous.title != title { analytics.record(.reminderUpdated, content: content) }
+        if previous.isCompleted != reminder.isCompleted {
+            analytics.record(reminder.isCompleted ? .reminderCompleted : .reminderReopened, content: content)
+        }
+    }
+
+    func deleteReminder(_ id: UUID, bookID: String) throws {
+        let previous = store.record(for: bookID)
+        try store.updateAndFlush(bookID) { $0.reminders.removeAll { $0.id == id } }
+        refreshReminders(bookID: bookID)
+        if let previous, previous.reminders.contains(where: { $0.id == id }) {
+            analytics.record(.reminderDeleted, content: analyticsContentType(for: previous))
+        }
+    }
+
+    func restoreReminder(_ reminder: ResearchReminder, bookID: String) throws {
+        let previous = store.record(for: bookID)
+        var restored = reminder
+        restored.modifiedAt = Date()
+        try store.updateAndFlush(bookID) { stored in
+            stored.reminders.removeAll { $0.id == restored.id }
+            stored.reminders.append(restored)
+        }
+        refreshReminders(bookID: bookID)
+        if let previous, !previous.reminders.contains(where: { $0.id == reminder.id }) {
+            analytics.record(.reminderRestored, content: analyticsContentType(for: previous))
+        }
+    }
+
+    private func refreshReminders(bookID: String) {
+        reminderBooks = store.allBooks()
+        if record?.id == bookID {
+            record = store.record(for: bookID)
+            reader?.setReminders(record?.reminders ?? [])
+        }
+    }
+
+    func showReminders() {
+        flush { [self] succeeded in
+            guard succeeded else { return }
+            reminderBooks = store.allBooks()
+            if book != nil {
+                pinReaderForViewportChange()
+                workspace = workspace == .reminders ? .closed : .reminders
+            } else { isShowingReminders = true }
+        }
+    }
+
+    func openReminder(_ reminder: ResearchReminder, bookID: String) {
+        flush { [self] succeeded in
+            guard succeeded, let target = store.record(for: bookID) else { return }
+            isShowingReminders = false
+            if book?.bookID == bookID, let reader {
+                reader.pinRestore(to: nil)
+                let source = target.annotations.first { $0.id == reminder.annotationID }
+                reader.go(to: source?.locator ?? reminder.locator)
+                if let id = reminder.annotationID, annotation(with: id) != nil { reminderNoteToOpen = id }
+                analytics.record(.reminderOpened, content: analyticsContentType(for: target))
+            } else {
+                pendingReminderDestination = (bookID, reminder)
+                reopen(target)
+            }
+        }
     }
 
     // MARK: - Ask AI
@@ -822,9 +944,9 @@ final class AppModel {
             return
         }
 
-        let noteChanged = (record.annotations[index].note ?? "") != note
-        let analyticsEdit = noteChanged && !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? beginNoteAnalyticsEdit(bookID: bookID, annotationID: id, isNew: !record.annotations[index].hasNote)
+        let previousText = AnalyticsContentRules.textNote(record.annotations[index].note ?? "")
+        let analyticsEdit = previousText != AnalyticsContentRules.textNote(note)
+            ? beginNoteAnalyticsEdit(bookID: bookID, annotationID: id, isNew: previousText.isEmpty)
             : nil
         record.annotations[index].note = note.isEmpty ? nil : note
         if record.annotations[index].hasNote, record.annotations[index].color == .underline {
@@ -832,8 +954,11 @@ final class AppModel {
             lastAppliedHighlightColor = .yellow
         }
         record.annotations[index].modifiedAt = Date()
+        var importedAudioIDs: [UUID] = []
+        var didCheckpoint = false
         do {
             var removed: [NoteSketch] = []
+            var removedAudio: [NoteAudio] = []
             if reconcileSketches {
                 let key = "\(bookID):\(id)"
                 let history = sketchUndoArchive[key] ?? SketchUndoHistory()
@@ -841,16 +966,40 @@ final class AppModel {
                 let before = record.annotations[index]
                 let updated = try history.reconciling(before, note: note, drawings: store.drawingStore, bookID: bookID)
                 removed = before.sketches.filter { sketch in !updated.sketches.contains { $0.id == sketch.id } }
-                record.annotations[index] = updated
+                let audioHistory = audioUndoArchive[key] ?? AudioUndoHistory()
+                audioUndoArchive[key] = audioHistory
+                let clipboard = try AudioNoteClipboard.importing(into: updated, note: note, audio: store.audioStore, bookID: bookID)
+                importedAudioIDs = clipboard.audioRecordings.filter { audio in !before.audioRecordings.contains { $0.id == audio.id } }.map(\.id)
+                let imported = try store.importReferencedAudio(in: clipboard, note: note, bookID: bookID)
+                importedAudioIDs = imported.audioRecordings.filter { audio in !before.audioRecordings.contains { $0.id == audio.id } }.map(\.id)
+                let withAudio = try audioHistory.reconciling(imported, note: note, audio: store.audioStore, bookID: bookID)
+                removedAudio = before.audioRecordings.filter { audio in !withAudio.audioRecordings.contains { $0.id == audio.id } }
+                record.annotations[index] = withAudio
             }
             try store.updateAndFlush(bookID) { $0.annotations = record.annotations }
+            didCheckpoint = true
             self.record = record
-            for sketch in removed { try store.drawingStore.deleteSketch(bookID: bookID, annotationID: id, sketchID: sketch.id) }
+            // The text is durable now. A later attachment-cleanup failure must
+            // not lose this event: retrying already-saved text is unchanged.
             if let analyticsEdit { analytics.noteSuccessfulEdit(token: analyticsEdit, meaningful: true) }
+            for sketch in removed {
+                try store.drawingStore.deleteSketch(bookID: bookID, annotationID: id, sketchID: sketch.id)
+                analytics.record(.sketchDeleted, content: analyticsContentType)
+            }
+            for audio in removedAudio {
+                if audioNotes.playbackID == audio.id { audioNotes.stopPlayback() }
+                let scope = AudioTranscriptionScope(bookID: bookID, annotationID: id)
+                audioTranscription.cancel(id: audio.id, scope: scope)
+                audioTranscriptionErrors[scope]?[audio.id] = nil
+                try? store.audioStore.deleteRecording(bookID: bookID, annotationID: id, audioID: audio.id)
+            }
             completion?(.success(()))
             // Refresh the note-dot on painted highlights without a full re-resolve.
             reader?.setAnnotations(record.annotations)
         } catch {
+            if !didCheckpoint {
+                for audioID in importedAudioIDs { try? store.audioStore.deleteRecording(bookID: bookID, annotationID: id, audioID: audioID) }
+            }
             completion?(.failure(error))
         }
     }
@@ -932,13 +1081,20 @@ final class AppModel {
         do { for id in ids { try migrateDrawing(for: id) } }
         catch { showSketchExportError(error); return }
         let snapshots = ids.compactMap { annotation(with: $0) }
+        let reminderSnapshot = record?.reminders ?? []
         let title = record?.title ?? "Untitled"
         let author = record?.author ?? "Unknown Author"
         let references = snapshots.flatMap { note in SketchReference.references(in: note.note ?? "").map { (note.id, $0) } }
+        var audioFiles: [UUID: URL] = [:]
+        for note in snapshots {
+            for reference in AudioReference.references(in: note.note ?? "") {
+                audioFiles[reference.id] = store.audioStore.recordingURL(bookID: bookID, annotationID: note.id, audioID: reference.id)
+            }
+        }
         var images: [UUID: Data] = [:]
         func resolve(_ index: Int) {
             guard index < references.count else {
-                NotesExporter.presentSavePanel(format: format, bookTitle: title, author: author, annotations: snapshots, sketchImages: images)
+                NotesExporter.presentSavePanel(format: format, bookTitle: title, author: author, annotations: snapshots, sketchImages: images, audioFiles: audioFiles, reminders: reminderSnapshot)
                 return
             }
             let (annotationID, reference) = references[index]
@@ -971,7 +1127,7 @@ final class AppModel {
 
     private func showSketchExportError(_ error: Error) {
         let alert = NSAlert()
-        alert.messageText = "Couldn’t export sketches"
+        alert.messageText = "Couldn’t export notes"
         alert.informativeText = error.localizedDescription
         alert.runModal()
     }
@@ -986,16 +1142,32 @@ final class AppModel {
         return store.drawingStore.loadPreview(bookID: bookID, annotationID: annotationID, sketchID: sketchID)
     }
 
+    func recordSketchOpened(annotationID: UUID, sketchID: UUID) {
+        guard annotation(with: annotationID)?.sketches.contains(where: { $0.id == sketchID }) == true else { return }
+        analytics.record(.sketchOpened, content: analyticsContentType)
+    }
+
     func saveSketch(_ sketch: NoteSketch, checkpoint: SketchCheckpoint, note: String, annotationID: UUID) throws {
         guard let bookID = book?.bookID else { throw DrawingPersistenceError.missingBook }
         guard let previous = annotation(with: annotationID) else { throw NotePersistenceError.missingAnnotation }
-        let sceneChanged = store.drawingStore.loadScene(bookID: bookID, annotationID: annotationID, sketchID: sketch.id) != checkpoint.scene
-        let isNewSketch = !previous.sketches.contains { $0.id == sketch.id }
-        let sketchEdit = (isNewSketch ? checkpoint.elementCount > 0 : sceneChanged)
-            ? beginSketchAnalyticsEdit(bookID: bookID, annotationID: annotationID, sketchID: sketch.id, isNew: isNewSketch)
+        let key = "\(bookID):\(annotationID):\(sketch.id)"
+        let savedSignature = AnalyticsContentRules.drawingSignature(store.drawingStore.loadScene(bookID: bookID, annotationID: annotationID, sketchID: sketch.id))
+        let signature = AnalyticsContentRules.drawingSignature(checkpoint.scene)
+        let pending = pendingSketchAnalytics[key]
+        let isNewSketch = pending?.wasNew ?? !previous.sketches.contains { $0.id == sketch.id }
+        let originalSignature: Data?
+        if let pending { originalSignature = pending.originalSignature }
+        else { originalSignature = savedSignature }
+        let meaningfulDrawing = isNewSketch ? checkpoint.elementCount > 0 : signature != nil && signature != originalSignature
+        let sketchEdit = meaningfulDrawing
+            ? pending?.token ?? beginSketchAnalyticsEdit(bookID: bookID, annotationID: annotationID, sketchID: sketch.id, isNew: isNewSketch)
             : nil
-        let noteEdit = (previous.note ?? "") != note && !note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            ? beginNoteAnalyticsEdit(bookID: bookID, annotationID: annotationID, isNew: !previous.hasNote)
+        if let sketchEdit, pending == nil {
+            pendingSketchAnalytics[key] = PendingSketchAnalytics(token: sketchEdit, originalSignature: savedSignature, wasNew: isNewSketch)
+        }
+        let previousText = AnalyticsContentRules.textNote(previous.note ?? "")
+        let noteEdit = previousText != AnalyticsContentRules.textNote(note)
+            ? beginNoteAnalyticsEdit(bookID: bookID, annotationID: annotationID, isNew: previousText.isEmpty)
             : nil
         try store.drawingStore.replaceSketch(scene: checkpoint.scene, preview: checkpoint.preview, bookID: bookID, annotationID: annotationID, sketchID: sketch.id)
         try store.updateAndFlush(bookID) { record in
@@ -1013,6 +1185,7 @@ final class AppModel {
         record = store.record(for: bookID)
         if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
         if let sketchEdit { analytics.noteSuccessfulEdit(token: sketchEdit, meaningful: true) }
+        pendingSketchAnalytics.removeValue(forKey: key)
         if let noteEdit { analytics.noteSuccessfulEdit(token: noteEdit, meaningful: true) }
     }
 
@@ -1027,6 +1200,118 @@ final class AppModel {
             record.annotations[index].modifiedAt = Date()
         }
         record = store.record(for: bookID)
+    }
+
+    func audioURL(annotationID: UUID, audioID: UUID) -> URL? {
+        guard let bookID = book?.bookID else { return nil }
+        let url = store.audioStore.recordingURL(bookID: bookID, annotationID: annotationID, audioID: audioID)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    /// Finalized bytes become durable before a note can publish their reference.
+    func saveAudio(_ audio: NoteAudio, from draft: URL, note: String, annotationID: UUID) throws {
+        guard let bookID = book?.bookID else { throw NotePersistenceError.missingBook }
+        guard let previous = annotation(with: annotationID) else { throw NotePersistenceError.missingAnnotation }
+        let isNew = !previous.audioRecordings.contains { $0.id == audio.id }
+        guard isNew else {
+            throw NSError(domain: "KodiAudio", code: 3, userInfo: [NSLocalizedDescriptionKey: "This recording has already been saved."])
+        }
+        try store.audioStore.saveRecording(from: draft, bookID: bookID, annotationID: annotationID, audioID: audio.id)
+        do {
+            try store.updateAndFlush(bookID) { record in
+                guard let index = record.annotations.firstIndex(where: { $0.id == annotationID }) else { return }
+                record.annotations[index].audioRecordings.removeAll { $0.id == audio.id }
+                record.annotations[index].audioRecordings.append(audio)
+                record.annotations[index].audioRecordings.sort { $0.createdAt < $1.createdAt }
+                record.annotations[index].note = note
+                record.annotations[index].modifiedAt = Date()
+                if record.annotations[index].color == .underline { record.annotations[index].color = .yellow }
+            }
+        } catch {
+            if isNew { try? store.audioStore.deleteRecording(bookID: bookID, annotationID: annotationID, audioID: audio.id) }
+            throw error
+        }
+        record = store.record(for: bookID)
+        if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
+    }
+
+    func renameAudio(_ audioID: UUID, title: String, note: String, annotationID: UUID) throws {
+        guard let bookID = book?.bookID else { throw NotePersistenceError.missingBook }
+        guard annotation(with: annotationID)?.audioRecordings.contains(where: { $0.id == audioID }) == true else {
+            throw NotePersistenceError.missingAnnotation
+        }
+        try store.updateAndFlush(bookID) { record in
+            guard let index = record.annotations.firstIndex(where: { $0.id == annotationID }),
+                  let audioIndex = record.annotations[index].audioRecordings.firstIndex(where: { $0.id == audioID }) else { return }
+            record.annotations[index].audioRecordings[audioIndex].title = title
+            record.annotations[index].audioRecordings[audioIndex].modifiedAt = Date()
+            record.annotations[index].note = note
+            record.annotations[index].modifiedAt = Date()
+        }
+        record = store.record(for: bookID)
+    }
+
+    func transcribeAudio(_ audioID: UUID, annotationID: UUID, completion: @escaping (Bool) -> Void = { _ in }) {
+        guard !audioTranscription.isBusy, let bookID = book?.bookID,
+              let url = audioURL(annotationID: annotationID, audioID: audioID) else {
+            completion(false)
+            return
+        }
+        let scope = AudioTranscriptionScope(bookID: bookID, annotationID: annotationID)
+        audioTranscriptionErrors[scope]?[audioID] = nil
+        Task { @MainActor in
+            // A note may be deleted or another job may start before this
+            // queued task runs. Neither should start work or publish an error.
+            guard !audioTranscription.isBusy,
+                  store.record(for: bookID)?.annotations.first(where: { $0.id == annotationID })?
+                    .audioRecordings.contains(where: { $0.id == audioID }) == true else {
+                completion(false); return
+            }
+            do {
+                let transcript = try await audioTranscription.transcribe(id: audioID, url: url, scope: scope)
+                guard let annotation = store.record(for: bookID)?.annotations.first(where: { $0.id == annotationID }),
+                      annotation.audioRecordings.contains(where: { $0.id == audioID }) else {
+                    completion(false); return
+                }
+                try store.updateAndFlush(bookID) { record in
+                    guard let noteIndex = record.annotations.firstIndex(where: { $0.id == annotationID }),
+                          let audioIndex = record.annotations[noteIndex].audioRecordings.firstIndex(where: { $0.id == audioID }) else { return }
+                    record.annotations[noteIndex].audioRecordings[audioIndex].transcript = transcript
+                    record.annotations[noteIndex].audioRecordings[audioIndex].modifiedAt = Date()
+                    record.annotations[noteIndex].modifiedAt = Date()
+                }
+                if book?.bookID == bookID { record = store.record(for: bookID) }
+                audioTranscriptionErrors[scope]?[audioID] = nil
+                sync.checkpoint()
+                completion(true)
+            } catch is CancellationError {
+                completion(false)
+            } catch {
+                // Keep the recording and any previous transcript intact.
+                audioTranscriptionErrors[scope, default: [:]][audioID] = error.localizedDescription
+                completion(false)
+            }
+        }
+    }
+
+    func exportAudio(_ audioID: UUID, annotationID: UUID) {
+        guard let audio = annotation(with: annotationID)?.audioRecordings.first(where: { $0.id == audioID }),
+              let source = audioURL(annotationID: annotationID, audioID: audioID) else {
+            errorMessage = "This recording is unavailable. Try Sync Now before exporting."
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: "m4a") ?? .audio]
+        panel.nameFieldStringValue = audio.title.components(separatedBy: CharacterSet(charactersIn: "/:\\").union(.controlCharacters)).joined(separator: "-") + ".m4a"
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        let temporary = target.deletingLastPathComponent().appendingPathComponent(".kodi-audio-\(UUID().uuidString).m4a")
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        do {
+            try FileManager.default.copyItem(at: source, to: temporary)
+            if FileManager.default.fileExists(atPath: target.path) {
+                _ = try FileManager.default.replaceItemAt(target, withItemAt: temporary)
+            } else { try FileManager.default.moveItem(at: temporary, to: target) }
+        } catch { errorMessage = error.localizedDescription }
     }
 
     func changeColor(_ color: HighlightColor, for id: UUID) {
@@ -1045,11 +1330,25 @@ final class AppModel {
 
     func deleteAnnotation(_ id: UUID) {
         guard let bookID = book?.bookID else { return }
+        let deletedSketches = annotation(with: id)?.sketches ?? []
+        let deletedAudio = annotation(with: id)?.audioRecordings ?? []
+        do {
+            try store.updateAndFlush(bookID) { $0.annotations.removeAll { $0.id == id } }
+        } catch { errorMessage = error.localizedDescription; return }
         if case .annotation(id) = aiNoteTarget {
             aiNoteTarget = nil
         }
+        if audioNotes.recordingAnnotationID == id { audioNotes.discardRecording() }
+        let transcriptionScope = AudioTranscriptionScope(bookID: bookID, annotationID: id)
+        for audio in deletedAudio { audioTranscription.cancel(id: audio.id, scope: transcriptionScope) }
+        audioTranscriptionErrors[transcriptionScope] = nil
+        audioNotes.stopPlayback()
+        audioUndoArchive.removeValue(forKey: "\(bookID):\(id)")?.discard()
+        store.audioStore.deleteRecordings(bookID: bookID, annotationID: id)
         store.drawingStore.deleteScene(bookID: bookID, annotationID: id)
-        mutateAnnotations(bookID: bookID) { $0.removeAll { $0.id == id } }
+        for _ in deletedSketches { analytics.record(.sketchDeleted, content: analyticsContentType) }
+        record = store.record(for: bookID)
+        if let annotations = record?.annotations { reader?.setAnnotations(annotations) }
     }
 
     func annotation(with id: UUID) -> Annotation? {
@@ -1088,7 +1387,8 @@ final class AppModel {
         return NoteMarkdown.exportDocument(
             bookTitle: title,
             author: author,
-            annotations: record?.annotations ?? []
+            annotations: record?.annotations ?? [],
+            reminders: record?.reminders ?? []
         )
     }
 
@@ -1109,12 +1409,11 @@ final class AppModel {
     // MARK: - Reading marker
 
     func toggleReadingMarkerPlacement() {
-        guard !isBrowsing else { return }
         reader?.toggleReadingMarkerPlacement()
     }
 
     func goToReadingMarker() {
-        guard !isBrowsing, reader?.isLoading == false, let marker = record?.readingMarker else { return }
+        guard reader?.isLoading == false, let marker = record?.readingMarker else { return }
         reader?.cancelReadingMarkerPlacement()
         reader?.clearSelection()
         reader?.go(to: marker.locator)
@@ -1171,6 +1470,16 @@ final class AppModel {
         if let position = record?.position { return position }
         if book?.kind == .pdf { return .pdfPage(reader.spineIndex) }
         return Locator(spineIndex: reader.spineIndex, start: TextPosition(elementPath: [], offset: 0))
+    }
+}
+
+private enum ReminderPersistenceError: LocalizedError {
+    case emptyTitle, missingReminder
+    var errorDescription: String? {
+        switch self {
+        case .emptyTitle: return "Enter a topic to research."
+        case .missingReminder: return "This reminder has been deleted."
+        }
     }
 }
 

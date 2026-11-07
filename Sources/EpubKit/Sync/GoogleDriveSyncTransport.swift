@@ -122,6 +122,13 @@ public final class GoogleDriveSyncTransport: SyncTransport {
             // category, so a crash cannot skip messages that arrived while off.
             try await saveState("drive.cursor", Data())
         }
+        // Pre-reminder clients ignore the new filename prefix while advancing
+        // their cursor. Discover those files once when this client upgrades.
+        if states["drive.remindersV1"] != Data([1]) {
+            cursor = nil; index.removeAll(); lastDelivered.removeAll()
+            try await saveState("drive.cursor", Data())
+            try await saveState("drive.remindersV1", Data([1]))
+        }
         if aiEnabled != enabledAI { try await saveState("drive.aiEnabled", Data((aiEnabled ? "1" : "0").utf8)) }
         enabledAI = aiEnabled
     }
@@ -225,14 +232,14 @@ public final class GoogleDriveSyncTransport: SyncTransport {
             let body = try SyncCoding.encode(envelope)
             let name = entity.kind == .position
                 ? "kodi-v1-position-" + SyncCoding.hash(Data("\(entity.id):\(entity.deviceID)".utf8))
-                : "kodi-v1-entity-\(logicalID)"
+                : (entity.kind == .reminder ? "kodi-v1-reminder-\(logicalID)" : "kodi-v1-entity-\(logicalID)")
             let existing = try await listFiles(query: "name = '\(name)'").first
             let file: FileInfo
             if let existing, entity.kind == .position {
                 file = try await updateFile(existing.id, name: name, type: "position", data: body)
             } else if let existing { file = existing }
             else { file = try await createFile(name: name,
-                type: entity.kind == .chat ? "chat" : (entity.kind == .position ? "position" : "entity"), data: body) }
+                type: entity.kind == .chat ? "chat" : (entity.kind == .position ? "position" : (entity.kind == .reminder ? "reminder" : "entity")), data: body) }
             try check(token)
             let revision = Revision(fileID: file.id, logicalID: logicalID, entity: entity, parents: parents, ancestor: ancestor)
             if entity.kind == .position { index[entity.id]?.removeAll { $0.fileID == file.id } }
@@ -344,7 +351,7 @@ public final class GoogleDriveSyncTransport: SyncTransport {
         guard let name = file.name else { return }
         if name == "kodi-v1-marker" { markerID = file.id; return }
         if name.hasPrefix("kodi-v1-asset-") { assetFiles[name] = file.id; return }
-        guard name.hasPrefix("kodi-v1-entity-") || name.hasPrefix("kodi-v1-position-") else { return }
+        guard name.hasPrefix("kodi-v1-entity-") || name.hasPrefix("kodi-v1-position-") || name.hasPrefix("kodi-v1-reminder-") else { return }
         if file.appProperties?["kodiType"] == "chat" && !enabledAI { return }
         let source = try await downloadFile(file.id)
         defer { try? FileManager.default.removeItem(at: source) }
@@ -373,7 +380,8 @@ public final class GoogleDriveSyncTransport: SyncTransport {
         let expectedID = SyncCoding.hash(try SyncCoding.encode(entity)
             + Data(envelope.parents.sorted().joined(separator: ",").utf8))
         guard envelope.schema == 1, envelope.logicalID == expectedID,
-              (name == "kodi-v1-entity-\(envelope.logicalID)" ||
+              ((name == "kodi-v1-reminder-\(envelope.logicalID)" && entity.kind == .reminder) ||
+               (name == "kodi-v1-entity-\(envelope.logicalID)" && entity.kind != .reminder) ||
                (name.hasPrefix("kodi-v1-position-") && entity.kind == .position)) else {
             throw SyncFailure.unsupportedSchema
         }

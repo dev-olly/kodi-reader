@@ -6,6 +6,42 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.9</title>
+            <pubDate>Sat, 07 Nov 2026 12:32:54 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>17</sparkle:version>
+            <sparkle:shortVersionString>0.4.9</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.9
+
+- Record audio notes alongside your highlights and text notes. Pause, resume,
+  play back, rename, export, and manage recordings from the note editor.
+- Listen to selected passages or the rest of the current English EPUB chapter
+  with on-device read aloud, and transcribe audio notes locally. Optional voice
+  files and speech-model setup happen when you use these features.
+- Save research reminders tied to passages or pages, return to their notes,
+  and keep reminders and audio attachments with your optional library sync.
+- Search, sort, and filter your library more easily, including sorting by the
+  date a document was added.
+- Improve reader engagement analytics, meaningful note and drawing counts,
+  Ask AI outcomes, and approximate connection-country reporting. A one-time
+  notice and Settings → Privacy make usage sharing easy to turn off. Book text,
+  note content, drawings, recordings, transcripts, and AI content are excluded
+  from analytics.
+- Keep note-sheet activity in engagement time, ignore idle time and canvas
+  navigation, and avoid inflating feature counts with repeated autosaves.
+- Keep deliberate page turns when closing or resizing the notes sidebar.
+- Refine note editing, exports, syncing, and passage selection. The standalone
+  web browser has been removed; existing saved web documents remain readable.
+
+Requires Apple Silicon and macOS 15 or later. Includes iCloud and Google Drive
+sync support. Update Kodi on every Mac before managing reminders and audio
+attachments across devices. Local audio models require a separate download.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.9/KodiReader.dmg" length="21511566" type="application/octet-stream" sparkle:edSignature="KCDlrrVO32YULg2y6GvLkE4EtdNczXLnvwtlRIm2f7+H+gKx90vyWyIZhl4AuZ4qnmFFjpSA7misZH53YWlyBA=="/>
+        </item>
+        <item>
             <title>0.4.8</title>
             <pubDate>Fri, 30 Oct 2026 17:28:27 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -59,28 +95,9 @@ The app and update feed are signed, and the download is notarized by Apple. Requ
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.7/KodiReader.dmg" length="8507363" type="application/octet-stream" sparkle:edSignature="7XfXEsWc8TFjjwRtHGEk4yLVM2PavEEy03aOmi6OjMnxcfU+W+eKmSjfjN0zAs7tbfp9Hb4QAf5Bf+jvQ4KSDA=="/>
         </item>
-        <item>
-            <title>0.4.6</title>
-            <pubDate>Sun, 18 Oct 2026 18:48:38 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>12</sparkle:version>
-            <sparkle:shortVersionString>0.4.6</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.6
-
-- Save one movable reading marker in each EPUB, PDF, or saved webpage. Click the beginning of a line, or press **M** and click the text where you stopped.
-- In EPUBs, a faint flag appears at line starts on hover. The saved marker follows its text when typography changes.
-- Press **Shift+M** or click **Return to marker** to jump back. Remove it from the marker toolbar menu; **Esc** cancels placement.
-- Keep markers after reopening a document and, with sync enabled, across Macs. Reading progress and ordinary bookmarks stay independent, while links and text selection keep working normally.
-
-The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.6/KodiReader.dmg" length="8497993" type="application/octet-stream" sparkle:edSignature="7gJ36W7Okju/e1Vyg08vaspnwNC+bkx+Ff7OWvpaGlTwINpL/tGPD089W6k/Jj2R4fU/Nn9jtFXl6WhHp7rsAw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: n4scxYrEayAhdZ0z3zFYe8HmEZbCTtH+liSjVT6VZU9t9N4ncPotOhF4CAEe36TXUi7Bv4HuSAAtCHvZ1fhzDA==
-length: 5431
+edSignature: Ah6CfdSsHip5SKHi66BJTYLhys3heDQ4Ev8NfW2HVsaXly9YfoCKYZvT11rWP4EzRWLVMPKKEAR8Q9A8EgnvDA==
+length: 6290
 -->

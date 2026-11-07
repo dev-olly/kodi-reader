@@ -6,6 +6,38 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.10</title>
+            <pubDate>Sun, 08 Nov 2026 00:09:21 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>18</sparkle:version>
+            <sparkle:shortVersionString>0.4.10</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.10
+
+- Listen with a new audio player designed for Kodi, including chapter progress,
+  15-second skips, playback speed, narrator selection, and optional text following.
+  Narration continues into the next chapter.
+- Select a passage and choose **Listen from Here** to start listening at that
+  passage and continue through the book.
+- Follow footnotes, citations, and other EPUB references, then use **Back to
+  reading** to return to your original passage. Nested references return one step
+  at a time, even after changing the font, window size, or column layout.
+- Pause narration automatically when following a reference. Audio stays paused
+  during the detour and after returning, including when speech is still buffering,
+  until you press Play.
+- Keep spoken passages distinct with a subtle underline that works alongside
+  saved highlights and text selection. Avoid coloring ordinary text as links.
+- Keep page turns aligned when scrolling rapidly, and preserve your passage when
+  opening or closing the audio player.
+
+Requires Apple Silicon and macOS 15 or later. Includes iCloud and Google Drive
+sync support. Narration is available for English EPUBs and runs on your Mac after
+the optional voice files have downloaded.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.10/KodiReader.dmg" length="21687240" type="application/octet-stream" sparkle:edSignature="flqyH2tskP6B0ghq2EhAvtMHRuHoJinB2Ij7xaciF8dmrHlVIRiRA9TOa1AIU00wG05/6E4f6f59jv5gyc2FAw=="/>
+        </item>
+        <item>
             <title>0.4.9</title>
             <pubDate>Sat, 07 Nov 2026 12:32:54 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -73,31 +105,9 @@ sync support.
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.8/KodiReader.dmg" length="8702097" type="application/octet-stream" sparkle:edSignature="W77PWYFgFlkYcueiSjBdTJ/I51fdDcR4o7IEWywuQxigRXa4nrheNvz/80YNkUYMJPt3yg36r3NugITh7zvHBw=="/>
         </item>
-        <item>
-            <title>0.4.7</title>
-            <pubDate>Tue, 20 Oct 2026 19:16:12 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>13</sparkle:version>
-            <sparkle:shortVersionString>0.4.7</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.7
-
-This update restores iCloud sync for installations of 0.4.6 that shipped without iCloud support.
-
-- Existing iCloud sync settings work again, and pending local changes can resume syncing.
-- Release packaging now requires iCloud support and validates Production CloudKit permissions in the final app.
-- Published release checks also verify iCloud support in the downloadable disk image.
-
-Your local books, notes, reading progress, and pending changes are preserved. No library reset or reimport is required.
-
-The app and update feed are signed, and the download is notarized by Apple. Requires Apple Silicon and macOS 15 or later.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.7/KodiReader.dmg" length="8507363" type="application/octet-stream" sparkle:edSignature="7XfXEsWc8TFjjwRtHGEk4yLVM2PavEEy03aOmi6OjMnxcfU+W+eKmSjfjN0zAs7tbfp9Hb4QAf5Bf+jvQ4KSDA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: Ah6CfdSsHip5SKHi66BJTYLhys3heDQ4Ev8NfW2HVsaXly9YfoCKYZvT11rWP4EzRWLVMPKKEAR8Q9A8EgnvDA==
-length: 6290
+edSignature: 7FI9yGAWhhlyxBVdKVQM6k0B1pUvzVovKRY4DUIEI+HTpBuGAuB8+lIqb602h2mw8fVtpnNAw7qGyT3/ClBQCg==
+length: 6891
 -->

@@ -155,9 +155,9 @@ final class AppModel {
         self.chat = chat
         self.savedPrompts = SavedPromptStore()
         chat.onRequestStarted = { [weak self] requestID in self?.analytics.record(.aiRequestStarted, content: self?.analyticsContentType, requestID: requestID) }
-        chat.onRequestCompleted = { [weak self] requestID in self?.analytics.record(.aiRequestCompleted, content: self?.analyticsContentType, requestID: requestID) }
-        chat.onRequestCancelled = { [weak self] requestID in self?.analytics.record(.aiRequestCancelled, content: self?.analyticsContentType, requestID: requestID) }
-        chat.onRequestFailed = { [weak self] requestID, error in
+        chat.onRequestCompleted = { [weak self] requestID, timing in self?.analytics.record(.aiRequestCompleted, content: self?.analyticsContentType, requestID: requestID, timing: timing) }
+        chat.onRequestCancelled = { [weak self] requestID, timing in self?.analytics.record(.aiRequestCancelled, content: self?.analyticsContentType, requestID: requestID, timing: timing) }
+        chat.onRequestFailed = { [weak self] requestID, error, timing in
             let category: AnalyticsErrorCategory
             switch error {
             case AIChatError.authRequired: category = .authentication
@@ -165,7 +165,7 @@ final class AppModel {
             case is URLError: category = .network
             default: category = .service
             }
-            self?.analytics.record(.aiRequestFailed, content: self?.analyticsContentType, error: category, requestID: requestID)
+            self?.analytics.record(.aiRequestFailed, content: self?.analyticsContentType, error: category, requestID: requestID, timing: timing)
         }
         aiAuth.onWillSignOut = { [weak chat, weak aiCredits] in chat?.stop(); aiCredits?.reset() }
         chat.onInsufficientCredits = { [weak aiCredits] in

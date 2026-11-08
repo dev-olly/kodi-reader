@@ -66,9 +66,10 @@ comparisons ignore viewport and autosave metadata, retain their original baselin
 across a partial checkpoint failure, and report only after durable persistence.
 Note events follow the successful text checkpoint even if later attachment
 cleanup fails. These refinements are prepared for the combined 0.4.9 Mac release.
-The combined client sends schema-v3 events; keep `004_feature_usage.sql` and
-the matching collector deployed before distributing that build. Both are
-already deployed as recorded in the feature-usage verification below.
+The feature instrumentation uses schema-v3 events; `004_feature_usage.sql` and
+its matching collector are already deployed as recorded below. The new Ask AI
+timings require schema v4 and the additional migration described under response
+performance before distributing the updated client.
 
 ## Deployment status · 30 October 2026
 
@@ -167,6 +168,45 @@ many people were reading or how much time they spent reading.
 - Approximate upload-country totals, supplied by Vercel connection metadata.
   No GPS location, city, or raw IP address is retained in analytics storage.
 
+### Ask AI response performance
+
+The schema-v4 Mac client records millisecond timings on correlated completed,
+failed, and intentionally stopped requests:
+
+- **Response time:** from the authenticated request start until completion,
+  failure, or stop.
+- **Latency:** from that same start until the first nonempty response text reaches
+  the conversation. SSE metadata, empty deltas, and keepalives do not count.
+- **Streaming time:** from the first response text until the terminal outcome.
+  Latency plus streaming time equals response time.
+
+These are client-observed timings, including network and service delays. They
+exclude sign-in and token refresh before the request starts and do not measure
+provider-only inference time. Failed or stopped requests without response text
+have response time only; their latency and streaming time remain unavailable.
+Stopping, switching, or closing a book finalizes an active request once.
+Invalid clock readings and requests exceeding 24 hours omit timing samples.
+
+The dashboard shows averages, median (p50), p95, and sample counts for completed
+requests, with failed and stopped timings kept separate. Samples follow the same
+request-start cohort as outcomes: requests started in the selected UTC period,
+matched to their earliest terminal outcome by event time as of report generation.
+Historical counts, credit records, and older clients cannot supply these timings.
+Missing instrumentation or samples are labeled explicitly rather than inferred
+from event timestamps. CSV exports include timings in milliseconds.
+
+This change is prepared locally and has not been deployed. Apply
+`005_ai_performance.sql` after `004_feature_usage.sql`, deploy the matching website,
+then distribute the schema-v4 Mac build. The existing telemetry opt-out clears
+queued timings and prevents a request crossing an identity reset from being
+recorded under the new installation. No prompt, response, account identifier, or
+billing request identifier is included.
+
+Local verification passed 95 Mac authentication/analytics tests and all 35
+website tests, including isolated PostgreSQL ingestion, aggregation, migration
+reapplication, access restrictions, and dashboard timing states. The Mac app and
+website build also passed. This does not change the production deployment status.
+
 ### Reminders, drawing, recording, and listening
 
 Schema version 3 adds these measurements to the Mac app. The server and dashboard
@@ -250,7 +290,8 @@ unique counts; adding them does not produce a period's unique device count.
    `select public.analytics_prune();` daily through an existing scheduler. This
    removes raw events and inactive installation records after 180 days.
    Then apply `docs/analytics/003_usage_v2.sql` and
-   `docs/analytics/004_feature_usage.sql` for the current collector and dashboard.
+   `docs/analytics/004_feature_usage.sql` and
+   `docs/analytics/005_ai_performance.sql` for the current collector and dashboard.
    They preserve the original ingestion signatures for older clients and add no
    access to authentication or billing records.
 2. Add these server environment variables to the **kodi-reader** Vercel project:
@@ -332,7 +373,8 @@ queue, and reading-time checks.
 ## Privacy and delivery
 
 The payload schema permits only event/installation/session UUIDs, event time,
-an event name, optional whole seconds of engagement/recording/listening time, and closed properties
+an event name, optional whole seconds of engagement/recording/listening time, millisecond
+AI response/latency/streaming timings, and closed properties
 for platform, version, build, document format, schema version, general AI error
 category, and a telemetry-only AI request UUID. The country observation is
 supplied separately by the Vercel collector rather than the app payload.

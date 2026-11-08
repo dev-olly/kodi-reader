@@ -64,6 +64,22 @@ test('PostgreSQL migration, RLS, deduplication, UTC aggregation, >1000 rows and 
     sql(readFileSync(join(root, 'docs/analytics/verify.sql'), 'utf8'));
     sql(readFileSync(join(root, 'docs/analytics/verify-usage-v2.sql'), 'utf8'));
     sql(readFileSync(join(root, 'docs/analytics/verify-feature-usage.sql'), 'utf8'));
+    const performanceMigration = readFileSync(join(root, 'docs/analytics/005_ai_performance.sql'), 'utf8');
+    sql(performanceMigration);
+    sql(`
+      insert into public.analytics_events (id, installation_id, session_id, occurred_at, name, request_id, schema_version, response_time_ms, latency_ms, streaming_time_ms)
+      values ('f5555555-5555-4555-8555-555555555555', 'a5555555-5555-4555-8555-555555555555',
+        'b5555555-5555-4555-8555-555555555555', now(), 'ai_request_completed',
+        'c5555555-5555-4555-8555-555555555555', 4, 1200, 200, 1000);
+    `);
+    sql(performanceMigration);
+    sql(`do $$ begin
+      assert (select response_time_ms from public.analytics_events where id='f5555555-5555-4555-8555-555555555555') = 1200,
+        'reapplying timing migration preserves stored V4 data';
+    end; $$;
+    delete from public.analytics_events where id='f5555555-5555-4555-8555-555555555555';`);
+    sql(readFileSync(join(root, 'docs/analytics/verify-ai-performance.sql'), 'utf8'));
+    sql(readFileSync(join(root, 'docs/analytics/verify-feature-usage.sql'), 'utf8'));
     // Minimal existing application schemas. The production auth / credits
     // migration owns these tables; analytics never creates or changes them.
     sql(`
@@ -78,8 +94,10 @@ test('PostgreSQL migration, RLS, deduplication, UTC aggregation, >1000 rows and 
     sql(serverMigration);
     sql(usageMigration); // Preserve the optional existing history panel as well.
     sql(featureMigration); // V3 preserves that same optional panel and ACLs.
+    sql(performanceMigration); // V4 preserves history, feature metrics, and ACLs.
     sql(readFileSync(join(root, 'docs/analytics/verify-server-usage.sql'), 'utf8'));
     sql(readFileSync(join(root, 'docs/analytics/verify-feature-usage.sql'), 'utf8'));
+    sql(readFileSync(join(root, 'docs/analytics/verify-ai-performance.sql'), 'utf8'));
   } finally {
     if (started) run('pg_ctl', ['-D', data, '-m', 'immediate', '-w', 'stop']);
     rmSync(directory, { recursive: true, force: true });

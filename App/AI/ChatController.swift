@@ -23,9 +23,9 @@ final class ChatController {
     var onInsufficientCredits: (() -> Void)?
     /// Semantic request lifecycle callbacks carry no question or response content.
     var onRequestStarted: ((UUID) -> Void)?
-    var onRequestCompleted: ((UUID) -> Void)?
-    var onRequestFailed: ((UUID, Error) -> Void)?
-    var onRequestCancelled: ((UUID) -> Void)?
+    var onRequestCompleted: ((UUID, AnalyticsAIRequestTiming?) -> Void)?
+    var onRequestFailed: ((UUID, Error, AnalyticsAIRequestTiming?) -> Void)?
+    var onRequestCancelled: ((UUID, AnalyticsAIRequestTiming?) -> Void)?
     /// Called after the conversation changes so AppModel can write the book record.
     var onPersist: (([ChatThread], UUID?) -> Void)?
     /// Live book metadata for the system prompt.
@@ -40,11 +40,15 @@ final class ChatController {
     @ObservationIgnored private var operationID: UUID?
     /// This UUID is independent of the account-linked billing operation ID.
     @ObservationIgnored private var analyticsRequestID: UUID?
+    @ObservationIgnored private var analyticsClock: AnalyticsAIRequestClock?
+    @ObservationIgnored private let uptime: () -> TimeInterval
 
-    init(configStore: AIConfigStore, auth: AIAuthController, service: AIChatService = AIChatService()) {
+    init(configStore: AIConfigStore, auth: AIAuthController, service: AIChatService = AIChatService(),
+         uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) {
         self.configStore = configStore
         self.auth = auth
         self.service = service
+        self.uptime = uptime
     }
 
     var canSend: Bool {
@@ -120,6 +124,7 @@ final class ChatController {
                 self.persist()
                 let telemetryID = UUID()
                 self.analyticsRequestID = telemetryID
+                self.analyticsClock = AnalyticsAIRequestClock(now: self.uptime())
                 self.onRequestStarted?(telemetryID)
                 requestStarted = true
                 let stream = self.service.stream(
@@ -133,6 +138,7 @@ final class ChatController {
                 )
                 for try await token in stream {
                     guard self.operationID == operation, !Task.isCancelled else { return }
+                    if !token.isEmpty { self.analyticsClock?.receivedContent(at: self.uptime()) }
                     if let index = self.messages.lastIndex(where: { $0.id == assistant.id }) {
                         self.messages[index].text += token
                     }
@@ -191,13 +197,15 @@ final class ChatController {
 
     private func finishAnalyticsRequest(_ outcome: AnalyticsOutcome) {
         guard let id = analyticsRequestID else { return }
+        let timing = analyticsClock?.timing(at: uptime())
         // Clear before invoking observers so re-entrant Stop or a late stream
         // callback cannot emit a second terminal outcome.
         analyticsRequestID = nil
+        analyticsClock = nil
         switch outcome {
-        case .completed: onRequestCompleted?(id)
-        case .failed(let error): onRequestFailed?(id, error)
-        case .cancelled: onRequestCancelled?(id)
+        case .completed: onRequestCompleted?(id, timing)
+        case .failed(let error): onRequestFailed?(id, error, timing)
+        case .cancelled: onRequestCancelled?(id, timing)
         }
     }
 
@@ -250,6 +258,7 @@ final class ChatController {
 
     /// Restore a book's threads without writing back.
     func load(threads stored: [ChatThread], activeID: UUID?) {
+        finishAnalyticsRequest(.cancelled)
         operationID = nil
         streamTask?.cancel()
         streamTask = nil
@@ -285,6 +294,7 @@ final class ChatController {
 
     /// Clear in-memory state without persisting — used when closing a book.
     func detach() {
+        finishAnalyticsRequest(.cancelled)
         operationID = nil
         streamTask?.cancel()
         streamTask = nil

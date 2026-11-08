@@ -151,7 +151,7 @@ struct KodiSettingsView: View {
                     get: { model.analytics.isEnabled },
                     set: { model.analytics.setEnabled($0) }
                 ))
-                Text("Help improve Kodi by sharing feature counts, reader engagement time, and approximate connection country. Engagement includes reading, notes, drawing, and Ask AI while the reader is active; idle time is excluded. A random identifier distinguishes this installation without linking it to your account.")
+                Text("Help improve Kodi by sharing feature counts, reader engagement time, Ask AI response and streaming timings, and approximate connection country. Engagement includes reading, notes, drawing, and Ask AI while the reader is active; idle time is excluded. A random identifier distinguishes this installation without linking it to your account.")
                     .font(.callout).foregroundStyle(.secondary)
                 Text("These statistics are pseudonymous. Your books, titles, reading passages, note text, sketches, webpage addresses, AI questions and answers, and account details are never included. Country is inferred when data uploads; no GPS permission, city, precise location, or raw IP address is stored in analytics.")
                     .font(.callout).foregroundStyle(.secondary)

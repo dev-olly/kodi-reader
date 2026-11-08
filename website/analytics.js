@@ -22,6 +22,12 @@ const EVENT_NAMES = {
 const FEATURE_NAMES = ['book_imported', 'page_turned', 'highlight_created', 'note_created', 'note_edit_session', 'sketch_created', 'sketch_edit_session', 'web_opened'];
 const SEMANTIC_FEATURES = new Set(['note_created', 'note_edit_session', 'sketch_created', 'sketch_edit_session']);
 const LEGACY_FEATURES = ['note_saved', 'sketch_saved'];
+const AI_TIMING_METRICS = {
+  response_time_ms: { label: 'Response time', description: 'Request start to completion' },
+  latency_ms: { label: 'First-text latency', description: 'Request start to first visible text' },
+  streaming_time_ms: { label: 'Streaming time', description: 'First visible text to completion' },
+};
+const AI_TIMING_OUTCOMES = { completed: 'Completed', failed: 'Failed', cancelled: 'Stopped' };
 const FEATURE_USAGE_GROUPS = {
   reminders: { title: 'Reminders', primary: 'created', caption: 'reminders created', overview: ['devices', 'completed', 'opened'], metrics: { devices: 'Devices', created: 'Created', updated: 'Edited', completed: 'Completed', reopened: 'Reopened', deleted: 'Deleted', restored: 'Restored', opened: 'Sources opened' } },
   sketching: { title: 'Drawing', primary: 'created', caption: 'drawings created', overview: ['devices', 'edit_sessions', 'opened'], metrics: { devices: 'Devices', created: 'Created', edit_sessions: 'Editing sessions', opened: 'Opened', deleted: 'Deleted' } },
@@ -33,6 +39,11 @@ const state = { authenticated: false, email: '', checkingSession: false, signing
 
 function setText(id, value) { $(id).textContent = value; }
 function count(value) { return number.format(value); }
+function milliseconds(value) {
+  if (value === null || value === undefined) return 'No samples';
+  if (value < 1000) return `${count(value)} ms`;
+  return `${new Intl.NumberFormat(undefined, { maximumFractionDigits: 2 }).format(value / 1000)} s`;
+}
 function duration(seconds) {
   if (seconds === 0) return '0m';
   if (seconds < 60) return '<1m';
@@ -136,6 +147,7 @@ function resetValues() {
   sectionEmpty($('version-list'), 'Version distribution appears with app activity.');
   sectionEmpty($('country-list'), 'Sign in to see country totals.');
   renderFeatureUsage();
+  renderAiPerformance();
   $('legacy-features').hidden = true;
   setText('history-ledger', '');
   emptyTable($('recent-table'), 3, 'Activity appears as events reach the server.');
@@ -257,6 +269,24 @@ function validateData(input, requestedDays) {
     for (const key of ['started', 'completed', 'failed', 'cancelled', 'unknown', 'legacy_started']) if (!nonnegative(input.ai_outcomes[key])) throw new Error('invalid_data');
     const outcomes = input.ai_outcomes;
     if (outcomes.completed + outcomes.failed + outcomes.cancelled + outcomes.unknown !== outcomes.started || outcomes.legacy_started > outcomes.unknown) throw new Error('invalid_data');
+  }
+  if (input.ai_performance !== undefined) {
+    const performance = input.ai_performance;
+    const integer = value => Number.isSafeInteger(value) && value >= 0;
+    if (!performance || typeof performance.available !== 'boolean' || typeof performance.previous_available !== 'boolean'
+      || !integer(performance.coverage?.devices) || !integer(performance.coverage?.older_devices)) throw new Error('invalid_data');
+    for (const outcome of Object.keys(AI_TIMING_OUTCOMES)) {
+      const group = performance[outcome];
+      if (!group || !integer(group.requests)) throw new Error('invalid_data');
+      for (const key of Object.keys(AI_TIMING_METRICS)) {
+        const metric = group[key];
+        if (!metric || !integer(metric.samples) || metric.samples > group.requests) throw new Error('invalid_data');
+        for (const stat of ['average', 'p50', 'p95']) {
+          if (metric.samples === 0 ? metric[stat] !== null : !nonnegative(metric[stat]) || metric[stat] > 86400000) throw new Error('invalid_data');
+        }
+        if (metric.samples > 0 && metric.p50 > metric.p95) throw new Error('invalid_data');
+      }
+    }
   }
   if (input.coverage) {
     if (!['first_event_at', 'last_received_at'].every(key => input.coverage[key] === null || (typeof input.coverage[key] === 'string' && Number.isFinite(date(input.coverage[key]).getTime()))) || !nonnegative(input.coverage.instrumented_devices) || !nonnegative(input.coverage.legacy_devices) || typeof input.coverage.semantic_features_available !== 'boolean') throw new Error('invalid_data');
@@ -485,6 +515,7 @@ function render() {
     setText('history-ledger', `Independent credit events in this period: ${count(history.summary.ai_charged.value)} charged and ${count(history.summary.ai_released.value)} refunded. A charge does not establish that a response was completed. These records are separate from the app telemetry above.`);
   }
   renderAi(server, measured);
+  renderAiPerformance();
   if (!measured) {
     for (const id of ['metric-active', 'metric-readers', 'metric-ai', 'metric-time', 'reading-total', 'reading-average', 'reading-adoption']) unmeasured(id);
     for (const id of ['change-active', 'change-readers', 'change-ai', 'change-time']) { setText(id, 'App telemetry has not started'); $(id).removeAttribute('title'); delete $(id).dataset.direction; }
@@ -541,6 +572,78 @@ function renderAi(server, measured) {
   $('ai-cancelled-bar').style.width = `${percent(outcomes.cancelled, started)}%`;
   $('ai-unknown-bar').style.width = `${percent(outcomes.unknown, started)}%`;
   $('outcome-track').setAttribute('aria-label', `${count(outcomes.completed)} completed, ${count(outcomes.failed)} failed, ${count(outcomes.cancelled)} stopped, ${count(outcomes.unknown)} unknown out of ${count(started)} requests started in the period`);
+}
+function renderAiPerformance() {
+  const performance = state.data?.ai_performance;
+  const available = performance?.available === true;
+  const samples = available ? performance.completed.response_time_ms.samples : 0;
+  const status = !state.data ? 'PRIVATE' : !available ? 'NOT MEASURED YET' : samples > 0 ? 'COMPLETED RESPONSES' : 'NO COMPLETED SAMPLES';
+  setText('ai-performance-status', status);
+  const cards = $('ai-timing-cards');
+  cards.replaceChildren();
+  for (const [key, definition] of Object.entries(AI_TIMING_METRICS)) {
+    const metric = available ? performance.completed[key] : null;
+    const article = document.createElement('article'); article.className = 'ai-timing-card';
+    const label = cell(definition.label, 'h3');
+    const value = cell(!state.data ? '—' : !available ? 'Not measured yet' : milliseconds(metric.average), 'p'); value.className = 'ai-timing-value';
+    value.classList.toggle('is-unmeasured', !metric || metric.samples === 0);
+    const caption = cell('Average · completed responses', 'p'); caption.className = 'ai-timing-caption';
+    const definitionText = cell(definition.description, 'p'); definitionText.className = 'ai-timing-definition';
+    const distribution = document.createElement('dl'); distribution.className = 'ai-timing-distribution';
+    for (const [stat, name] of [['p50', 'Median'], ['p95', '95th percentile']]) {
+      const row = document.createElement('div');
+      row.append(cell(name, 'dt'), cell(metric?.samples > 0 ? milliseconds(metric[stat]) : '—', 'dd'));
+      distribution.append(row);
+    }
+    const sample = cell(!state.data ? 'Sign in to view timings.' : !available ? 'Awaiting timing measurements.' : `${count(metric.samples)} ${metric.samples === 1 ? 'sample' : 'samples'}`, 'p'); sample.className = 'ai-timing-samples';
+    article.append(label, value, caption, definitionText, distribution, sample); cards.append(article);
+  }
+  const body = $('ai-timing-table');
+  body.replaceChildren();
+  if (!available) {
+    emptyTable(body, 6, state.data ? 'Not measured yet. Updated Kodi apps must report request timings.' : 'Sign in to view response timings.');
+  } else {
+    for (const [outcome, label] of Object.entries(AI_TIMING_OUTCOMES)) {
+      for (const [key, definition] of Object.entries(AI_TIMING_METRICS)) {
+        const metric = performance[outcome][key];
+        const row = document.createElement('tr');
+        const heading = cell(label, 'th'); heading.scope = 'row';
+        row.append(heading, cell(definition.label), cell(count(metric.samples)), cell(milliseconds(metric.average)), cell(milliseconds(metric.p50)), cell(milliseconds(metric.p95)));
+        body.append(row);
+      }
+    }
+  }
+  if (!state.data) {
+    $('ai-timing-details').open = false;
+    setText('ai-performance-coverage', 'Sign in to see Ask AI response timings.');
+    setText('ai-timing-other-outcomes', 'Failed and stopped requests are measured separately.');
+    return;
+  }
+  const snapshot = state.snapshotMode ? 'Saved snapshot. ' : '';
+  if (!available) {
+    setText('ai-performance-coverage', `${snapshot}Not measured yet. Response timings appear when updated Kodi apps send measurements; older requests and credit records have no timing data.`);
+    setText('ai-timing-other-outcomes', 'Failed and stopped timings are not measured yet.');
+    return;
+  }
+  const coverage = performance.coverage;
+  const older = coverage.older_devices > 0 ? ` ${count(coverage.older_devices)} older ${coverage.older_devices === 1 ? 'device does' : 'devices do'} not report timings.` : '';
+  setText('ai-performance-coverage', `${snapshot}${count(coverage.devices)} ${coverage.devices === 1 ? 'device can' : 'devices can'} report request timings.${older} Only requests started in the selected period with a recorded timing are included.`);
+  setText('ai-timing-other-outcomes', `${count(samples)} completed ${samples === 1 ? 'response' : 'responses'} with timing samples. Separate measurements: ${count(performance.failed.response_time_ms.samples)} failed and ${count(performance.cancelled.response_time_ms.samples)} stopped requests. Requests ending before text have no first-text latency or streaming sample.`);
+}
+function aiPerformanceCsvRows(data) {
+  const performance = data.ai_performance;
+  const rows = [[], ['AI performance status', performance?.available ? 'Measured' : 'Not measured yet'], ['AI performance previous-period capability', performance?.previous_available ? 'Measured' : 'Not measured yet'], ['AI timing definition', 'Response: request start to terminal outcome; latency: request start to first visible text; streaming: first visible text to terminal outcome'], ['AI timing cohort', 'Requests started in the selected period; completed, failed and stopped outcomes remain separate']];
+  if (performance) rows.push(['Timing-capable devices', performance.coverage.devices], ['Older devices without timing capability', performance.coverage.older_devices]);
+  rows.push(['AI timing outcome', 'Metric (milliseconds)', 'Timed requests in outcome', 'Samples', 'Average (ms)', 'Median / p50 (ms)', 'p95 (ms)']);
+  if (performance?.available) {
+    for (const [outcome, label] of Object.entries(AI_TIMING_OUTCOMES)) {
+      for (const key of Object.keys(AI_TIMING_METRICS)) {
+        const metric = performance[outcome][key];
+        rows.push([label, key, performance[outcome].requests, metric.samples, metric.average ?? '', metric.p50 ?? '', metric.p95 ?? '']);
+      }
+    }
+  }
+  return rows;
 }
 function appendFeatureRows(container, rows) {
   const maximum = Math.max(1, ...rows.filter(item => item.measured).map(item => item.count));
@@ -844,6 +947,7 @@ function exportCsv() {
     }
   }
   if (data.ai_outcomes) { rows.push([], ['AI request cohort outcome', 'Count']); for (const [key, value] of Object.entries(data.ai_outcomes)) rows.push([key, hasTelemetry() ? value : '']); }
+  rows.push(...aiPerformanceCsvRows(data));
   rows.push([], ['Connection country (upload origin)', 'Distinct active devices']);
   if (Array.isArray(data.countries)) for (const country of data.countries) rows.push([country.country_code || 'Unknown', country.devices]);
   else rows.push(['Not measured yet', '']);
@@ -901,7 +1005,7 @@ if ('IntersectionObserver' in window) {
       if (selected) { for (const link of navLinks) link.removeAttribute('aria-current'); selected.setAttribute('aria-current', 'page'); }
     }
   }, { rootMargin: '-10% 0px -65% 0px', threshold: 0 });
-  for (const id of ['overview', 'reading', 'ai', 'countries', 'features', 'feature-usage', 'activity']) observer.observe($(id));
+  for (const id of ['overview', 'reading', 'ai', 'ai-performance', 'countries', 'features', 'feature-usage', 'activity']) observer.observe($(id));
 }
 document.addEventListener('visibilitychange', () => { if (!document.hidden && state.authenticated && !state.loading && Date.now() - state.lastAttempt >= 60000) load(); });
 window.addEventListener('resize', renderChart);

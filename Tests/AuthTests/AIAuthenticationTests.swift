@@ -13,13 +13,85 @@ private final class MemoryAuthStorage: AuthLocalStorage, @unchecked Sendable {
 }
 
 extension AIAuthenticationTests {
+    func testAnalyticsMeasuresFirstContentAndFullStreamUsingMonotonicTime() async throws {
+        let auth = AIAuthController(client: try client(session: session()))
+        // Role-only and empty SSE deltas must not start the streaming clock.
+        let body = "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"
+            + "data: {\"choices\":[{\"delta\":{\"content\":\"\"}}]}\n\n"
+            + "data: {\"choices\":[{\"delta\":{\"content\":\"First\"}}]}\n\n"
+            + "data: {\"choices\":[{\"delta\":{\"content\":\" second\"}}]}\n\n"
+            + "data: [DONE]\n\n"
+        var ticks: [TimeInterval] = [100, 100.25, 100.75, 101.5]
+        let controller = try chat(auth: auth, network: network(status: 200, body: body), uptime: { ticks.removeFirst() })
+        var timings: [AnalyticsAIRequestTiming?] = []
+        controller.onRequestCompleted = { _, timing in timings.append(timing) }
+        controller.input = "Question"; controller.send(); try await settle(controller)
+        XCTAssertTrue(ticks.isEmpty)
+        XCTAssertEqual(timings.count, 1)
+        let timing = try XCTUnwrap(timings.first.flatMap { $0 })
+        XCTAssertEqual(timing.responseTimeMilliseconds, 1500)
+        XCTAssertEqual(timing.latencyMilliseconds, 250)
+        XCTAssertEqual(timing.streamingTimeMilliseconds, 1250)
+        XCTAssertEqual(controller.messages.last?.text, "First second")
+        controller.stop()
+        XCTAssertEqual(timings.count, 1)
+    }
+
+    func testAnalyticsFailureTimingDistinguishesNoContentFromInterruptedContent() async throws {
+        let cases: [(Int, String, [TimeInterval], Int?, Int?)] = [
+            (503, "{}", [100, 101.5], nil, nil),
+            (200, "data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n", [100, 100.25, 101.5], 250, 1250),
+        ]
+        for (status, body, times, latency, streaming) in cases {
+            let auth = AIAuthController(client: try client(session: session()))
+            var ticks = times
+            let controller = try chat(auth: auth, network: network(status: status, body: body), uptime: { ticks.removeFirst() })
+            var timings: [AnalyticsAIRequestTiming?] = []
+            controller.onRequestFailed = { _, _, timing in timings.append(timing) }
+            controller.input = "Question"; controller.send(); try await settle(controller)
+            XCTAssertEqual(timings.count, 1)
+            let timing = try XCTUnwrap(timings.first.flatMap { $0 })
+            XCTAssertEqual(timing.responseTimeMilliseconds, 1500)
+            XCTAssertEqual(timing.latencyMilliseconds, latency)
+            XCTAssertEqual(timing.streamingTimeMilliseconds, streaming)
+            XCTAssertTrue(ticks.isEmpty)
+        }
+    }
+
+    func testAnalyticsCancellationTimingIsFinalizedOnceWhenBookChanges() async throws {
+        for detach in [false, true] {
+            let auth = AIAuthController(client: try client(session: session()))
+            var now: TimeInterval = 100
+            let controller = try chat(auth: auth, network: network(status: 200), uptime: { now })
+            MockURLProtocol.holdResponses = true
+            defer { MockURLProtocol.holdResponses = false }
+            var started = false
+            var timings: [AnalyticsAIRequestTiming?] = []
+            controller.onRequestStarted = { _ in started = true }
+            controller.onRequestCancelled = { _, timing in timings.append(timing) }
+            controller.input = "Question"; controller.send()
+            let deadline = Date().addingTimeInterval(3)
+            while !started && Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
+            XCTAssertTrue(started)
+            now = 102
+            if detach { controller.detach() } else { controller.load(threads: [], activeID: nil) }
+            controller.stop()
+            try await Task.sleep(for: .milliseconds(20))
+            XCTAssertEqual(timings.count, 1)
+            let timing = try XCTUnwrap(timings.first.flatMap { $0 })
+            XCTAssertEqual(timing.responseTimeMilliseconds, 2000)
+            XCTAssertNil(timing.latencyMilliseconds)
+            XCTAssertNil(timing.streamingTimeMilliseconds)
+        }
+    }
+
     func testAnalyticsCallbacksDistinguishCompletedFailedAndSignedOutRequests() async throws {
         let signedOut = try chat(auth: AIAuthController(client: nil))
         var signedOutEvents: [String] = []
         signedOut.onRequestStarted = { _ in signedOutEvents.append("started") }
-        signedOut.onRequestCompleted = { _ in signedOutEvents.append("completed") }
-        signedOut.onRequestFailed = { _, _ in signedOutEvents.append("failed") }
-        signedOut.onRequestCancelled = { _ in signedOutEvents.append("cancelled") }
+        signedOut.onRequestCompleted = { _, _ in signedOutEvents.append("completed") }
+        signedOut.onRequestFailed = { _, _, _ in signedOutEvents.append("failed") }
+        signedOut.onRequestCancelled = { _, _ in signedOutEvents.append("cancelled") }
         signedOut.input = "Question"
         signedOut.send()
         XCTAssertTrue(signedOutEvents.isEmpty)
@@ -35,9 +107,9 @@ extension AIAuthenticationTests {
             var events: [String] = []
             var requestIDs: [UUID] = []
             controller.onRequestStarted = { requestIDs.append($0); events.append("started") }
-            controller.onRequestCompleted = { requestIDs.append($0); events.append("completed") }
-            controller.onRequestFailed = { id, _ in requestIDs.append(id); events.append("failed") }
-            controller.onRequestCancelled = { requestIDs.append($0); events.append("cancelled") }
+            controller.onRequestCompleted = { id, _ in requestIDs.append(id); events.append("completed") }
+            controller.onRequestFailed = { id, _, _ in requestIDs.append(id); events.append("failed") }
+            controller.onRequestCancelled = { id, _ in requestIDs.append(id); events.append("cancelled") }
             controller.input = "Question"
             controller.send()
             try await settle(controller)
@@ -54,9 +126,9 @@ extension AIAuthenticationTests {
         let controller = try chat(auth: auth, network: network(status: 200))
         var events: [String] = []
         controller.onRequestStarted = { _ in events.append("started") }
-        controller.onRequestCompleted = { _ in events.append("completed") }
-        controller.onRequestFailed = { _, _ in events.append("failed") }
-        controller.onRequestCancelled = { _ in events.append("cancelled") }
+        controller.onRequestCompleted = { _, _ in events.append("completed") }
+        controller.onRequestFailed = { _, _, _ in events.append("failed") }
+        controller.onRequestCancelled = { _, _ in events.append("cancelled") }
         controller.input = "Question"
         controller.send()
         controller.stop()
@@ -74,7 +146,7 @@ extension AIAuthenticationTests {
         }
         var started: [UUID] = [], completed: [UUID] = []
         controller.onRequestStarted = { started.append($0) }
-        controller.onRequestCompleted = { completed.append($0) }
+        controller.onRequestCompleted = { id, _ in completed.append(id) }
         controller.input = "Question"; controller.send(); try await settle(controller)
         controller.input = "Follow up"; controller.send(); try await settle(controller)
         XCTAssertEqual(started, completed)
@@ -93,9 +165,9 @@ extension AIAuthenticationTests {
         defer { MockURLProtocol.holdResponses = false }
         var started: [UUID] = [], cancelled: [UUID] = [], other: [UUID] = []
         controller.onRequestStarted = { started.append($0) }
-        controller.onRequestCancelled = { cancelled.append($0) }
-        controller.onRequestCompleted = { other.append($0) }
-        controller.onRequestFailed = { id, _ in other.append(id) }
+        controller.onRequestCancelled = { id, _ in cancelled.append(id) }
+        controller.onRequestCompleted = { id, _ in other.append(id) }
+        controller.onRequestFailed = { id, _, _ in other.append(id) }
         controller.input = "Question"; controller.send()
         let deadline = Date().addingTimeInterval(3)
         while started.isEmpty && Date() < deadline { try await Task.sleep(for: .milliseconds(5)) }
@@ -227,11 +299,12 @@ final class AIAuthenticationTests: XCTestCase {
         return URLSession(configuration: config)
     }
 
-    private func chat(auth: AIAuthController, network: URLSession = .shared) throws -> ChatController {
+    private func chat(auth: AIAuthController, network: URLSession = .shared,
+                      uptime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }) throws -> ChatController {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         addTeardownBlock { try? FileManager.default.removeItem(at: directory) }
-        return ChatController(configStore: AIConfigStore(directory: directory), auth: auth, service: AIChatService(session: network))
+        return ChatController(configStore: AIConfigStore(directory: directory), auth: auth, service: AIChatService(session: network), uptime: uptime)
     }
 
     private func settle(_ chat: ChatController) async throws {

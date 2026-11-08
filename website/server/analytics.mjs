@@ -14,6 +14,7 @@ export const EVENT_NAMES = Object.freeze([
 ]);
 export const MAX_BODY_BYTES = 64 * 1024;
 export const MAX_BATCH_SIZE = 50;
+export const MAX_AI_TIMING_MS = 86_400_000;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const EVENT_KEYS = new Set(['id', 'installation_id', 'session_id', 'occurred_at', 'name', 'duration_seconds', 'properties']);
@@ -24,9 +25,14 @@ const PROPERTY_RULES = Object.freeze({
   content_type: value => ['epub', 'pdf', 'web'].includes(value),
   error_category: value => ['network', 'authentication', 'credits', 'service', 'rate_limit', 'provider', 'cancelled', 'unknown'].includes(value),
   request_id: value => typeof value === 'string' && UUID.test(value),
-  schema_version: value => Number.isInteger(value) && [1, 2, 3].includes(value),
+  schema_version: value => Number.isInteger(value) && [1, 2, 3, 4].includes(value),
+  response_time_ms: value => Number.isInteger(value) && value >= 0 && value <= MAX_AI_TIMING_MS,
+  latency_ms: value => Number.isInteger(value) && value >= 0 && value <= MAX_AI_TIMING_MS,
+  streaming_time_ms: value => Number.isInteger(value) && value >= 0 && value <= MAX_AI_TIMING_MS,
 });
 const AI_EVENTS = new Set(['ai_request_started', 'ai_request_completed', 'ai_request_failed', 'ai_request_cancelled']);
+const AI_TERMINAL_EVENTS = new Set(['ai_request_completed', 'ai_request_failed', 'ai_request_cancelled']);
+const AI_TIMING_KEYS = ['response_time_ms', 'latency_ms', 'streaming_time_ms'];
 const DURATION_EVENTS = new Set(['reading_heartbeat', 'audio_recording_heartbeat', 'tts_listening_heartbeat']);
 const V3_EVENTS = new Set(EVENT_NAMES.filter(name => name.startsWith('reminder_') || name.startsWith('audio_recording_') || name.startsWith('tts_listening_') || ['sketch_opened', 'sketch_deleted'].includes(name)));
 // ISO 3166-1 alpha-2 codes, rather than accepting arbitrary two-letter strings.
@@ -152,7 +158,21 @@ export function validateBatch(body, now = new Date()) {
     }
     if (properties.request_id !== undefined && !AI_EVENTS.has(event.name)) invalid('Request IDs belong only to AI lifecycle events.');
     if (AI_EVENTS.has(event.name) && properties.schema_version >= 2 && !properties.request_id) invalid('AI lifecycle events require a telemetry request ID.');
-    if (V3_EVENTS.has(event.name) && properties.schema_version !== 3) invalid('These feature events require schema version 3.');
+    if (V3_EVENTS.has(event.name) && !(properties.schema_version >= 3)) invalid('These feature events require schema version 3 or later.');
+    if (AI_TIMING_KEYS.some(key => Object.hasOwn(properties, key))) {
+      if (properties.schema_version !== 4 || !properties.request_id || !AI_TERMINAL_EVENTS.has(event.name)) {
+        invalid('AI timings require a version 4 terminal event and telemetry request ID.');
+      }
+      if (properties.response_time_ms === undefined) invalid('AI timings require total response time.');
+      const hasLatency = properties.latency_ms !== undefined;
+      const hasStreaming = properties.streaming_time_ms !== undefined;
+      if (hasLatency !== hasStreaming || (event.name === 'ai_request_completed' && !hasLatency)) {
+        invalid('First-text latency and streaming time must be paired; completed timed replies require both.');
+      }
+      if (hasLatency && properties.latency_ms + properties.streaming_time_ms !== properties.response_time_ms) {
+        invalid('Latency and streaming time must sum to total response time.');
+      }
+    }
     const normalized = {
       id: event.id.toLowerCase(),
       installation_id: event.installation_id.toLowerCase(),

@@ -28,7 +28,7 @@ final class UsageAnalyticsTests: XCTestCase {
         XCTAssertEqual(Set(properties.keys), Set(["platform", "version", "build", "content_type", "schema_version"]))
         XCTAssertEqual(body["name"] as? String, "reading_heartbeat")
         XCTAssertEqual(properties["platform"] as? String, "macOS")
-        XCTAssertEqual(properties["schema_version"] as? Int, 3)
+        XCTAssertEqual(properties["schema_version"] as? Int, 4)
         XCTAssertEqual(try AnalyticsEvent.decoder().decode(AnalyticsEvent.self, from: data), item)
     }
 
@@ -40,6 +40,9 @@ final class UsageAnalyticsTests: XCTestCase {
         let decoded = try AnalyticsEvent.decoder().decode(AnalyticsEvent.self, from: JSONSerialization.data(withJSONObject: json))
         XCTAssertEqual(decoded.properties.schemaVersion, 1)
         XCTAssertNil(decoded.properties.requestID)
+        XCTAssertNil(decoded.properties.responseTimeMilliseconds)
+        XCTAssertNil(decoded.properties.latencyMilliseconds)
+        XCTAssertNil(decoded.properties.streamingTimeMilliseconds)
         XCTAssertEqual(decoded.id.uuidString, json["id"] as? String)
     }
 
@@ -81,7 +84,7 @@ final class UsageAnalyticsTests: XCTestCase {
         let listening = analytics.pendingEvents.filter { $0.name == .ttsListeningHeartbeat }
         XCTAssertEqual(recording.compactMap(\.durationSeconds).reduce(0, +), 35)
         XCTAssertEqual(listening.compactMap(\.durationSeconds).reduce(0, +), 12)
-        XCTAssertTrue((recording + listening).allSatisfy { (1...60).contains($0.durationSeconds ?? 0) && $0.properties.schemaVersion == 3 && $0.properties.contentType == nil && $0.properties.requestID == nil })
+        XCTAssertTrue((recording + listening).allSatisfy { (1...60).contains($0.durationSeconds ?? 0) && $0.properties.schemaVersion == 4 && $0.properties.contentType == nil && $0.properties.requestID == nil })
         XCTAssertTrue(analytics.pendingEvents.filter { $0.name == .readingHeartbeat }.isEmpty)
         await analytics.persistPendingEvents()
     }
@@ -128,6 +131,116 @@ final class UsageAnalyticsTests: XCTestCase {
         XCTAssertEqual(Set(properties.keys), ["platform", "version", "build", "content_type", "schema_version", "request_id"])
         XCTAssertEqual(properties["request_id"] as? String, requestID.uuidString)
         XCTAssertEqual(try AnalyticsEvent.decoder().decode(AnalyticsEvent.self, from: data), item)
+    }
+
+    func testAIRequestClockRecordsFirstTextOnceAndPreservesMillisecondPhaseSum() throws {
+        var clock = AnalyticsAIRequestClock(now: 10)
+        clock.receivedContent(at: 10.25)
+        clock.receivedContent(at: 10.75)
+        let timing = try XCTUnwrap(clock.timing(at: 11.125))
+        XCTAssertEqual(timing.responseTimeMilliseconds, 1125)
+        XCTAssertEqual(timing.latencyMilliseconds, 250)
+        XCTAssertEqual(timing.streamingTimeMilliseconds, 875)
+        XCTAssertEqual(timing.latencyMilliseconds! + timing.streamingTimeMilliseconds!, timing.responseTimeMilliseconds)
+
+        var submillisecond = AnalyticsAIRequestClock(now: 0)
+        submillisecond.receivedContent(at: 0.0009)
+        let shortTiming = try XCTUnwrap(submillisecond.timing(at: 0.0011))
+        XCTAssertEqual(shortTiming.responseTimeMilliseconds, 1)
+        XCTAssertEqual(shortTiming.latencyMilliseconds, 0)
+        XCTAssertEqual(shortTiming.streamingTimeMilliseconds, 1)
+    }
+
+    func testAIRequestClockKeepsMissingFirstTextDistinctFromZeroAndRejectsInvalidClocks() throws {
+        let waiting = AnalyticsAIRequestClock(now: 10)
+        let interrupted = try XCTUnwrap(waiting.timing(at: 12))
+        XCTAssertEqual(interrupted.responseTimeMilliseconds, 2000)
+        XCTAssertNil(interrupted.latencyMilliseconds)
+        XCTAssertNil(interrupted.streamingTimeMilliseconds)
+        var immediate = AnalyticsAIRequestClock(now: 10)
+        immediate.receivedContent(at: 10)
+        XCTAssertEqual(immediate.timing(at: 10), AnalyticsAIRequestTiming(responseTimeMilliseconds: 0,
+            latencyMilliseconds: 0, streamingTimeMilliseconds: 0))
+        XCTAssertNil(waiting.timing(at: 9))
+        XCTAssertNil(waiting.timing(at: .nan))
+        XCTAssertNil(waiting.timing(at: .infinity))
+        XCTAssertNil(waiting.timing(at: 86_410.001), "Do not cap a long sleep into a valid performance sample")
+        XCTAssertEqual(waiting.timing(at: 86_410)?.responseTimeMilliseconds, 86_400_000)
+        XCTAssertNil(AnalyticsAIRequestClock(now: .nan).timing(at: 10))
+        let invalidFirstTextTimes: [TimeInterval] = [.nan, -.infinity, 9, 13]
+        for firstText in invalidFirstTextTimes {
+            var invalid = AnalyticsAIRequestClock(now: 10)
+            invalid.receivedContent(at: firstText)
+            XCTAssertNil(invalid.timing(at: 12))
+        }
+    }
+
+    func testAIRequestTimingRejectsOutOfBoundsUnpairedAndInconsistentPhases() {
+        XCTAssertNil(AnalyticsAIRequestTiming(responseTimeMilliseconds: -1))
+        XCTAssertNil(AnalyticsAIRequestTiming(responseTimeMilliseconds: 86_400_001))
+        XCTAssertNil(AnalyticsAIRequestTiming(responseTimeMilliseconds: 10, latencyMilliseconds: 4))
+        XCTAssertNil(AnalyticsAIRequestTiming(responseTimeMilliseconds: 10, streamingTimeMilliseconds: 6))
+        XCTAssertNil(AnalyticsAIRequestTiming(responseTimeMilliseconds: 10, latencyMilliseconds: 4, streamingTimeMilliseconds: 5))
+        XCTAssertNil(AnalyticsAIRequestTiming(responseTimeMilliseconds: 10, latencyMilliseconds: -1, streamingTimeMilliseconds: 11))
+    }
+
+    func testAIRequestTimingWireSchemaRoundTripsZeroAndOmitsMissingPhases() throws {
+        for timing in [
+            try XCTUnwrap(AnalyticsAIRequestTiming(responseTimeMilliseconds: 0, latencyMilliseconds: 0, streamingTimeMilliseconds: 0)),
+            try XCTUnwrap(AnalyticsAIRequestTiming(responseTimeMilliseconds: 2500)),
+        ] {
+            let item = AnalyticsEvent(id: UUID(), installationID: UUID(), sessionID: UUID(), occurredAt: fixedDate,
+                name: .aiRequestCancelled, durationSeconds: nil,
+                properties: .init(platform: "macOS", version: "0.4.9", build: "17", contentType: nil,
+                                  errorCategory: nil, requestID: UUID(), timing: timing))
+            let data = try AnalyticsEvent.encoder().encode(item)
+            let json = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+            let properties = try XCTUnwrap(json["properties"] as? [String: Any])
+            XCTAssertEqual(properties["response_time_ms"] as? Int, timing.responseTimeMilliseconds)
+            XCTAssertEqual(properties["latency_ms"] as? Int, timing.latencyMilliseconds)
+            XCTAssertEqual(properties["streaming_time_ms"] as? Int, timing.streamingTimeMilliseconds)
+            XCTAssertEqual(properties["schema_version"] as? Int, 4)
+            XCTAssertEqual(try AnalyticsEvent.decoder().decode(AnalyticsEvent.self, from: data), item)
+        }
+        for schemaVersion in 1...3 {
+            let old = AnalyticsEvent.Properties(platform: "macOS", version: "0.4.8", build: "16",
+                contentType: nil, errorCategory: nil, requestID: UUID(), schemaVersion: schemaVersion)
+            let data = try AnalyticsEvent.encoder().encode(old)
+            let decoded = try AnalyticsEvent.decoder().decode(AnalyticsEvent.Properties.self, from: data)
+            XCTAssertEqual(decoded.schemaVersion, schemaVersion)
+            XCTAssertNil(decoded.responseTimeMilliseconds)
+            XCTAssertNil(decoded.latencyMilliseconds)
+            XCTAssertNil(decoded.streamingTimeMilliseconds)
+        }
+    }
+
+    func testAITimingsBelongOnlyToCorrelatedTerminalEventsAndSurviveQueueReload() async throws {
+        let (defaults, directory) = context()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let analytics = UsageAnalytics(defaults: defaults, directory: directory, collectionAllowed: true,
+            networkAllowed: false, startTimer: false, date: { self.fixedDate })
+        let timing = try XCTUnwrap(AnalyticsAIRequestTiming(responseTimeMilliseconds: 1500,
+            latencyMilliseconds: 250, streamingTimeMilliseconds: 1250))
+        let completed = UUID()
+        analytics.record(.aiRequestStarted, requestID: completed, timing: timing)
+        analytics.record(.aiRequestCompleted, requestID: completed, timing: timing)
+        analytics.record(.aiRequestFailed, requestID: completed, timing: timing)
+        analytics.record(.appActive, timing: timing)
+        analytics.record(.aiRequestCancelled, timing: timing)
+        let noText = UUID()
+        analytics.record(.aiRequestStarted, requestID: noText)
+        analytics.record(.aiRequestCompleted, requestID: noText,
+            timing: AnalyticsAIRequestTiming(responseTimeMilliseconds: 400))
+        XCTAssertEqual(analytics.pendingEvents.filter { $0.properties.responseTimeMilliseconds != nil }.count, 1)
+        let outcome = try XCTUnwrap(analytics.pendingEvents.first { $0.name == .aiRequestCompleted && $0.properties.requestID == completed })
+        XCTAssertEqual(outcome.properties.responseTimeMilliseconds, 1500)
+        XCTAssertEqual(outcome.properties.latencyMilliseconds, 250)
+        XCTAssertEqual(outcome.properties.streamingTimeMilliseconds, 1250)
+        await analytics.persistPendingEvents()
+        let reloaded = UsageAnalytics(defaults: defaults, directory: directory, collectionAllowed: true,
+            networkAllowed: false, startTimer: false, date: { self.fixedDate })
+        XCTAssertEqual(reloaded.pendingEvents, analytics.pendingEvents)
+        await reloaded.persistPendingEvents()
     }
 
     func testEditorCreationAndEditingAreNotAutosaveCounts() {
@@ -211,18 +324,21 @@ final class UsageAnalyticsTests: XCTestCase {
         let analytics = UsageAnalytics(defaults: defaults, directory: directory, collectionAllowed: true,
             networkAllowed: false, startTimer: false, date: { self.fixedDate })
         let oldRequest = UUID()
+        let timing = AnalyticsAIRequestTiming(responseTimeMilliseconds: 1000, latencyMilliseconds: 200, streamingTimeMilliseconds: 800)
         analytics.record(.aiRequestStarted, requestID: oldRequest)
         analytics.setEnabled(false)
         analytics.setEnabled(true)
-        analytics.record(.aiRequestCompleted, requestID: oldRequest)
+        analytics.record(.aiRequestCompleted, requestID: oldRequest, timing: timing)
         XCTAssertTrue(analytics.pendingEvents.isEmpty)
         let currentRequest = UUID()
         analytics.record(.aiRequestStarted, requestID: currentRequest)
         analytics.record(.aiRequestStarted, requestID: currentRequest)
-        analytics.record(.aiRequestCancelled, requestID: currentRequest)
-        analytics.record(.aiRequestFailed, requestID: currentRequest)
+        analytics.record(.aiRequestCancelled, requestID: currentRequest, timing: timing)
+        analytics.record(.aiRequestFailed, requestID: currentRequest, timing: timing)
         XCTAssertEqual(analytics.pendingEvents.map(\.name), [.aiRequestStarted, .aiRequestCancelled])
         XCTAssertTrue(analytics.pendingEvents.allSatisfy { $0.properties.requestID == currentRequest })
+        XCTAssertNil(analytics.pendingEvents.first?.properties.responseTimeMilliseconds)
+        XCTAssertEqual(analytics.pendingEvents.last?.properties.responseTimeMilliseconds, 1000)
         await analytics.persistPendingEvents()
     }
 

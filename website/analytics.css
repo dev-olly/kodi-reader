@@ -19,6 +19,32 @@
 .access-actions{display:flex;flex-direction:column;align-items:flex-start;justify-self:end;gap:10px}.access-actions .access-help{margin:0}#google-sign-in{min-height:40px;padding-inline:17px}#google-sign-in[aria-disabled="true"]{opacity:.6;cursor:wait}.session-account{font-size:10px;color:#6f7e64;max-width:210px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:1200px){.access-actions{justify-self:start}}@media(max-width:740px){.session-account{display:none}.access-actions{width:100%}#google-sign-in{width:100%;font-size:11px}.access-actions .access-help{font-size:10px}}
 
 /* Feature actions keep timing and coverage visible beside their counts. */
+.ai-performance-panel{margin-top:24px;min-width:0}
+.ai-performance-panel>.panel-heading{flex-wrap:wrap;gap:12px}
+.ai-performance-panel>.panel-intro{line-height:1.8;margin-top:17px}
+.ai-timing-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));margin-top:23px;border:1px solid #e2e7df;border-radius:6px;overflow:hidden}
+.ai-timing-card{min-width:0;padding:21px;background:#fafbf7}
+.ai-timing-card+.ai-timing-card{border-left:1px solid #e2e7df}
+.ai-timing-card h3{font-size:12px;font-weight:500;color:#45613d;line-height:1.6}
+.ai-timing-value{font-size:29px;font-weight:450;font-variant-numeric:tabular-nums;letter-spacing:-.7px;line-height:1.5;margin-top:10px;overflow-wrap:anywhere}
+.ai-timing-value.is-unmeasured{font-size:17px;color:#78866c;letter-spacing:-.2px;min-height:44px;display:flex;align-items:center}
+.ai-timing-caption,.ai-timing-definition,.ai-timing-samples{font-size:10px;color:#6f7e64;line-height:1.8}
+.ai-timing-definition{margin-top:8px;min-height:36px}
+.ai-timing-distribution{display:grid;gap:9px;border-top:1px solid #e2e7df;margin-top:14px;padding-top:15px}
+.ai-timing-distribution>div{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.ai-timing-distribution dt{font-size:10px;color:#6f7e64;line-height:1.6}
+.ai-timing-distribution dd{font-size:12px;text-align:right;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+.ai-timing-samples{margin-top:13px}
+.ai-performance-panel>.panel-note{margin-top:17px;line-height:1.8}
+.ai-timing-details{border-top:1px solid #e2e7df;margin-top:18px;padding-top:15px}
+.ai-timing-details>summary{cursor:pointer;font-size:11px;color:#526f45;line-height:1.7}
+.ai-timing-details .table-scroll{margin-top:15px}
+.ai-timing-details table{min-width:575px}
+.ai-timing-details th:first-child,.ai-timing-details td:nth-child(2){text-align:left}
+.ai-timing-details tbody th{font-weight:500;letter-spacing:0;text-transform:none;font-size:11px;color:#526f45}
+@media(max-width:980px){.ai-timing-card{padding:18px 15px}.ai-timing-distribution>div{display:block}.ai-timing-distribution dd{text-align:left;margin-top:3px}.ai-timing-value{font-size:26px}}
+@media(max-width:740px){.ai-timing-cards{grid-template-columns:1fr}.ai-timing-card{padding:18px}.ai-timing-card+.ai-timing-card{border-left:0;border-top:1px solid #e2e7df}.ai-timing-definition{min-height:0}.ai-timing-distribution{grid-template-columns:1fr 1fr}.ai-timing-distribution>div{display:flex}.ai-timing-distribution dd{text-align:right;margin-top:0}.ai-timing-value{font-size:30px}.ai-performance-panel>.panel-heading h2{font-size:20px}}
+@media(max-width:400px){.ai-timing-distribution{grid-template-columns:1fr}.ai-performance-panel .panel-tag{white-space:normal}}
 .feature-usage-section{margin-top:30px}
 .feature-usage-section>.section-heading{flex-wrap:wrap;gap:12px}
 .feature-usage-section .section-index .icon{width:12px;height:12px}

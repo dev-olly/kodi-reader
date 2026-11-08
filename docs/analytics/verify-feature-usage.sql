@@ -201,7 +201,7 @@ begin
   end loop;
   begin
     insert into public.analytics_events(id,installation_id,session_id,occurred_at,name,schema_version)
-    values(gen_random_uuid(),v_a,v_session,v_time,'app_active',4);
+    values(gen_random_uuid(),v_a,v_session,v_time,'app_active',99);
     raise exception 'Expected future schema rejection';
   exception when check_violation then null;
   end;

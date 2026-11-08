@@ -48,6 +48,60 @@ enum AnalyticsEventName: String, Codable, CaseIterable, Sendable {
 enum AnalyticsContentType: String, Codable, Sendable { case epub, pdf, web }
 enum AnalyticsErrorCategory: String, Codable, Sendable { case network, authentication, credits, service }
 
+/// Numeric request timings contain no prompt, response, account, or model data.
+/// All phases use the same millisecond boundaries so their sum is exact.
+struct AnalyticsAIRequestTiming: Equatable, Sendable {
+    static let maximumMilliseconds = 86_400_000
+    let responseTimeMilliseconds: Int
+    let latencyMilliseconds: Int?
+    let streamingTimeMilliseconds: Int?
+
+    init?(responseTimeMilliseconds: Int, latencyMilliseconds: Int? = nil,
+          streamingTimeMilliseconds: Int? = nil) {
+        let range = 0...Self.maximumMilliseconds
+        guard range.contains(responseTimeMilliseconds) else { return nil }
+        switch (latencyMilliseconds, streamingTimeMilliseconds) {
+        case (nil, nil): break
+        case let (latency?, streaming?):
+            guard range.contains(latency), range.contains(streaming),
+                  latency + streaming == responseTimeMilliseconds else { return nil }
+        default: return nil
+        }
+        self.responseTimeMilliseconds = responseTimeMilliseconds
+        self.latencyMilliseconds = latencyMilliseconds
+        self.streamingTimeMilliseconds = streamingTimeMilliseconds
+    }
+}
+
+/// The caller supplies monotonic uptime. Sleep or a broken clock must not
+/// produce a capped timing that looks like a valid performance observation.
+struct AnalyticsAIRequestClock {
+    private let startedAt: TimeInterval
+    private var firstContentAt: TimeInterval?
+
+    init(now: TimeInterval) { startedAt = now }
+
+    /// Call only for nonempty response text, never for SSE metadata/keepalives.
+    mutating func receivedContent(at now: TimeInterval) {
+        guard firstContentAt == nil else { return }
+        firstContentAt = now
+    }
+
+    func timing(at now: TimeInterval) -> AnalyticsAIRequestTiming? {
+        guard startedAt.isFinite, now.isFinite, now >= startedAt else { return nil }
+        let total = (now - startedAt) * 1000
+        guard total.isFinite, total <= Double(AnalyticsAIRequestTiming.maximumMilliseconds) else { return nil }
+        let response = Int(total.rounded(.down))
+        guard let firstContentAt else {
+            return AnalyticsAIRequestTiming(responseTimeMilliseconds: response)
+        }
+        guard firstContentAt.isFinite, firstContentAt >= startedAt, firstContentAt <= now else { return nil }
+        let latency = Int(((firstContentAt - startedAt) * 1000).rounded(.down))
+        return AnalyticsAIRequestTiming(responseTimeMilliseconds: response,
+            latencyMilliseconds: latency, streamingTimeMilliseconds: response - latency)
+    }
+}
+
 enum AnalyticsFeatureActivity: CaseIterable, Hashable, Sendable {
     case audioRecording, ttsListening
 
@@ -68,10 +122,14 @@ struct AnalyticsEvent: Codable, Equatable, Sendable {
         let errorCategory: AnalyticsErrorCategory?
         let requestID: UUID?
         let schemaVersion: Int
+        let responseTimeMilliseconds: Int?
+        let latencyMilliseconds: Int?
+        let streamingTimeMilliseconds: Int?
 
         init(platform: String, version: String, build: String,
              contentType: AnalyticsContentType?, errorCategory: AnalyticsErrorCategory?,
-             requestID: UUID? = nil, schemaVersion: Int = 3) {
+             requestID: UUID? = nil, schemaVersion: Int = 4,
+             timing: AnalyticsAIRequestTiming? = nil) {
             self.platform = platform
             self.version = version
             self.build = build
@@ -79,6 +137,9 @@ struct AnalyticsEvent: Codable, Equatable, Sendable {
             self.errorCategory = errorCategory
             self.requestID = requestID
             self.schemaVersion = schemaVersion
+            self.responseTimeMilliseconds = schemaVersion >= 4 ? timing?.responseTimeMilliseconds : nil
+            self.latencyMilliseconds = schemaVersion >= 4 ? timing?.latencyMilliseconds : nil
+            self.streamingTimeMilliseconds = schemaVersion >= 4 ? timing?.streamingTimeMilliseconds : nil
         }
 
         enum CodingKeys: String, CodingKey {
@@ -87,6 +148,9 @@ struct AnalyticsEvent: Codable, Equatable, Sendable {
             case errorCategory = "error_category"
             case requestID = "request_id"
             case schemaVersion = "schema_version"
+            case responseTimeMilliseconds = "response_time_ms"
+            case latencyMilliseconds = "latency_ms"
+            case streamingTimeMilliseconds = "streaming_time_ms"
         }
 
         init(from decoder: Decoder) throws {
@@ -98,6 +162,9 @@ struct AnalyticsEvent: Codable, Equatable, Sendable {
             errorCategory = try values.decodeIfPresent(AnalyticsErrorCategory.self, forKey: .errorCategory)
             requestID = try values.decodeIfPresent(UUID.self, forKey: .requestID)
             schemaVersion = try values.decodeIfPresent(Int.self, forKey: .schemaVersion) ?? 1
+            responseTimeMilliseconds = try values.decodeIfPresent(Int.self, forKey: .responseTimeMilliseconds)
+            latencyMilliseconds = try values.decodeIfPresent(Int.self, forKey: .latencyMilliseconds)
+            streamingTimeMilliseconds = try values.decodeIfPresent(Int.self, forKey: .streamingTimeMilliseconds)
         }
     }
 

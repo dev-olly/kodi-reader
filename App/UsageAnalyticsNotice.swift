@@ -11,7 +11,7 @@ struct UsageAnalyticsNotice: View {
                 Image(systemName: "chart.bar").accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 5) {
                     Text("Help improve Kodi").font(.callout.weight(.medium))
-                    Text("Background usage statistics include feature counts, reader engagement, and approximate country, using a random device ID. Your book text, notes, drawings, and AI content stay out of analytics. You can turn this off in Settings → Privacy.")
+                    Text("Background usage statistics include feature counts, reader engagement, Ask AI response timings, and approximate country, using a random device ID. Your book text, notes, drawings, and AI content stay out of analytics. You can turn this off in Settings → Privacy.")
                         .font(.caption).foregroundStyle(.secondary)
                     HStack(spacing: 16) {
                         Button("Turn off analytics") {

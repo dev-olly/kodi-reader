@@ -165,7 +165,8 @@ final class UsageAnalytics {
     }
 
     func record(_ name: AnalyticsEventName, content: AnalyticsContentType? = nil,
-                error: AnalyticsErrorCategory? = nil, requestID: UUID? = nil) {
+                error: AnalyticsErrorCategory? = nil, requestID: UUID? = nil,
+                timing: AnalyticsAIRequestTiming? = nil) {
         guard isEnabled, collectionAllowed else { return }
         // Duration events can only come from their bounded monotonic clocks.
         guard ![.readingHeartbeat, .audioRecordingHeartbeat, .ttsListeningHeartbeat].contains(name) else { return }
@@ -180,7 +181,12 @@ final class UsageAnalytics {
             default: return
             }
         }
-        enqueue(name, content: content, error: error, duration: nil, requestID: requestID)
+        let isTerminal = [.aiRequestCompleted, .aiRequestFailed, .aiRequestCancelled].contains(name)
+        // Timing is useful only on a correlated outcome. A completion without
+        // first text remains an outcome, but cannot supply a completed sample.
+        let validTiming = isTerminal && requestID != nil
+            && (name != .aiRequestCompleted || timing?.latencyMilliseconds != nil) ? timing : nil
+        enqueue(name, content: content, error: error, duration: nil, requestID: requestID, timing: validTiming)
     }
 
     func beginEditing(kind: AnalyticsEditKind, itemKey: String, isNew: Bool,
@@ -234,12 +240,13 @@ final class UsageAnalytics {
     }
 
     private func enqueue(_ name: AnalyticsEventName, content: AnalyticsContentType?,
-                         error: AnalyticsErrorCategory?, duration: Int?, requestID: UUID? = nil) {
+                         error: AnalyticsErrorCategory?, duration: Int?, requestID: UUID? = nil,
+                         timing: AnalyticsAIRequestTiming? = nil) {
         guard isEnabled, collectionAllowed, let installationID else { return }
         let event = AnalyticsEvent(id: UUID(), installationID: installationID, sessionID: sessionID,
             occurredAt: date(), name: name, durationSeconds: duration,
             properties: .init(platform: "macOS", version: version, build: build,
-                              contentType: content, errorCategory: error, requestID: requestID))
+                              contentType: content, errorCategory: error, requestID: requestID, timing: timing))
         outbox.append(event, now: date())
         storage.save(outbox.events)
     }

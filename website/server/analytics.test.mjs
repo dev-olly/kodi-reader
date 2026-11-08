@@ -58,10 +58,59 @@ test('v2 feature and AI events keep telemetry IDs bounded and separate from othe
     assert.throws(() => validateBatch({ events: [event({ name, properties: { schema_version: 2 } })] }, now));
     assert.doesNotThrow(() => validateBatch({ events: [event({ name })] }, now)); // Legacy clients remain valid.
   }
-  for (const properties of [{ request_id: requestID }, { schema_version: 4 }, { schema_version: '2' }, { country_code: 'US' }, { latitude: 1 }, { request_id: 'account@example.com' }]) {
+  for (const properties of [{ request_id: requestID }, { schema_version: 5 }, { schema_version: '2' }, { country_code: 'US' }, { latitude: 1 }, { request_id: 'account@example.com' }]) {
     assert.throws(() => validateBatch({ events: [event({ properties })] }, now));
   }
   assert.throws(() => validateBatch({ events: [event()], country_code: 'US' }, now));
+});
+
+test('v4 AI timings are bounded integer milliseconds on correlated terminal events only', () => {
+  const properties = { schema_version: 4, request_id: '47f6acae-e80d-4d16-a4c6-500000000005', response_time_ms: 2300, latency_ms: 300, streaming_time_ms: 2000 };
+  const timed = (name = 'ai_request_completed', changes = {}) => event({ name, properties: { ...properties, ...changes } });
+  for (const name of ['ai_request_completed', 'ai_request_failed', 'ai_request_cancelled']) {
+    assert.deepEqual(validateBatch({ events: [timed(name)] }, now)[0].properties, properties);
+    assert.doesNotThrow(() => validateBatch({ events: [timed(name, { response_time_ms: 0, latency_ms: 0, streaming_time_ms: 0 })] }, now));
+    assert.doesNotThrow(() => validateBatch({ events: [timed(name, { response_time_ms: 86400000, latency_ms: 1, streaming_time_ms: 86399999 })] }, now));
+    // Invalid/overlong clocks can still emit an outcome without timing samples.
+    assert.doesNotThrow(() => validateBatch({ events: [event({ name, properties: { schema_version: 4, request_id: properties.request_id } })] }, now));
+  }
+  for (const name of ['ai_request_failed', 'ai_request_cancelled']) {
+    assert.doesNotThrow(() => validateBatch({ events: [event({ name, properties: { schema_version: 4, request_id: properties.request_id, response_time_ms: 200 } })] }, now));
+  }
+  for (const key of ['response_time_ms', 'latency_ms', 'streaming_time_ms']) {
+    for (const value of [-1, 86400001, 0.5, '100', null, Infinity, NaN]) {
+      assert.throws(() => validateBatch({ events: [timed('ai_request_completed', { [key]: value })] }, now), { status: 400 });
+    }
+  }
+  const invalid = [
+    timed('app_active'), timed('ai_request_started'), timed('reading_started'),
+    timed('ai_request_completed', { schema_version: 3 }), timed('ai_request_completed', { request_id: undefined }),
+    timed('ai_request_completed', { response_time_ms: undefined }),
+    timed('ai_request_completed', { latency_ms: undefined }),
+    timed('ai_request_failed', { streaming_time_ms: undefined }),
+    timed('ai_request_completed', { response_time_ms: 2400 }),
+    timed('ai_request_completed', { latency_ms: undefined, streaming_time_ms: undefined }),
+    timed('ai_request_completed', { prompt: 'private question' }),
+  ];
+  for (const value of invalid) assert.throws(() => validateBatch({ events: [value] }, now), { status: 400 });
+  assert.doesNotThrow(() => validateBatch({ events: [event({ name: 'reminder_created', properties: { schema_version: 4 } })] }, now));
+});
+
+test('collector preserves AI milliseconds and deduplicates timing retries without credentials', async () => {
+  const properties = { schema_version: 4, request_id: '47F6ACAE-E80D-4D16-A4C6-500000000005', response_time_ms: 1500, latency_ms: 250, streaming_time_ms: 1250 };
+  const value = event({ name: 'ai_request_completed', properties });
+  let calls = 0;
+  const handler = createEventsHandler({ env, now: () => now, fetchImpl: async (_url, options) => {
+    calls++;
+    const body = JSON.parse(options.body);
+    assert.equal(body.p_events.length, 1);
+    assert.deepEqual(body.p_events[0].properties, { ...properties, request_id: properties.request_id.toLowerCase() });
+    return new Response(JSON.stringify({ stored: 1, rate_limited: false }));
+  } });
+  const response = await handler(post({ events: [value, value] }));
+  assert.equal(response.status, 202);
+  assert.equal(calls, 1);
+  assert.deepEqual(await response.json(), { accepted: 1, stored: 1, duplicates: 0 });
 });
 
 test('v3 feature events are closed, versioned and carry only bounded audio durations', () => {

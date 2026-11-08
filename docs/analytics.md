@@ -195,17 +195,37 @@ Historical counts, credit records, and older clients cannot supply these timings
 Missing instrumentation or samples are labeled explicitly rather than inferred
 from event timestamps. CSV exports include timings in milliseconds.
 
-This change is prepared locally and has not been deployed. Apply
-`005_ai_performance.sql` after `004_feature_usage.sql`, deploy the matching website,
-then distribute the schema-v4 Mac build. The existing telemetry opt-out clears
-queued timings and prevents a request crossing an identity reset from being
-recorded under the new installation. No prompt, response, account identifier, or
-billing request identifier is included.
+Production migration `usage_analytics_ai_performance_v4` (version
+`20261108183937`, from `005_ai_performance.sql`) and website deployment
+`dpl_94ZTW78epLCAKcVF5XDKhgsF4Yek` were applied on 8 November 2026. The website
+serves the exact analytics changes from commit `e4dd1d0`. Timing collection is
+included in the schema-v4 Mac client, version 0.4.11 (build 19). Samples arrive
+only from updated apps with analytics enabled.
+
+The existing telemetry opt-out clears queued timings and prevents a request
+crossing an identity reset from being recorded under the new installation. No
+prompt, response, account identifier, or billing request identifier is included.
 
 Local verification passed 95 Mac authentication/analytics tests and all 35
 website tests, including isolated PostgreSQL ingestion, aggregation, migration
 reapplication, access restrictions, and dashboard timing states. The Mac app and
-website build also passed. This does not change the production deployment status.
+website build also passed. Production checks verified timing persistence,
+deduplication, cohort matching, means and percentiles using temporary service-role
+events in a rolled-back transaction; no test events remain. The 7-, 30-, and
+90-day dashboard responses, RLS, and service-only RPC access passed. Deployed
+page/script/style bytes match the committed source; anonymous data requests
+remain denied, invalid timing batches are rejected, and the analytics runtime
+error scan was clean.
+
+Kodi Reader 0.4.11 (build 19) was published on 8 November 2026 with Developer ID
+signing, Apple notarization (submission `70cdd6ec-9204-4f0a-92c2-b15ca1d199be`),
+and a stapled ticket. The anonymously downloaded public DMG matches the verified
+local artifact (SHA-256
+`926f36846797273a678383bd45b89f4f5dca3acb2e91354f19b50b08de8da466`).
+[Release verification](https://github.com/dev-olly/kodi-reader/actions/runs/42511623177)
+passed signatures, Apple notarization, and the delivered app's Production iCloud
+entitlements. The signed Sparkle feed advertises build 19 after the public asset
+and verification checks succeeded.
 
 ### Reminders, drawing, recording, and listening
 

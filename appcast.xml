@@ -6,6 +6,29 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.11</title>
+            <pubDate>Sun, 08 Nov 2026 19:45:22 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>19</sparkle:version>
+            <sparkle:shortVersionString>0.4.11</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.11
+
+- Improve Ask AI performance reporting with total response time, latency until
+  the first response text, and streaming duration.
+- Keep completed, failed, and stopped request timings separate, including when
+  switching or closing a book during a response.
+- Include these measurements in the existing optional usage analytics. Questions,
+  answers, book content, and account details remain excluded. Turn sharing off in
+  Settings → Privacy.
+
+Requires Apple Silicon and macOS 15 or later. Includes iCloud and Google Drive
+sync support.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.11/KodiReader.dmg" length="21691495" type="application/octet-stream" sparkle:edSignature="92wyzSRyA3VVMKmNRPQWonXWNwCkVCWE2gmuv1ENY0KFUeO1k1wIq8fhiSpV4q9NKHG8ZI8ynSWLfexBon4pBg=="/>
+        </item>
+        <item>
             <title>0.4.10</title>
             <pubDate>Sun, 08 Nov 2026 00:09:21 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -73,41 +96,9 @@ attachments across devices. Local audio models require a separate download.
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.9/KodiReader.dmg" length="21511566" type="application/octet-stream" sparkle:edSignature="KCDlrrVO32YULg2y6GvLkE4EtdNczXLnvwtlRIm2f7+H+gKx90vyWyIZhl4AuZ4qnmFFjpSA7misZH53YWlyBA=="/>
         </item>
-        <item>
-            <title>0.4.8</title>
-            <pubDate>Fri, 30 Oct 2026 17:28:27 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>16</sparkle:version>
-            <sparkle:shortVersionString>0.4.8</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.8
-
-- Set a daily reading goal in Settings → Reading. Your goal and streak stay in
-  Settings by default; turn on Show reading goal and streak to display them on
-  Home and in the reader toolbar. Reading history stays on
-  this Mac and works with usage analytics turned off.
-- Keep highlight actions inside the reading area, including in narrow windows
-  and near the bottom of a page. Clear plain highlights or delete annotations
-  with notes and drawings using clearer action labels.
-- Place reading markers more reliably around wrapped and hyphenated text,
-  line beginnings, and column boundaries.
-- Share limited usage analytics, with a new Settings → Privacy control to turn
-  sharing off and clear unsent events. Book content, notes, account details,
-  and AI questions and answers are excluded.
-- Improve cleanup of duplicate Kodi Reader and legacy Folio entries in Finder's
-  Open With menu, including development builds and failed packaging outputs.
-- Open Reading, Privacy, and Updates settings without first looking up Google
-  Drive credentials.
-
-Requires Apple Silicon and macOS 15 or later. Includes iCloud and Google Drive
-sync support.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.8/KodiReader.dmg" length="8702097" type="application/octet-stream" sparkle:edSignature="W77PWYFgFlkYcueiSjBdTJ/I51fdDcR4o7IEWywuQxigRXa4nrheNvz/80YNkUYMJPt3yg36r3NugITh7zvHBw=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: 7FI9yGAWhhlyxBVdKVQM6k0B1pUvzVovKRY4DUIEI+HTpBuGAuB8+lIqb602h2mw8fVtpnNAw7qGyT3/ClBQCg==
-length: 6891
+edSignature: QU9fpBsCLTilKnRrsVOlVAvawHulNab37aZikIFhvMHYwbw6uUmTglRhmfPCIGCLiMCgRv3lL75oHSjNbc89Cg==
+length: 6283
 -->

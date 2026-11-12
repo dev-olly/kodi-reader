@@ -153,7 +153,7 @@ test('validation rejects content, emails, unexpected metadata, oversized batches
   const invalidEvents = [
     event({ email: 'person@example.com' }), event({ properties: { title: 'Private book' } }),
     event({ properties: { version: 'person@example.com' } }), event({ id: 'email@example.com' }),
-    event({ properties: { platform: 'Windows' } }), event({ name: 'unknown' }),
+    event({ properties: { platform: 'unknownOS' } }), event({ name: 'unknown' }),
     event({ name: 'reading_heartbeat', duration_seconds: 61 }),
     event({ name: 'reading_heartbeat' }), event({ duration_seconds: 20 }),
     event({ name: 'reading_heartbeat', duration_seconds: 1.5 }),
@@ -285,4 +285,12 @@ test('dashboard checks authorization before storage and returns aggregate JSON w
   assert.equal((await handler(ownerRequest('?days=8'))).status, 400);
   assert.equal(called, 1);
   assert.equal((await handler(post({}))).status, 405);
+});
+
+test('Windows and Linux use the same content-free analytics contract', () => {
+  for (const platform of ['Windows', 'Linux']) {
+    const result = validateBatch({ events: [event({ properties: { platform, version: '0.1.0', build: '1' } })] }, now);
+    assert.equal(result[0].properties.platform, platform);
+    assert.throws(() => validateBatch({ events: [event({ properties: { platform, title: 'Private document' } })] }, now), { status: 400 });
+  }
 });

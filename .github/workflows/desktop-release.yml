@@ -72,6 +72,13 @@ jobs:
       KODI_GOOGLE_CLIENT_SECRET: ${{ secrets.KODI_GOOGLE_CLIENT_SECRET || vars.KODI_GOOGLE_CLIENT_SECRET }}
       KODI_PAYMENTS_ENABLED: ${{ vars.KODI_PAYMENTS_ENABLED || 'NO' }}
     steps:
+      - name: Preserve byte-exact source files on Windows
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: ${{ runner.temp }}
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false

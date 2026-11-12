@@ -19,7 +19,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/;
 const EVENT_KEYS = new Set(['id', 'installation_id', 'session_id', 'occurred_at', 'name', 'duration_seconds', 'properties']);
 const PROPERTY_RULES = Object.freeze({
-  platform: value => ['macOS', 'iOS', 'web'].includes(value),
+  platform: value => ['macOS', 'iOS', 'Windows', 'Linux', 'web'].includes(value),
   version: value => typeof value === 'string' && /^[0-9A-Za-z][0-9A-Za-z.+_-]{0,63}$/.test(value),
   build: value => typeof value === 'string' && /^(?:unknown|\d{1,10}(?:\.\d{1,10}){0,3})$/.test(value),
   content_type: value => ['epub', 'pdf', 'web'].includes(value),

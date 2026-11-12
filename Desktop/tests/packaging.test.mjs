@@ -10,6 +10,22 @@ import { collectInternal } from '../scripts/collect-internal.mjs';
 const commit = 'a'.repeat(40);
 const required = ['windows11', 'ubuntu2404Wayland', 'ubuntu2404X11', 'ubuntu2604Wayland', 'fedoraWayland', 'macDriveRoundTrip', 'offlineAudio', 'signedUpdateUpgrade', 'installerDataRetention'];
 const releaseEnv = { KODI_SUPABASE_URL: 'https://example.supabase.co', KODI_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_fixture', KODI_GOOGLE_CLIENT_ID: 'desktop-fixture', KODI_UPDATER_PUBLIC_KEY: 'fixture-public-key', TAURI_SIGNING_PRIVATE_KEY: 'fixture-private-key' };
+test('configured installer icons exist and include a square PNG for AppImage packaging', () => {
+  const root = new URL('../src-tauri/', import.meta.url);
+  const config = JSON.parse(readFileSync(new URL('tauri.conf.json', root), 'utf8'));
+  const icons = config.bundle.icon.map(path => ({ path, bytes: readFileSync(new URL(path, root)) }));
+  const pngs = icons.filter(icon => icon.path.endsWith('.png'));
+  assert.ok(pngs.length, 'AppImage needs a configured PNG icon');
+  for (const { bytes } of pngs) {
+    assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a');
+    assert.equal(bytes.subarray(12, 16).toString('ascii'), 'IHDR');
+    assert.ok(bytes.readUInt32BE(16) >= 32);
+    assert.equal(bytes.readUInt32BE(16), bytes.readUInt32BE(20), 'AppImage requires a square icon');
+  }
+  const windows = icons.find(icon => icon.path.endsWith('.ico'));
+  assert.ok(windows, 'NSIS needs its Windows icon');
+  assert.equal(windows.bytes.subarray(0, 4).toString('hex'), '00000100');
+});
 test('internal Windows/Linux bundles have isolated preview data and no updater', () => {
   for (const platform of ['win32', 'linux']) {
     const config = bundleConfiguration({ platform });

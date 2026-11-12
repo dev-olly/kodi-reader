@@ -1,0 +1,47 @@
+[package]
+name = "kodi-reader-desktop"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.90"
+license = "MIT"
+description = "Kodi Reader for Windows and Linux"
+
+[lib]
+name = "kodi_reader_desktop"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "=2.7.4", features = [] }
+
+[dependencies]
+tauri = { version = "=2.12.5", features = ["unstable"] }
+tauri-plugin-dialog = "=2.8.4"
+tauri-plugin-updater = "=2.14.1"
+tauri-plugin-single-instance = "2"
+kodi-reader-core = { path = "crates/reader-core" }
+kodi-desktop-services = { path = "crates/desktop-services", features = ["speech"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v4"] }
+url = "2"
+percent-encoding = "2"
+regex = "1"
+quick-xml = "=0.32.0"
+chrono = { version = "0.4", features = ["clock"] }
+readability = "0.3"
+base64 = "0.22"
+anyhow = "1"
+tempfile = "3"
+tokio = { version = "1", features = ["sync", "rt-multi-thread", "time"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "stream"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+gtk = "0.18"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSView", "NSWindow", "NSResponder"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["std", "NSGeometry"] }
+
+[workspace]
+members = ["crates/reader-core", "crates/desktop-services"]
+resolver = "2"

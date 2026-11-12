@@ -1,0 +1,39 @@
+{
+  "sourceCommit": "a3a54ddf052355418d4dc1aebdb36ad793252f31",
+  "files": {
+    "Desktop/public/vendor/reader/reader.js": {
+      "source": "Sources/ReaderUI/Resources/reader.js",
+      "sha256": "1e7bcfe6b8a66ca9ea67f4162a64f31e3523655320c05d445e8a20ddb1dc2cc5",
+      "desktopSha256": "b1d52e1dc379ccac30ffd41298451bf32c44f031c5bc9a83041a16ef1c26957d"
+    },
+    "Desktop/public/vendor/reader/reader.css": {
+      "source": "Sources/ReaderUI/Resources/reader.css",
+      "sha256": "986661003cb8182e4eee1419a8bd4c9ccb38bfb9603557b008efd58e7473315e",
+      "desktopSha256": "986661003cb8182e4eee1419a8bd4c9ccb38bfb9603557b008efd58e7473315e"
+    },
+    "Desktop/public/vendor/excalidraw/index.html": {
+      "source": "Sources/ReaderUI/Resources/Excalidraw/index.html",
+      "sha256": "eaeff9c4083bb408a6aa6245296066bf52ef703935c3a98cc7fc787218d8ba56",
+      "desktopSha256": "eaeff9c4083bb408a6aa6245296066bf52ef703935c3a98cc7fc787218d8ba56"
+    },
+    "Desktop/public/vendor/excalidraw/kodi-theme.css": {
+      "source": "Sources/ReaderUI/Resources/Excalidraw/kodi-theme.css",
+      "sha256": "0b8a4f4ad3179ba94d9c4316fb2572c2dd0f317880cd8eca3861062eff76e0c6",
+      "desktopSha256": "0b8a4f4ad3179ba94d9c4316fb2572c2dd0f317880cd8eca3861062eff76e0c6"
+    },
+    "Desktop/public/vendor/excalidraw/assets/index.js": {
+      "source": "Sources/ReaderUI/Resources/Excalidraw/assets/index.js",
+      "sha256": "945469441b86e0b945b6c80e237accde3e445b0b7bffdfff26694439bce3ddfe",
+      "desktopSha256": "23e7f201037b1f65752e6861c4041b90f878007cb9e083aebde8d3ba6d696439"
+    },
+    "Desktop/public/vendor/excalidraw/assets/style.css": {
+      "source": "Sources/ReaderUI/Resources/Excalidraw/assets/style.css",
+      "sha256": "dad65abe0242a0b808a4df8a15feb3f58b58f1f8fa411a5b3bf3a864abf218e9",
+      "desktopSha256": "dad65abe0242a0b808a4df8a15feb3f58b58f1f8fa411a5b3bf3a864abf218e9"
+    }
+  },
+  "adaptations": [
+    "Reader postMessage uses a scoped Tauri event bridge.",
+    "Excalidraw postMessage uses a scoped Tauri drawing bridge."
+  ]
+}

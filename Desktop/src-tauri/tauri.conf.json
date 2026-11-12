@@ -1,0 +1,30 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Kodi Reader",
+  "version": "0.1.0",
+  "identifier": "com.olly.KodiReader.Desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [{ "label": "main-ui", "title": "Kodi Reader", "width": 1280, "height": 860, "minWidth": 800, "minHeight": 600 }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' kodi: http://kodi.localhost https://kodi.localhost data: blob:; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; object-src 'none'; base-uri 'none'; frame-src 'none'",
+      "capabilities": ["main", "reader", "sketch"]
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis", "appimage", "deb", "rpm"],
+    "category": "Education",
+    "shortDescription": "An offline EPUB and PDF reader with notes, sketches and audio.",
+    "copyright": "Copyright Kodi Reader contributors",
+    "fileAssociations": [{ "ext": ["epub"], "name": "EPUB publication", "mimeType": "application/epub+zip" }, { "ext": ["pdf"], "name": "PDF document", "mimeType": "application/pdf" }],
+    "windows": { "webviewInstallMode": { "type": "downloadBootstrapper", "silent": true }, "nsis": { "installMode": "currentUser", "displayLanguageSelector": false } },
+    "linux": { "deb": { "depends": ["libwebkit2gtk-4.1-0", "libgtk-3-0", "libasound2t64", "libsecret-1-0"] }, "rpm": { "depends": ["webkit2gtk4.1", "gtk3", "alsa-lib", "libsecret"] } }
+  },
+  "plugins": {}
+}

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-drive-disconnect"
+description = "Enables the drive_disconnect command without any pre-configured scope."
+commands.allow = ["drive_disconnect"]
+
+[[permission]]
+identifier = "deny-drive-disconnect"
+description = "Denies the drive_disconnect command without any pre-configured scope."
+commands.deny = ["drive_disconnect"]

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "reader",
+  "description": "Untrusted publications can only report validated reader events.",
+  "webviews": ["book-reader"],
+  "permissions": ["allow-reader-event"]
+}

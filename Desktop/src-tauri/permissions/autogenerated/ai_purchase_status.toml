@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ai-purchase-status"
+description = "Enables the ai_purchase_status command without any pre-configured scope."
+commands.allow = ["ai_purchase_status"]
+
+[[permission]]
+identifier = "deny-ai-purchase-status"
+description = "Denies the ai_purchase_status command without any pre-configured scope."
+commands.deny = ["ai_purchase_status"]

@@ -1,0 +1,19 @@
+:root { color-scheme: light; --paper: #faf9f5; --ink: #29352c; }
+* { box-sizing: border-box; }
+html, body { padding: 0; margin: 0; width: 100%; height: 100%; overflow: hidden; background: var(--paper); color: var(--ink); font: 14px system-ui, sans-serif; }
+#pages { height: 100%; display: flex; justify-content: center; align-items: center; gap: 20px; padding: 24px; overflow: auto; }
+.pdf-page { position: relative; flex: 0 0 auto; background: #fff; box-shadow: 0 1px 10px #1d34221c; }
+.pdf-page > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+.pdf-page .textLayer { position: absolute; inset: 0; overflow: clip; line-height: 1; text-align: initial; opacity: 1; transform-origin: 0 0; z-index: 2; }
+.pdf-page .textLayer span, .pdf-page .textLayer br { color: transparent; position: absolute; white-space: pre; cursor: text; transform-origin: 0 0; }
+.pdf-page .textLayer ::selection { background: #91b59c66; }
+.pdf-page .textLayer br::selection { background: transparent; }
+.highlight-layer { position: absolute; inset: 0; pointer-events: none; z-index: 3; }
+.pdf-highlight { position: absolute; border: 0; padding: 0; background: var(--highlight, #efd279); opacity: .43; mix-blend-mode: multiply; pointer-events: auto; cursor: pointer; }
+.pdf-highlight.underline { background: transparent; border-bottom: 2px solid #698c72; opacity: 1; }
+.pdf-reminder { position: absolute; z-index: 4; border: 0; border-radius: 50%; width: 20px; height: 20px; padding: 0; background: #e1eadf; color: #385d43; font-size: 13px; cursor: pointer; pointer-events: auto; }
+.pdf-marker { position: absolute; z-index: 4; width: 8px; height: 17px; border-radius: 1px 1px 0 0; background: #557a5b; clip-path: polygon(0 0,100% 0,100% 100%,50% 72%,0 100%); }
+#message { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; padding: 30px; text-align: center; color: #6f7b70; pointer-events: none; background: var(--paper); }
+#message:empty { display: none; }
+body.placing-marker, body.placing-marker .textLayer span { cursor: crosshair; }
+@media (prefers-reduced-motion: no-preference) { .pdf-page { animation: appear .12s ease-out; } @keyframes appear { from { opacity: .4; } to { opacity: 1; } } }

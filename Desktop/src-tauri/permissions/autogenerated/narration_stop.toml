@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-narration-stop"
+description = "Enables the narration_stop command without any pre-configured scope."
+commands.allow = ["narration_stop"]
+
+[[permission]]
+identifier = "deny-narration-stop"
+description = "Denies the narration_stop command without any pre-configured scope."
+commands.deny = ["narration_stop"]

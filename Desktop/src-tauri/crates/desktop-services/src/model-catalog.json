@@ -1,0 +1,125 @@
+[
+  {
+    "id": "pocket-tts",
+    "license": "CC-BY-4.0; Kyutai Pocket TTS; https://huggingface.co/kyutai/pocket-tts",
+    "files": [
+      {
+        "name": "LICENSE",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/LICENSE",
+        "size": 18655,
+        "sha256": "fe7b4ce83b8381cc5b216bbb4af73c570688d1b819c73bbaed8ca401f4677cd6"
+      },
+      {
+        "name": "decoder.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/decoder.int8.onnx",
+        "size": 22693618,
+        "sha256": "12b0857402d31aead94df19d6783b4350d1f740e811f3a3202c70ad89ae11eea"
+      },
+      {
+        "name": "encoder.onnx",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/encoder.onnx",
+        "size": 72713165,
+        "sha256": "e8f2f6d301ffb96e398b138a7dc6d3038622d236044636b73d920bab85890260"
+      },
+      {
+        "name": "lm_flow.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/lm_flow.int8.onnx",
+        "size": 9962530,
+        "sha256": "8d627d235c44a597da908e1085ebe241cbbe358964c502c5a5063d18851a5529"
+      },
+      {
+        "name": "lm_main.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/lm_main.int8.onnx",
+        "size": 76341079,
+        "sha256": "bfc0c7e7e3d72864fa3bb2ee499f62f21ddc1474b885f5f3ca570f8be73e787e"
+      },
+      {
+        "name": "text_conditioner.onnx",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/text_conditioner.onnx",
+        "size": 16388343,
+        "sha256": "0b84e837d7bfaf2c896627b03e3f080320309f37f4fc7df7698c644f7ba5e6b1"
+      },
+      {
+        "name": "token_scores.json",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/token_scores.json",
+        "size": 123616,
+        "sha256": "5be2f278caf9b9800741f0fd82bff677f4943ec764c356f907213434b622d958"
+      },
+      {
+        "name": "vocab.json",
+        "url": "https://huggingface.co/csukuangfj2/sherpa-onnx-pocket-tts-int8-2026-01-26/resolve/e715955cf50d18d919d37231513c0e914b83661a/vocab.json",
+        "size": 69478,
+        "sha256": "6fb646346cf931016f70c4921aab0900ce7a304b893cb02135c74e294abfea01"
+      }
+    ],
+    "license_url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt"
+  },
+  {
+    "id": "whisper-base",
+    "license": "MIT; OpenAI Whisper; https://github.com/openai/whisper",
+    "files": [
+      {
+        "name": "base-decoder.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc/base-decoder.int8.onnx",
+        "size": 130672026,
+        "sha256": "9759d217388a01b3a4c7c15533201067b48ae819c4daafc8624e64b9409dc02d"
+      },
+      {
+        "name": "base-encoder.int8.onnx",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc/base-encoder.int8.onnx",
+        "size": 29120534,
+        "sha256": "0b8fb1304b6109976038efff5ace81720e00386f3ff6b54ee8c75291ca0a1e11"
+      },
+      {
+        "name": "base-tokens.txt",
+        "url": "https://huggingface.co/csukuangfj/sherpa-onnx-whisper-base/resolve/bb53ee204431c90d314c1cc08d28d23e5b7927cc/base-tokens.txt",
+        "size": 816730,
+        "sha256": "b34b360dbb493e781e479794586d661700670d65564001f23024971d1f2fa126"
+      },
+      {
+        "name": "LICENSE",
+        "url": "https://raw.githubusercontent.com/openai/whisper/main/LICENSE",
+        "size": 1063,
+        "sha256": "b5d65a59060e68c4ff940e1eddfa6f94b2d68fdf58ed7f4dd57721c997e35e9d"
+      }
+    ],
+    "license_url": "https://raw.githubusercontent.com/openai/whisper/main/LICENSE"
+  },
+  {
+    "id": "narration-voices",
+    "license": "CC-BY-4.0; VCTK, University of Edinburgh; enhanced references by Kyutai; https://huggingface.co/kyutai/tts-voices",
+    "files": [
+      {
+        "name": "anna.wav",
+        "url": "https://huggingface.co/kyutai/tts-voices/resolve/323332d33f997de8394f24a193e1a76df720e01a/vctk/p228_023_enhanced.wav",
+        "size": 804630,
+        "sha256": "0a6de25cf12bf1540beb85979f306a92be81fecc051c547c5395e7e5237a3856"
+      },
+      {
+        "name": "charles.wav",
+        "url": "https://huggingface.co/kyutai/tts-voices/resolve/323332d33f997de8394f24a193e1a76df720e01a/vctk/p254_023_enhanced.wav",
+        "size": 639272,
+        "sha256": "6b681a429198f16e378d53bccb08d06939da7b00144a7696111d4f8f76be7756"
+      },
+      {
+        "name": "azelma.wav",
+        "url": "https://huggingface.co/kyutai/tts-voices/resolve/323332d33f997de8394f24a193e1a76df720e01a/vctk/p303_023_enhanced.wav",
+        "size": 823852,
+        "sha256": "60e3d26cdf2efdec5df712152c839928f4d5522821e6554ae11fd96c57ab1026"
+      },
+      {
+        "name": "george.wav",
+        "url": "https://huggingface.co/kyutai/tts-voices/resolve/323332d33f997de8394f24a193e1a76df720e01a/vctk/p315_023_enhanced.wav",
+        "size": 642692,
+        "sha256": "29a41f93bf5236e5b21501091d7774c255d5f3d4e62fa4f9fdf0a92a793c84ae"
+      },
+      {
+        "name": "LICENSE",
+        "url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt",
+        "size": 18657,
+        "sha256": "9ba9550ad48438d0836ddab3da480b3b69ffa0aac7b7878b5a0039e7ab429411"
+      }
+    ],
+    "license_url": "https://creativecommons.org/licenses/by/4.0/legalcode.txt"
+  }
+]

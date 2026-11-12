@@ -1,0 +1,193 @@
+name: Prepare signed desktop release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing desktop-vX.Y.Z tag matching Desktop/package.json
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-24.04
+    environment: desktop-release
+    defaults:
+      run:
+        working-directory: Desktop
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify tag and mandatory native acceptance
+        shell: bash
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const version=JSON.parse(fs.readFileSync("package.json")).version; if(process.env.RELEASE_TAG!==`desktop-v${version}`) throw new Error("Release tag must match Desktop/package.json");'
+          test "$(git rev-parse "refs/tags/$RELEASE_TAG^{commit}")" = "$(git rev-parse HEAD)"
+          npm run check:apple
+          npm run check:release
+
+  signed-build:
+    needs: acceptance
+    environment: desktop-release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    defaults:
+      run:
+        working-directory: Desktop
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      KODI_UPDATER_PUBLIC_KEY: ${{ vars.KODI_UPDATER_PUBLIC_KEY }}
+      KODI_UPDATER_ENDPOINT: ${{ vars.KODI_UPDATER_ENDPOINT }}
+      KODI_WINDOWS_TIMESTAMP_URL: ${{ vars.KODI_WINDOWS_TIMESTAMP_URL }}
+      KODI_SUPABASE_URL: ${{ vars.KODI_SUPABASE_URL }}
+      KODI_SUPABASE_PUBLISHABLE_KEY: ${{ vars.KODI_SUPABASE_PUBLISHABLE_KEY }}
+      KODI_AI_BASE_URL: ${{ vars.KODI_AI_BASE_URL }}
+      KODI_AI_MODEL: ${{ vars.KODI_AI_MODEL }}
+      KODI_GOOGLE_CLIENT_ID: ${{ vars.KODI_GOOGLE_CLIENT_ID }}
+      KODI_GOOGLE_CLIENT_SECRET: ${{ secrets.KODI_GOOGLE_CLIENT_SECRET || vars.KODI_GOOGLE_CLIENT_SECRET }}
+      KODI_PAYMENTS_ENABLED: ${{ vars.KODI_PAYMENTS_ENABLED || 'NO' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: Desktop/package-lock.json
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential curl gnupg xz-utils pkg-config cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev libsecret-1-dev libdbus-1-dev
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+      - name: Install and test frontend
+        run: |
+          npm ci
+          npm run check
+      - name: Test Rust release sources
+        working-directory: Desktop/src-tauri
+        run: cargo test --locked --workspace --features kodi-desktop-services/speech
+      - name: Set up Windows UCRT64 codec toolchain
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: make curl tar xz gnupg diffutils pkgconf mingw-w64-ucrt-x86_64-gcc
+      - name: Build verified Linux audio codec
+        if: runner.os == 'Linux'
+        run: bash scripts/build-ffmpeg.sh ${{ matrix.target }}
+      - name: Build verified Windows audio codec
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/build-ffmpeg.sh ${{ matrix.target }}
+      - name: Test bundled audio conversion
+        shell: bash
+        run: node scripts/codec-smoke.mjs src-tauri/binaries/kodi-ffmpeg-${{ matrix.target }}${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Import real Windows signing certificate
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
+          if (-not $env:CERTIFICATE_BASE64 -or -not $env:CERTIFICATE_PASSWORD) { throw 'Windows Authenticode signing credentials are required.' }
+          $certificateFile = Join-Path $env:RUNNER_TEMP 'kodi-windows.pfx'
+          [IO.File]::WriteAllBytes($certificateFile, [Convert]::FromBase64String($env:CERTIFICATE_BASE64))
+          try {
+            $password = ConvertTo-SecureString $env:CERTIFICATE_PASSWORD -AsPlainText -Force
+            $certificate = Import-PfxCertificate -FilePath $certificateFile -CertStoreLocation Cert:\CurrentUser\My -Password $password
+            if (-not $certificate.HasPrivateKey) { throw 'Certificate does not contain a signing private key.' }
+            "KODI_WINDOWS_CERTIFICATE_THUMBPRINT=$($certificate.Thumbprint)" >> $env:GITHUB_ENV
+          } finally { Remove-Item $certificateFile -Force }
+      - name: Sign Windows audio codec
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          if (-not $env:KODI_WINDOWS_TIMESTAMP_URL) { throw 'The configured Authenticode timestamp URL is required.' }
+          $sdkRoot = Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin'
+          $signTool = Get-ChildItem "$sdkRoot\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $signTool) { throw 'Windows SDK signtool is unavailable.' }
+          $codec = Resolve-Path 'src-tauri/binaries/kodi-ffmpeg-x86_64-pc-windows-msvc.exe'
+          & $signTool.FullName sign /sha1 $env:KODI_WINDOWS_CERTIFICATE_THUMBPRINT /fd SHA256 /td SHA256 /tr $env:KODI_WINDOWS_TIMESTAMP_URL $codec
+          if ($LASTEXITCODE -ne 0 -or (Get-AuthenticodeSignature $codec).Status -ne 'Valid') { throw 'The Windows audio codec could not be signed and verified.' }
+      - name: Configure signed installers and updater artifacts
+        run: |
+          node scripts/collect-notices.mjs
+          node scripts/write-release-config.mjs --release
+      - name: Build signed installers
+        run: npm run tauri -- build --config src-tauri/tauri.ci.conf.json --features kodi-desktop-services/speech
+      - name: Verify Windows Authenticode signatures
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem src-tauri/target/release/bundle/nsis -Filter '*.exe') + @(Get-Item src-tauri/target/release/kodi-reader-desktop.exe)
+          if (-not $files) { throw 'The Windows installer was not produced.' }
+          foreach ($file in $files) {
+            if ((Get-AuthenticodeSignature $file.FullName).Status -ne 'Valid') { throw "Invalid Authenticode signature: $($file.Name)" }
+          }
+      - name: Collect signed artifacts, corresponding codec sources and checksums
+        run: node scripts/collect-release.mjs ${{ matrix.target }}
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: signed-desktop-${{ matrix.target }}
+          path: Desktop/release-output/
+          if-no-files-found: error
+          retention-days: 30
+
+  draft-release:
+    needs: signed-build
+    runs-on: ubuntu-24.04
+    environment: desktop-publish
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: signed-desktop-*
+          path: release-output
+          merge-multiple: true
+      - name: Create updater manifest from signed files
+        run: node Desktop/scripts/write-update-manifest.mjs release-output
+      - name: Prepare reviewable draft release
+        shell: bash
+        run: |
+          printf '%s\n' 'Windows and Linux release candidate. Review native acceptance evidence, installer signatures and update metadata before publishing.' 'The FFmpeg source and exact build configuration accompany these installers.' > release-notes.txt
+          gh release create "$RELEASE_TAG" --verify-tag --draft --title "Kodi Reader ${RELEASE_TAG#desktop-v} for Windows and Linux" --notes-file release-notes.txt release-output/*

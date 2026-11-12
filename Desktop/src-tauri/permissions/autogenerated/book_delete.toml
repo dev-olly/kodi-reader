@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-book-delete"
+description = "Enables the book_delete command without any pre-configured scope."
+commands.allow = ["book_delete"]
+
+[[permission]]
+identifier = "deny-book-delete"
+description = "Denies the book_delete command without any pre-configured scope."
+commands.deny = ["book_delete"]

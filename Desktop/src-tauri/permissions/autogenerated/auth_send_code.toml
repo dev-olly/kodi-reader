@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-auth-send-code"
+description = "Enables the auth_send_code command without any pre-configured scope."
+commands.allow = ["auth_send_code"]
+
+[[permission]]
+identifier = "deny-auth-send-code"
+description = "Denies the auth_send_code command without any pre-configured scope."
+commands.deny = ["auth_send_code"]

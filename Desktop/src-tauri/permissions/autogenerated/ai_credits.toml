@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-ai-credits"
+description = "Enables the ai_credits command without any pre-configured scope."
+commands.allow = ["ai_credits"]
+
+[[permission]]
+identifier = "deny-ai-credits"
+description = "Denies the ai_credits command without any pre-configured scope."
+commands.deny = ["ai_credits"]

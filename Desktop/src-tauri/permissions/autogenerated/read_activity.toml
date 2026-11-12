@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-read-activity"
+description = "Enables the read_activity command without any pre-configured scope."
+commands.allow = ["read_activity"]
+
+[[permission]]
+identifier = "deny-read-activity"
+description = "Denies the read_activity command without any pre-configured scope."
+commands.deny = ["read_activity"]

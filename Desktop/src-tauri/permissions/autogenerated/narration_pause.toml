@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-narration-pause"
+description = "Enables the narration_pause command without any pre-configured scope."
+commands.allow = ["narration_pause"]
+
+[[permission]]
+identifier = "deny-narration-pause"
+description = "Denies the narration_pause command without any pre-configured scope."
+commands.deny = ["narration_pause"]

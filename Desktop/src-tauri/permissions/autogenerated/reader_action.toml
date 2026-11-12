@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reader-action"
+description = "Enables the reader_action command without any pre-configured scope."
+commands.allow = ["reader_action"]
+
+[[permission]]
+identifier = "deny-reader-action"
+description = "Denies the reader_action command without any pre-configured scope."
+commands.deny = ["reader_action"]

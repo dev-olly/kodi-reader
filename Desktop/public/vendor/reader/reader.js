@@ -1,0 +1,2468 @@
+/*
+ * Reader runtime injected into every spine document.
+ *
+ * Responsibilities: lay the document out into pages, move between them,
+ * translate between DOM ranges and the durable locators the app persists,
+ * report text selections, and paint the highlight overlay.
+ *
+ * Everything the app calls lives on `window.__reader`; everything the app
+ * hears about arrives through the `reader` message handler.
+ */
+(function () {
+  "use strict";
+
+  var LAYER_ID = "reader-highlight-layer";
+
+  var settings = {
+    marginX: 72,
+    marginY: 56,
+    twoPageSpread: true,
+    twoPageMinWidth: 1100,
+    edgeTapPaging: true,
+    animatePageTurns: true,
+    markerClickDelay: 500,
+  };
+
+  var state = {
+    spineIndex: 0,
+    pageCount: 1,
+    currentPage: 0,
+    stride: 0,
+    columns: 1,
+    highlights: [],
+    reminders: [],
+    readingMarker: null,
+    placingReadingMarker: false,
+    ready: false,
+    documentID: null,
+  };
+
+  // ---------------------------------------------------------------- bridge
+
+  function post(message) {
+    try {
+      if (state.documentID) message.documentID = state.documentID;
+      window.__kodiPost(message);
+    } catch (error) {
+      /* Running outside the app; nothing is listening. */
+    }
+  }
+
+  function reportError(context, error) {
+    post({
+      type: "error",
+      context: context,
+      message: error && error.message ? error.message : String(error),
+    });
+  }
+
+  // ---------------------------------------------------------------- layout
+
+  function columnCount() {
+    if (workspaceLayout) return workspaceLayout.columns;
+    if (!settings.twoPageSpread) return 1;
+    return window.innerWidth >= settings.twoPageMinWidth ? 2 : 1;
+  }
+
+  /*
+   * The column gap is pinned to twice the horizontal margin so that a page
+   * advance is always exactly one viewport width, for any column count.
+   * reader.css enforces the matching body padding. See reader.css.
+   */
+  function applyLayout() {
+    var root = document.documentElement;
+    var viewport = window.innerWidth;
+    var columns = columnCount();
+    // Make room in the gutters, not in the text. Keeping the physical column
+    // width preserves every line break and the vertical position of a passage.
+    var margin = workspaceLayout
+      ? Math.max(0, (viewport / columns - workspaceLayout.columnWidth) / 2)
+      : settings.marginX;
+    var gap = margin * 2;
+    var columnWidth = (viewport - 2 * margin - (columns - 1) * gap) / columns;
+
+    // Responsive gutters preserve column widths even before WebKit delivers
+    // its resize event. Fixed pixel gutters briefly let CSS stretch/reflow
+    // the columns as soon as the native view changes size.
+    root.style.setProperty("--page-margin-x", workspaceLayout
+      ? "max(0px, calc(" + (50 / columns) + "vw - " + (workspaceLayout.columnWidth / 2) + "px))"
+      : margin + "px");
+    root.style.setProperty("--page-margin-y", (workspaceLayout ? workspaceLayout.marginY : settings.marginY) + "px");
+    root.style.setProperty("--column-gap", workspaceLayout
+      ? "max(0px, calc(" + (100 / columns) + "vw - " + workspaceLayout.columnWidth + "px))"
+      : gap + "px");
+    root.style.setProperty("--column-width", Math.max(120, columnWidth) + "px");
+    root.style.setProperty("--column-count", columns);
+
+    state.columns = columns;
+    state.stride = viewport;
+  }
+
+  function parsePx(value) {
+    var n = parseFloat(value);
+    return isFinite(n) ? n : 0;
+  }
+
+  /*
+   * Live column stride, measured from the body's box rather than assumed
+   * from innerWidth. When the page-box invariant holds (padding = marginX,
+   * gap = 2 * marginX) this equals the viewport width; if a book still
+   * bends the box, paging follows the real column pitch instead of drifting.
+   */
+  function currentStride() {
+    try {
+      var root = document.documentElement;
+      var body = document.body;
+      if (!body) return window.innerWidth || state.stride || 1;
+      var style = window.getComputedStyle(body);
+      var gapRaw = style.columnGap;
+      var gap = !gapRaw || gapRaw === "normal" ? 0 : parsePx(gapRaw);
+      var stride =
+        root.clientWidth -
+        parsePx(style.marginLeft) -
+        parsePx(style.marginRight) -
+        parsePx(style.paddingLeft) -
+        parsePx(style.paddingRight) +
+        gap;
+      if (isFinite(stride) && stride > 0) return stride;
+    } catch (error) {
+      /* Fall through to the viewport fallback. */
+    }
+    return window.innerWidth || state.stride || 1;
+  }
+
+  function scrollingRoot() {
+    return document.scrollingElement || document.documentElement;
+  }
+
+  function getScrollLeft() {
+    return scrollingRoot().scrollLeft;
+  }
+
+  function setScrollLeft(target, behavior) {
+    var root = scrollingRoot();
+    var html = document.documentElement;
+    var body = document.body;
+    if (behavior && behavior !== "auto") {
+      try {
+        root.scrollTo({ left: target, top: 0, behavior: behavior });
+      } catch (error) {
+        root.scrollLeft = target;
+      }
+      return;
+    }
+    try {
+      root.scrollTo({ left: target, top: 0, behavior: "auto" });
+    } catch (error) {
+      /* Fall through to the assignment below. */
+    }
+    root.scrollLeft = target;
+    html.scrollLeft = target;
+    if (body) body.scrollLeft = target;
+    void html.offsetWidth;
+    if (Math.abs(getScrollLeft() - target) > 2) {
+      root.scrollLeft = target;
+      html.scrollLeft = target;
+      if (body) body.scrollLeft = target;
+    }
+  }
+
+  function maxScrollLeft() {
+    var el = scrollingRoot();
+    return Math.max(0, el.scrollWidth - el.clientWidth);
+  }
+
+  function clamp(value, low, high) {
+    return Math.min(high, Math.max(low, value));
+  }
+
+  /*
+   * Page index implied by the live scroll offset. The DOM is the source of
+   * truth; state.currentPage is only allowed to lead during a smooth turn.
+   */
+  function pageFromScroll() {
+    var stride = currentStride();
+    return clamp(
+      Math.round(getScrollLeft() / stride),
+      0,
+      Math.max(0, state.pageCount - 1)
+    );
+  }
+
+  // Intended page while a smooth scroll is in flight; null otherwise.
+  var pendingPageTarget = null;
+  // Exact target is separate because a preserved reading column can begin
+  // halfway through a two-page spread.
+  var pendingScrollTarget = null;
+  var scrollSettleTimer = null;
+
+  function syncPageFromScroll() {
+    var actual = pageFromScroll();
+    if (pendingPageTarget == null) {
+      state.currentPage = actual;
+      return actual;
+    }
+    var expected = pendingScrollTarget;
+    if (Math.abs(getScrollLeft() - expected) <= 2) {
+      pendingPageTarget = null;
+      pendingScrollTarget = null;
+      state.currentPage = actual;
+      return actual;
+    }
+    state.currentPage = clamp(pendingPageTarget, 0, state.pageCount - 1);
+    return state.currentPage;
+  }
+
+  function measure() {
+    var stride = currentStride();
+    state.stride = stride;
+    // Round rather than ceil: sub-pixel scrollWidth slop from column gaps must
+    // not invent a trailing page that has no content to scroll to.
+    state.pageCount = Math.max(1, Math.round(maxScrollLeft() / stride) + 1);
+    syncPageFromScroll();
+  }
+
+  function layoutSnapshot() {
+    var el = document.documentElement;
+    return {
+      width: window.innerWidth,
+      clientWidth: el.clientWidth,
+      scrollWidth: el.scrollWidth,
+      maxScroll: maxScrollLeft(),
+    };
+  }
+
+  function snapshotsEqual(a, b) {
+    return (
+      a &&
+      b &&
+      Math.abs(a.width - b.width) < 1 &&
+      Math.abs(a.clientWidth - b.clientWidth) < 1 &&
+      Math.abs(a.scrollWidth - b.scrollWidth) < 1 &&
+      Math.abs(a.maxScroll - b.maxScroll) < 1
+    );
+  }
+
+  var relayoutGeneration = 0;
+  // First valid text anchor captured while overlapping resize/configure
+  // relayouts are in flight. Later captures often see scrollLeft already
+  // reset to 0 and would restore the chapter start by mistake.
+  var pendingRestore = null;
+  // A backward chapter crossing targets the final page after all startup
+  // configure/resize work settles, rather than a now-stale first-page anchor.
+  // Keep that intent until the reader deliberately navigates somewhere else.
+  var restoreChapterEnd = false;
+  // When set (Draw expanded), resize restore always uses this locator.
+  var pinnedRestore = null;
+  // One-shot resize anchor: captured before an imminent width change (e.g.
+  // opening the sidebar note editor) and consumed by the next relayout.
+  var pinnedRestoreOnce = null;
+  // A workspace preserves the layout of the whole spread, including its
+  // physical column offset. A text locator alone loses the left/right side
+  // and the selected line's height when CSS columns are repaginated.
+  var workspaceLayout = null;
+  var workspaceClosing = false;
+  var workspaceReleaseTimer = null;
+  // Last position observed while the viewport was stable. WKWebView can reset
+  // horizontal scroll to zero before either Swift's pin call or the resize
+  // event reaches this runtime, so probing only at resize time is too late.
+  var lastViewportPosition = null;
+  var viewportResizePending = false;
+  var viewportCaptureTimer = null;
+
+  function isRestorablePosition(position) {
+    return !!(
+      position &&
+      position.elementPath &&
+      position.elementPath.length > 0
+    );
+  }
+
+  function copyPosition(position) {
+    if (!isRestorablePosition(position)) return null;
+    return {
+      elementPath: position.elementPath.slice(),
+      offset: position.offset || 0,
+    };
+  }
+
+  function rememberViewportPosition(position) {
+    var copy = copyPosition(position);
+    if (copy) lastViewportPosition = copy;
+  }
+
+  function pinRestore(position) {
+    if (position && position.elementPath && position.elementPath.length > 0) {
+      pinnedRestore = position;
+    } else {
+      pinnedRestore = null;
+    }
+  }
+
+  function pinRestoreCurrentOnce() {
+    if (workspaceLayout) return;
+    if (pinnedRestoreOnce) return;
+    var p = currentPosition();
+    // A width change can zero scrollLeft while currentPage still describes the
+    // page the user was reading. In that gap, the live probe points at the
+    // chapter start; prefer the position captured before layout moved.
+    if (
+      lastViewportPosition &&
+      state.currentPage > 0 &&
+      getScrollLeft() <= 2
+    ) {
+      p = lastViewportPosition;
+    }
+    pinnedRestoreOnce = copyPosition(p) || copyPosition(lastViewportPosition);
+  }
+
+  function pinRestoreOnce(position) {
+    if (workspaceLayout) return;
+    if (position && position.elementPath && position.elementPath.length > 0) {
+      pinnedRestoreOnce = position;
+    }
+  }
+
+  function beginWorkspaceRestore() {
+    if (workspaceReleaseTimer) clearTimeout(workspaceReleaseTimer);
+    workspaceReleaseTimer = null;
+    workspaceClosing = false;
+    if (!workspaceLayout) {
+      // Finish an in-flight page turn before capturing its spread.
+      if (pendingScrollTarget != null) scrollToOffset(pendingScrollTarget, false);
+      workspaceLayout = {
+        columns: state.columns,
+        columnWidth: parsePx(getComputedStyle(document.body).columnWidth),
+        marginY: settings.marginY,
+        originalWidth: window.innerWidth,
+        renderedWidth: window.innerWidth,
+        columnOffset: getScrollLeft() / (currentStride() / state.columns),
+      };
+    }
+    pinnedRestoreOnce = null;
+    pendingRestore = null;
+    applyLayout();
+    return workspaceLayout;
+  }
+
+  function endWorkspaceRestore() {
+    // Keep the same geometry through the closing resize. The offset follows
+    // deliberate navigation, so closing never returns to an older passage.
+    workspaceClosing = true;
+    pinnedRestoreOnce = null;
+    pendingRestore = null;
+    // Overlay panels and cancelled opens never changed the reader's width.
+    // There will be no resize event to finish those sessions.
+    if (workspaceLayout && Math.abs(window.innerWidth - workspaceLayout.originalWidth) < 2) {
+      workspaceLayout = null;
+      workspaceClosing = false;
+    } else {
+      scheduleWorkspaceRelease();
+    }
+  }
+
+  function scheduleWorkspaceRelease() {
+    if (workspaceReleaseTimer) clearTimeout(workspaceReleaseTimer);
+    if (!workspaceClosing) return;
+    // If the window itself changed size during the session, its original
+    // width will never return. Release after the closing resize/configure
+    // burst settles, without introducing another visible reflow.
+    workspaceReleaseTimer = setTimeout(function () {
+      workspaceReleaseTimer = null;
+      workspaceLayout = null;
+      workspaceClosing = false;
+    }, 300);
+  }
+
+  function rememberRestore(position) {
+    if (pinnedRestore) {
+      pendingRestore = pinnedRestore;
+      return;
+    }
+    if (workspaceLayout) return;
+    if (pinnedRestoreOnce) {
+      pendingRestore = pinnedRestoreOnce;
+      pinnedRestoreOnce = null;
+      return;
+    }
+    if (pendingRestore) return;
+    if (!position || !position.elementPath || position.elementPath.length === 0) return;
+    pendingRestore = position;
+  }
+
+  function relayout(preservedPosition) {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
+    rememberRestore(preservedPosition);
+    applyLayout();
+    // Flush pending custom properties so column metrics match the new viewport.
+    void document.documentElement.offsetWidth;
+
+    var generation = ++relayoutGeneration;
+    if (scrollSettleTimer) {
+      clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = null;
+    }
+    pendingPageTarget = null;
+    pendingScrollTarget = null;
+    var last = null;
+    var stableCount = 0;
+    var attempts = 0;
+    var maxAttempts = 8;
+
+    function finish() {
+      if (generation !== relayoutGeneration) return;
+      var restore = pendingRestore;
+      pendingRestore = null;
+      measure();
+      pendingPageTarget = null;
+      pendingScrollTarget = null;
+      viewportResizePending = false;
+      if (workspaceLayout) {
+        // Restore the spread, not the selected column at the left edge.
+        scrollToOffset(workspaceLayout.columnOffset * currentStride() / workspaceLayout.columns, false);
+        notifyPageChanged();
+        // Both the native viewport update and WebKit's resize debounce may
+        // still configure this width. Keep the workspace until that burst
+        // settles so a later configure follows any deliberate page turn.
+        if (workspaceClosing) scheduleWorkspaceRelease();
+      } else if (restoreChapterEnd) {
+        scrollToPage(state.pageCount - 1, false);
+        notifyPageChanged();
+      } else if (restore) {
+        goToPosition(restore, false);
+      } else {
+        notifyPageChanged();
+      }
+      renderHighlights();
+    }
+
+    function step() {
+      if (generation !== relayoutGeneration) return;
+      applyLayout();
+      void document.documentElement.offsetWidth;
+      var now = layoutSnapshot();
+      attempts += 1;
+      if (snapshotsEqual(last, now)) {
+        stableCount += 1;
+      } else {
+        stableCount = 0;
+        last = now;
+      }
+      if (stableCount >= 1 || attempts >= maxAttempts) {
+        finish();
+        return;
+      }
+      scheduleStep();
+    }
+
+    // rAF is preferred, but it may never fire in a hidden WKWebView (tests,
+    // background windows), so every step also has a timeout fallback.
+    function scheduleStep() {
+      var fired = false;
+      function run() {
+        if (fired) return;
+        fired = true;
+        step();
+      }
+      if (typeof requestAnimationFrame === "function") {
+        requestAnimationFrame(run);
+      }
+      setTimeout(run, 16);
+    }
+
+    scheduleStep();
+  }
+
+  // ------------------------------------------------------------ navigation
+
+  function scrollToOffset(offset, animated) {
+    var stride = currentStride();
+    var target = clamp(offset, 0, maxScrollLeft());
+    // Resize suppresses settled-position captures, but deliberate navigation
+    // must still replace the workspace's restore offset immediately.
+    if (workspaceLayout) {
+      workspaceLayout.columnOffset = target / (stride / workspaceLayout.columns);
+    }
+    // Smooth scrolling and a closing resize would race to restore different
+    // offsets. Page immediately while layout is settling, then resume normal
+    // animated turns once the workspace has been released.
+    var useSmooth = animated && settings.animatePageTurns && !viewportResizePending && !workspaceClosing;
+
+    if (useSmooth) {
+      pendingPageTarget = clamp(Math.round(target / stride), 0, state.pageCount - 1);
+      pendingScrollTarget = target;
+      state.currentPage = pendingPageTarget;
+      setScrollLeft(target, "smooth");
+      if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = setTimeout(function () {
+        if (pendingScrollTarget !== target) return;
+        // Hidden/background WKWebViews do not reliably emit scroll events.
+        // Snap to the requested endpoint so state and the persisted locator
+        // are still reported from the page actually requested.
+        setScrollLeft(target, "auto");
+        pendingPageTarget = null;
+        pendingScrollTarget = null;
+        scrollSettleTimer = null;
+        notifyPageChanged();
+      }, 220);
+      return;
+    }
+
+    if (scrollSettleTimer) {
+      clearTimeout(scrollSettleTimer);
+      scrollSettleTimer = null;
+    }
+    pendingPageTarget = null;
+    pendingScrollTarget = null;
+    setScrollLeft(target, "auto");
+    state.currentPage = pageFromScroll();
+  }
+
+  function scrollToPage(page, animated) {
+    var stride = currentStride();
+    // Clamp to the real scrollable range so an over-counted pageCount can never
+    // send the caret past the last column, which would read as "the counter
+    // moved but the page didn't".
+    var requested = clamp(page, 0, state.pageCount - 1);
+    scrollToOffset(requested * stride, animated);
+  }
+
+  function goToPage(page, animated) {
+    restoreChapterEnd = false;
+    scrollToPage(page, animated !== false);
+    if (pendingPageTarget == null) notifyPageChanged();
+  }
+
+  function goToEnd() {
+    restoreChapterEnd = true;
+    pendingRestore = null;
+    measure();
+    scrollToPage(state.pageCount - 1, false);
+    notifyPageChanged();
+  }
+
+  /*
+   * Returns false when the move would run off the end of the document, which
+   * the app treats as a signal to load the neighbouring spine item.
+   */
+  /*
+   * Refresh pageCount against the live layout. Mid-animation we keep the
+   * intended page; otherwise the DOM scroll offset wins so a resize that
+   * reset scrollLeft cannot leave next/previous walking a ghost index.
+   */
+  function remeasureBounds() {
+    var stride = currentStride();
+    state.stride = stride;
+    state.pageCount = Math.max(1, Math.round(maxScrollLeft() / stride) + 1);
+    syncPageFromScroll();
+  }
+
+  function nextPage() {
+    // A smooth page turn is one atomic navigation operation. Native controls,
+    // key handling, and WebKit can occasionally deliver the same gesture down
+    // two paths before the first scroll settles. Advancing from the pending
+    // destination would skip an entire viewport (two physical columns in a
+    // spread), so treat overlapping requests as the turn already succeeding.
+    if (pendingScrollTarget != null) return true;
+    restoreChapterEnd = false;
+    remeasureBounds();
+    var current = getScrollLeft();
+    var target = Math.min(maxScrollLeft(), current + currentStride());
+    if (target <= current + 2) return false;
+    scrollToOffset(target, true);
+    if (pendingPageTarget == null) notifyPageChanged();
+    return true;
+  }
+
+  function previousPage() {
+    // Keep backward turns atomic for the same reason as forward turns: never
+    // derive another destination from a scroll that is still in flight.
+    if (pendingScrollTarget != null) return true;
+    restoreChapterEnd = false;
+    remeasureBounds();
+    var current = getScrollLeft();
+    var target = Math.max(0, current - currentStride());
+    if (target >= current - 2) return false;
+    scrollToOffset(target, true);
+    if (pendingPageTarget == null) notifyPageChanged();
+    return true;
+  }
+
+  function referenceDestination(fragment) {
+    if (!fragment) return { page: 0, moves: getScrollLeft() > 2 };
+    var element =
+      document.getElementById(fragment) ||
+      document.querySelector('[name="' + cssEscape(fragment) + '"]');
+    if (!element) return null;
+
+    var page = pageForRect(element.getBoundingClientRect());
+    var target = Math.min(maxScrollLeft(), page * currentStride());
+    return { page: page, moves: Math.abs(target - getScrollLeft()) > 2 };
+  }
+
+  function goToFragment(fragment, animated) {
+    var destination = referenceDestination(fragment);
+    if (!destination) return false;
+    goToPage(destination.page, animated === true);
+    return true;
+  }
+
+  function cssEscape(value) {
+    if (window.CSS && window.CSS.escape) return window.CSS.escape(value);
+    return String(value).replace(/["\\]/g, "\\$&");
+  }
+
+  function pageForRect(rect) {
+    if (!rect || (rect.width === 0 && rect.height === 0)) return state.currentPage;
+    var stride = currentStride();
+    var absolute = rect.left + getScrollLeft();
+    return clamp(Math.floor(absolute / stride), 0, state.pageCount - 1);
+  }
+
+  function notifyPageChanged() {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
+    if (pendingPageTarget == null) {
+      syncPageFromScroll();
+    }
+    var position = currentPosition();
+    if (!viewportResizePending && pendingPageTarget == null) {
+      rememberViewportPosition(position);
+      if (workspaceLayout) {
+        workspaceLayout.columnOffset = getScrollLeft() / (currentStride() / workspaceLayout.columns);
+      }
+    }
+    post({
+      type: "pageChanged",
+      spineIndex: state.spineIndex,
+      page: state.currentPage,
+      pageCount: state.pageCount,
+      progression: state.pageCount > 1 ? state.currentPage / (state.pageCount - 1) : 0,
+      position: position,
+    });
+  }
+
+  // -------------------------------------------------------------- locators
+
+  /*
+   * A position is the chain of childNode indices from <body> down to a text
+   * node, plus a character offset. Indices stay valid because the document is
+   * immutable, and unlike a scroll offset the anchor survives resizing and
+   * font changes. The highlight layer is always body's last child so it never
+   * shifts the indices of real content.
+   */
+  function pathOfNode(node) {
+    var path = [];
+    var current = node;
+    while (current && current !== document.body) {
+      var parent = current.parentNode;
+      if (!parent) break;
+      path.unshift(Array.prototype.indexOf.call(parent.childNodes, current));
+      current = parent;
+    }
+    return path;
+  }
+
+  function nodeAtPath(path) {
+    var node = document.body;
+    for (var i = 0; i < path.length; i++) {
+      var next = node.childNodes[path[i]];
+      // A missing step must fail hard: falling back to a parent would make a
+      // broken locator look resolved and skip quote-based repair.
+      if (!next) return null;
+      node = next;
+    }
+    return node;
+  }
+
+  function positionFromPoint(x, y) {
+    if (!document.caretRangeFromPoint) return null;
+    var range = document.caretRangeFromPoint(x, y);
+    if (!range) return null;
+
+    // A point over padding or between blocks resolves to an element rather
+    // than a text node, and an element path rooted at <body> is empty, which
+    // would be useless for restoring the position later.
+    var node = range.startContainer;
+    if (node === document.body) return null;
+    if (node.nodeType !== Node.TEXT_NODE && node.nodeType !== Node.ELEMENT_NODE) return null;
+
+    return { elementPath: pathOfNode(node), offset: range.startOffset };
+  }
+
+  /*
+   * Anchor for the start of whatever is currently on screen.
+   *
+   * Start from a real line rectangle in the leading column. Asking WebKit for
+   * a caret in page padding is ambiguous: it can return text from the previous
+   * physical column, which makes a sidebar round trip drift backward.
+   */
+  function currentPosition() {
+    var visibleLine = firstLeadingVisibleTextPosition();
+    if (visibleLine) return visibleLine;
+
+    var x = settings.marginX + 4;
+    var usableHeight = Math.max(1, window.innerHeight - 2 * settings.marginY);
+
+    for (var fraction = 0; fraction < 1; fraction += 0.08) {
+      var y = settings.marginY + 2 + fraction * usableHeight;
+      var position = positionFromPoint(x, y);
+      if (position) return position;
+    }
+
+    return firstVisibleAnchor();
+  }
+
+  function firstLeadingVisibleTextPosition() {
+    var leadingEnd = window.innerWidth / Math.max(1, state.columns);
+    var layer = document.getElementById(LAYER_ID);
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.textContent || !node.textContent.trim()) return NodeFilter.FILTER_REJECT;
+        if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+    var best = null;
+    var node;
+
+    while ((node = walker.nextNode())) {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rect = rects[i];
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        if (rect.right <= 0 || rect.left >= leadingEnd) continue;
+        if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
+        if (
+          !best ||
+          rect.top < best.rect.top - 1 ||
+          (Math.abs(rect.top - best.rect.top) <= 1 && rect.left < best.rect.left)
+        ) {
+          best = { rect: rect, node: node };
+        }
+      }
+    }
+
+    if (!best) return null;
+    var probeXs = [
+      best.rect.left + Math.min(4, best.rect.width / 2),
+      best.rect.left + best.rect.width / 2,
+      best.rect.right - Math.min(4, best.rect.width / 2),
+    ];
+    var y = clamp(best.rect.top + best.rect.height / 2, 1, window.innerHeight - 1);
+    for (var p = 0; p < probeXs.length; p++) {
+      var caret = document.caretRangeFromPoint(
+        clamp(probeXs[p], 1, Math.max(1, leadingEnd - 1)),
+        y
+      );
+      if (!caret || caret.startContainer !== best.node) continue;
+      var caretOffset = clamp(caret.startOffset, 0, Math.max(0, best.node.textContent.length - 1));
+      return { elementPath: pathOfNode(best.node), offset: caretOffset };
+    }
+
+    // Some WebKit builds return the surrounding element even when the probe
+    // is inside a glyph. Resolve the character directly from the chosen line
+    // rectangle so the locator cannot fall back to the start of a long node
+    // laid out on an earlier page.
+    for (var offset = 0; offset < best.node.textContent.length; offset++) {
+      var character = document.createRange();
+      character.setStart(best.node, offset);
+      character.setEnd(best.node, offset + 1);
+      var characterRect = character.getBoundingClientRect();
+      var sameLine =
+        characterRect.height > 0 &&
+        Math.abs(characterRect.top - best.rect.top) <= 1 &&
+        characterRect.right > 0 &&
+        characterRect.left < leadingEnd;
+      if (sameLine) return { elementPath: pathOfNode(best.node), offset: offset };
+    }
+    return null;
+  }
+
+  /*
+   * First node laid out on the current page. Text is preferred, but a cover or
+   * full-page illustration has none, so elements are searched too rather than
+   * returning an empty path that would collapse to the top of the chapter.
+   */
+  function firstVisibleAnchor() {
+    var stride = currentStride();
+    var pageStart = state.currentPage * stride;
+    var pageEnd = pageStart + stride;
+    var scrollLeft = getScrollLeft();
+    var layer = document.getElementById(LAYER_ID);
+
+    function isOnThisPage(rect) {
+      if (rect.width === 0 && rect.height === 0) return false;
+      var left = rect.left + scrollLeft;
+      return left >= pageStart - 2 && left < pageEnd;
+    }
+
+    var textWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (!node.textContent || !node.textContent.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    var node;
+    while ((node = textWalker.nextNode())) {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      if (isOnThisPage(range.getBoundingClientRect())) {
+        return { elementPath: pathOfNode(node), offset: 0 };
+      }
+    }
+
+    var elementWalker = document.createTreeWalker(document.body, NodeFilter.SHOW_ELEMENT, {
+      acceptNode: function (element) {
+        if (element.id === LAYER_ID) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    var element;
+    while ((element = elementWalker.nextNode())) {
+      if (isOnThisPage(element.getBoundingClientRect())) {
+        return { elementPath: pathOfNode(element), offset: 0 };
+      }
+    }
+
+    return { elementPath: [], offset: 0 };
+  }
+
+  function rangeFromPosition(position) {
+    try {
+      var node = nodeAtPath(position.elementPath || []);
+      if (!node) return null;
+      var range = document.createRange();
+      var maxOffset =
+        node.nodeType === Node.TEXT_NODE
+          ? node.textContent.length
+          : node.childNodes.length;
+      var offset = clamp(position.offset || 0, 0, maxOffset);
+      range.setStart(node, offset);
+      range.setEnd(node, offset);
+      return range;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function rangeFromLocator(locator) {
+    try {
+      var startNode = nodeAtPath((locator.start && locator.start.elementPath) || []);
+      var endNode = nodeAtPath(
+        ((locator.end || locator.start) && (locator.end || locator.start).elementPath) || []
+      );
+      if (!startNode || !endNode) return null;
+      var range = document.createRange();
+
+      var startMax =
+        startNode.nodeType === Node.TEXT_NODE
+          ? startNode.textContent.length
+          : startNode.childNodes.length;
+      var endMax =
+        endNode.nodeType === Node.TEXT_NODE
+          ? endNode.textContent.length
+          : endNode.childNodes.length;
+
+      range.setStart(startNode, clamp((locator.start && locator.start.offset) || 0, 0, startMax));
+      range.setEnd(
+        endNode,
+        clamp(((locator.end || locator.start) && (locator.end || locator.start).offset) || 0, 0, endMax)
+      );
+      return range.collapsed ? null : range;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function goToPosition(position, animated) {
+    restoreChapterEnd = false;
+    if (!position || !position.elementPath || position.elementPath.length === 0) {
+      goToPage(0, false);
+      return;
+    }
+    var range = rangeFromPosition(position);
+    if (!range) {
+      goToPage(0, false);
+      return;
+    }
+
+    // A collapsed range has no box, so widen it by one character to measure.
+    var rect = range.getBoundingClientRect();
+    if (rect.width === 0 && rect.height === 0) {
+      try {
+        var node = range.startContainer;
+        if (node.nodeType === Node.TEXT_NODE && node.textContent.length > range.startOffset) {
+          range.setEnd(node, range.startOffset + 1);
+          rect = range.getBoundingClientRect();
+        } else if (node.nodeType === Node.ELEMENT_NODE) {
+          rect = node.getBoundingClientRect();
+        }
+      } catch (error) {
+        /* Fall through with the empty rect; pageForRect handles it. */
+      }
+    }
+    // Restore the physical reading column at the leading edge. Aligning only
+    // to a whole viewport can put this anchor in the right-hand column after
+    // the sidebar closes, exposing an earlier page on the left and making the
+    // reader appear to jump back to the chapter start.
+    var stride = currentStride();
+    var columnStride = stride / Math.max(1, state.columns);
+    var absolute = rect.left + getScrollLeft();
+    var target = Math.floor(Math.max(0, absolute) / columnStride) * columnStride;
+    scrollToOffset(target, animated === true);
+    if (pendingPageTarget == null) notifyPageChanged();
+  }
+
+  // ------------------------------------------------------------- selection
+
+  var selectionTimer = null;
+
+  function handleSelectionChange() {
+    var selection = window.getSelection();
+    if (selection && !selection.isCollapsed) {
+      cancelDirectReadingMarkerClick();
+      clearReadingMarkerCue();
+    }
+    if (selectionTimer) clearTimeout(selectionTimer);
+    selectionTimer = setTimeout(reportSelection, 120);
+  }
+
+  function reportSelection() {
+    var selection = window.getSelection();
+    if (!selection || selection.isCollapsed || selection.rangeCount === 0) {
+      post({ type: "selectionCleared" });
+      return;
+    }
+
+    var range = selection.getRangeAt(0);
+    var text = selection.toString().trim();
+    if (!text) {
+      post({ type: "selectionCleared" });
+      return;
+    }
+
+    var rects = range.getClientRects();
+    var anchor = rects.length > 0 ? rects[rects.length - 1] : range.getBoundingClientRect();
+
+    post({
+      type: "selection",
+      text: text,
+      spineIndex: state.spineIndex,
+      locator: {
+        start: {
+          elementPath: pathOfNode(range.startContainer),
+          offset: range.startOffset,
+        },
+        end: {
+          elementPath: pathOfNode(range.endContainer),
+          offset: range.endOffset,
+        },
+      },
+      // Viewport coordinates, for placing the popover on the Swift side.
+      rect: {
+        x: anchor.left,
+        y: anchor.top,
+        width: anchor.width,
+        height: anchor.height,
+      },
+    });
+  }
+
+  function clearSelection() {
+    var selection = window.getSelection();
+    if (selection) selection.removeAllRanges();
+  }
+
+  // ------------------------------------------------------------ highlights
+
+  var markerHoverTimer = null;
+  var markerPointerDown = null;
+  var markerClickTimer = null;
+
+  function cancelDirectReadingMarkerClick() {
+    if (markerClickTimer != null) clearTimeout(markerClickTimer);
+    markerClickTimer = null;
+  }
+
+  function clearReadingMarkerCue() {
+    if (markerHoverTimer != null) clearTimeout(markerHoverTimer);
+    markerHoverTimer = null;
+    var cue = document.getElementById("reader-reading-marker-cue");
+    if (cue) cue.remove();
+    document.documentElement.classList.remove("reader-hovering-line-start");
+  }
+
+  // Highlights remain clickable normally; geometry probes look through just
+  // the rectangle under the pointer to find the book's real text.
+  function markerCaretAtPoint(x, y) {
+    var hidden = [], hit, highlight;
+    while (hidden.length < 20) {
+      hit = document.elementFromPoint(x, y);
+      highlight = hit && hit.closest ? hit.closest(".reader-highlight-rect") : null;
+      if (!highlight) break;
+      hidden.push({ element: highlight, value: highlight.style.getPropertyValue("pointer-events"),
+        priority: highlight.style.getPropertyPriority("pointer-events") });
+      highlight.style.setProperty("pointer-events", "none", "important");
+    }
+    try {
+      return document.caretRangeFromPoint ? document.caretRangeFromPoint(x, y) : null;
+    } finally {
+      hidden.forEach(function (entry) {
+        if (entry.value) entry.element.style.setProperty("pointer-events", entry.value, entry.priority);
+        else entry.element.style.removeProperty("pointer-events");
+      });
+    }
+  }
+
+  function markerInteractiveText(node) {
+    var element = node && node.parentElement;
+    return !element || element.closest("a[href],button,input,textarea,select,[contenteditable],[role='button']");
+  }
+
+  // Text fragments, rather than paragraph boxes, distinguish wrapped lines,
+  // inline emphasis, indentation, and the two columns of a spread.
+  function markerLineFragment(node, x, y) {
+    var block = node ? node.parentElement : document.body;
+    while (block && block !== document.body &&
+           /^(inline|contents|ruby)/.test(getComputedStyle(block).display)) block = block.parentElement;
+    if (!block) return null;
+    var stride = currentStride() / Math.max(1, state.columns);
+    var column = Math.floor(Math.max(0, x + getScrollLeft()) / stride);
+    var left = column * stride - getScrollLeft(), right = left + stride;
+    var best = null;
+    function inspect(text) {
+      if (!isReadableTextNode(text)) return;
+      var range = document.createRange();
+      range.selectNodeContents(text);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rect = rects[i];
+        if (rect.width <= 0 || rect.height <= 0 || y < rect.top - 2 || y > rect.bottom + 2) continue;
+        if (rect.right <= Math.max(0, left) || rect.left >= Math.min(window.innerWidth, right)) continue;
+        if (!best || rect.left < best.rect.left) best = { node: text, rect: rect };
+      }
+    }
+    if (block === document.body && node) inspect(node);
+    else {
+      var walker = document.createTreeWalker(block, NodeFilter.SHOW_TEXT), text;
+      while ((text = walker.nextNode())) inspect(text);
+    }
+    return best;
+  }
+
+  function markerFirstCharacter(fragment) {
+    var node = fragment.node, line = fragment.rect;
+    if (!node.length) return null;
+    var range = document.createRange();
+    function startsOnLine(rect) {
+      return rect.width > 0 && rect.height > 0 &&
+        Math.abs(rect.top - line.top) <= 1 && Math.abs(rect.left - line.left) <= 1;
+    }
+    function prefixReachesLine(end) {
+      range.setStart(node, 0);
+      range.setEnd(node, end);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        if (startsOnLine(rects[i])) return true;
+      }
+      return false;
+    }
+    // A caret at a wrap boundary can belong to the preceding line. Find the
+    // first character whose rendered range reaches this fragment instead.
+    // Prefix ranges keep this logarithmic even for chapter-sized text nodes.
+    var low = 1, high = node.length;
+    while (low < high) {
+      var middle = Math.floor((low + high) / 2);
+      if (prefixReachesLine(middle)) high = middle;
+      else low = middle + 1;
+    }
+    for (var offset = low - 1; offset < node.length; offset++) {
+      if (!/[^\s\u00ad]/.test(node.textContent.charAt(offset))) continue;
+      range.setStart(node, offset);
+      range.setEnd(node, offset + 1);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var rect = rects[i];
+        if (rect.width > 0 && rect.height > 0 && Math.abs(rect.top - line.top) <= 1 &&
+            rect.left >= line.left - 1 && rect.left < line.right && rect.right > line.left) {
+          return { position: { elementPath: pathOfNode(node), offset: offset }, rect: rect };
+        }
+      }
+      break;
+    }
+    return null;
+  }
+
+  function markerLineStartAtPoint(x, y) {
+    if (!state.ready || viewportResizePending || pendingPageTarget != null ||
+        x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight) return null;
+    var caret = markerCaretAtPoint(x, y);
+    var fragment = caret && caret.startContainer.nodeType === Node.TEXT_NODE &&
+      isReadableTextNode(caret.startContainer) ? markerLineFragment(caret.startContainer, x, y) : null;
+    var first = fragment ? markerFirstCharacter(fragment) : null;
+    // Gutter hit testing may return an adjacent block or no text at all.
+    // An ordinary mid-line hit is already resolved and needs no chapter scan.
+    if (!fragment || !first || x < fragment.rect.left - 28) {
+      fragment = markerLineFragment(null, x, y);
+      first = fragment ? markerFirstCharacter(fragment) : null;
+    }
+    if (!fragment || markerInteractiveText(fragment.node)) return null;
+    var rect = fragment.rect;
+    if (x < rect.left - 28 || x > rect.right) return null;
+    if (!first || x > first.rect.right) return null;
+    return { position: first.position, rect: rect,
+      text: fragment.node.textContent.slice(first.position.offset, first.position.offset + 120).trim() };
+  }
+
+  function onMarkerPointerMove(event) {
+    if (markerPointerDown && event.buttons) {
+      if (Math.hypot(event.clientX - markerPointerDown.x, event.clientY - markerPointerDown.y) > 4) {
+        markerPointerDown.dragged = true;
+      }
+    }
+    if (state.placingReadingMarker || event.buttons || event.shiftKey || event.metaKey || event.altKey || event.ctrlKey) {
+      clearReadingMarkerCue();
+      return;
+    }
+    if (markerHoverTimer != null) clearTimeout(markerHoverTimer);
+    var x = event.clientX, y = event.clientY;
+    // Coalesce pointer updates even when WebKit suspends animation frames in
+    // background windows.
+    markerHoverTimer = setTimeout(function () {
+      markerHoverTimer = null;
+      clearReadingMarkerCue();
+      var selection = window.getSelection();
+      if (selection && !selection.isCollapsed) return;
+      var target = markerLineStartAtPoint(x, y);
+      if (!target) return;
+      showReadingMarkerCue(target);
+    }, 16);
+  }
+
+  function showReadingMarkerCue(target) {
+    clearReadingMarkerCue();
+    var cue = document.createElement("div");
+    cue.id = "reader-reading-marker-cue";
+    cue.setAttribute("aria-hidden", "true");
+    cue.style.left = Math.max(2, target.rect.left + getScrollLeft() - 24) + "px";
+    cue.style.top = target.rect.top + scrollingRoot().scrollTop + target.rect.height / 2 - 7 + "px";
+    highlightLayer().appendChild(cue);
+    document.documentElement.classList.add("reader-hovering-line-start");
+  }
+
+  function onMarkerPointerDown(event) {
+    cancelDirectReadingMarkerClick();
+    clearReadingMarkerCue();
+    var selection = window.getSelection();
+    markerPointerDown = event.button === 0 && event.detail === 1 &&
+      !event.shiftKey && !event.metaKey && !event.altKey && !event.ctrlKey &&
+      (!selection || selection.isCollapsed)
+      ? { x: event.clientX, y: event.clientY, dragged: false } : null;
+  }
+
+  function commitReadingMarker(position, text, lineStart) {
+    clearReadingMarkerCue();
+    setReadingMarker({ start: position });
+    setReadingMarkerPlacement(false);
+    post({ type: "readingMarkerPlaced", spineIndex: state.spineIndex,
+      position: position, text: text, lineStart: lineStart === true });
+  }
+
+  // Kept inside the existing overlay, so real book child-node paths stay stable.
+  function setReadingMarker(marker) {
+    cancelDirectReadingMarkerClick();
+    clearReadingMarkerCue();
+    state.readingMarker = marker && marker.start ? marker : null;
+    renderReadingMarker();
+  }
+
+  function setReadingMarkerPlacement(active) {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
+    state.placingReadingMarker = active === true;
+    document.documentElement.classList.toggle("reader-placing-marker", state.placingReadingMarker);
+  }
+
+  function readingMarkerRect(position) {
+    var range = rangeFromPosition(position);
+    if (!range || range.startContainer.nodeType !== Node.TEXT_NODE) return null;
+    var node = range.startContainer;
+    var offset = clamp(range.startOffset, 0, Math.max(0, node.length - 1));
+    if (!node.length) return null;
+    range.setStart(node, offset);
+    range.setEnd(node, offset + 1);
+    // At a hyphenated wrap WebKit also returns a zero-width caret fragment
+    // on the preceding line. Its bounding union would span both lines.
+    var rects = range.getClientRects();
+    for (var i = 0; i < rects.length; i++) {
+      if (rects[i].width > 0 && rects[i].height > 0) return rects[i];
+    }
+    return null;
+  }
+
+  function renderReadingMarker() {
+    var previous = document.getElementById("reader-reading-marker");
+    if (previous) previous.remove();
+    if (!state.readingMarker) return;
+    var rect = readingMarkerRect(state.readingMarker.start);
+    if (!rect) return;
+    var scrollLeft = getScrollLeft();
+    var columnStride = currentStride() / Math.max(1, state.columns);
+    var columnStart = Math.floor(Math.max(0, rect.left + scrollLeft) / columnStride) * columnStride;
+    var margin = parsePx(getComputedStyle(document.body).paddingLeft);
+    var anchorRange = rangeFromPosition(state.readingMarker.start);
+    var line = anchorRange ? markerLineFragment(anchorRange.startContainer, rect.left, rect.top + rect.height / 2) : null;
+    var marker = document.createElement("div");
+    marker.id = "reader-reading-marker";
+    marker.setAttribute("role", "img");
+    marker.setAttribute("aria-label", "Stopped reading here");
+    marker.title = "Stopped reading here";
+    marker.style.left = Math.max(columnStart + 2, line ? line.rect.left + scrollLeft - 24 : columnStart + margin - 24) + "px";
+    marker.style.top = rect.top + scrollingRoot().scrollTop + rect.height / 2 - 7 + "px";
+    highlightLayer().appendChild(marker);
+  }
+
+  function placeReadingMarkerFromClick(event) {
+    if (!document.caretRangeFromPoint) return false;
+    var range = document.caretRangeFromPoint(event.clientX, event.clientY);
+    if (!range || !isReadableTextNode(range.startContainer)) return false;
+    var node = range.startContainer;
+    if (node.nodeType !== Node.TEXT_NODE || !node.length) return false;
+    var offset = clamp(range.startOffset, 0, node.length - 1);
+    var position = { elementPath: pathOfNode(node), offset: offset };
+    var rect = readingMarkerRect(position);
+    // Caret hit-testing rounds the right half of a wide glyph to its end.
+    // Keep the actual clicked glyph when that caret lands at the next one.
+    if (rect && offset > 0 && event.clientX < rect.left) {
+      var previous = { elementPath: position.elementPath, offset: offset - 1 };
+      var previousRect = readingMarkerRect(previous);
+      if (previousRect && event.clientX >= previousRect.left && event.clientX <= previousRect.right &&
+          event.clientY >= previousRect.top && event.clientY <= previousRect.bottom) {
+        position = previous;
+        offset -= 1;
+        rect = previousRect;
+      }
+    }
+    // WebKit's nearest caret can be in another column when clicking padding.
+    if (!rect || rect.right < 0 || rect.left >= window.innerWidth ||
+        rect.bottom < 0 || rect.top >= window.innerHeight ||
+        event.clientX < rect.left - 5 || event.clientX > rect.right + 5 ||
+        event.clientY < rect.top - 3 || event.clientY > rect.bottom + 3) return false;
+    commitReadingMarker(position, node.textContent.slice(offset, offset + 120).trim(), false);
+    return true;
+  }
+
+  function highlightLayer() {
+    var layer = document.getElementById(LAYER_ID);
+    if (!layer) {
+      layer = document.createElement("div");
+      layer.id = LAYER_ID;
+      // Appending last keeps every other child's index stable, which the
+      // locator paths depend on.
+      document.body.appendChild(layer);
+      layer.addEventListener("click", onHighlightClick);
+    }
+    return layer;
+  }
+
+  function onHighlightClick(event) {
+    var target = event.target;
+    if (!target || !target.dataset || !target.dataset.highlightId) return;
+    event.preventDefault();
+    event.stopPropagation();
+
+    var rect = target.getBoundingClientRect();
+    post({
+      type: "highlightTapped",
+      id: target.dataset.highlightId,
+      rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+    });
+  }
+
+  function setHighlights(highlights) {
+    state.highlights = Array.isArray(highlights) ? highlights : [];
+    renderHighlights();
+  }
+
+  // Research markers share the ignored chrome layer, never the book DOM.
+  // Updating reminders must not create an annotation or change its color.
+  function setReminders(reminders) {
+    state.reminders = Array.isArray(reminders) ? reminders : [];
+    renderReminders();
+  }
+
+  function activateReminderBadge(button, event) {
+    if (event) { event.preventDefault(); event.stopPropagation(); }
+    cancelDirectReadingMarkerClick();
+    clearReadingMarkerCue();
+    var rect = button.getBoundingClientRect();
+    post({ type: "reminderTapped", id: button.dataset.reminderId,
+      ids: JSON.parse(button.dataset.reminderIds || "[]"),
+      rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height } });
+  }
+
+  function reminderRange(reminder) {
+    var resolved = resolveHighlight(reminder);
+    var quote = normalizeWhitespace(reminder.text);
+    // A path can still exist after an EPUB revision while pointing at different
+    // words. Never attach a research task to those unrelated words.
+    if (quote && (!resolved.range || normalizeWhitespace(resolved.range.toString()) !== quote)) {
+      var repaired = rangeFromQuote(quote);
+      if (!repaired) return null;
+      resolved = { range: repaired, locator: locatorPayloadFromRange(repaired) };
+    }
+    if (resolved.range) {
+      if (!isReadableTextNode(resolved.range.startContainer) ||
+          !isReadableTextNode(resolved.range.endContainer)) return null;
+      if (resolved.locator) {
+        reminder.start = resolved.locator.start;
+        reminder.end = resolved.locator.end;
+      }
+      return resolved.range;
+    }
+    // A page reminder may be a single durable text position without a quote.
+    if (!quote && reminder.start) {
+      var point = rangeFromPosition(reminder.start);
+      if (!point || !isReadableTextNode(point.startContainer) ||
+          point.startContainer.nodeType !== Node.TEXT_NODE || !point.startContainer.length) return null;
+      var offset = Math.min(point.startOffset, point.startContainer.length - 1);
+      point.setStart(point.startContainer, offset);
+      point.setEnd(point.startContainer, offset + 1);
+      return point;
+    }
+    return null;
+  }
+
+  function reminderTextRects() {
+    var rects = [];
+    collectReadableNodes().forEach(function (node) {
+      var range = document.createRange();
+      range.selectNodeContents(node);
+      Array.prototype.forEach.call(range.getClientRects(), function (rect) {
+        if (rect.width > 0 && rect.height > 0) rects.push({
+          left: rect.left + getScrollLeft(), right: rect.right + getScrollLeft(),
+          top: rect.top + scrollingRoot().scrollTop, bottom: rect.bottom + scrollingRoot().scrollTop
+        });
+      });
+    });
+    return rects;
+  }
+
+  function reminderEndRect(range) {
+    var rects = highlightRects(range);
+    var stride = currentStride() / Math.max(1, state.columns);
+    var scroll = getScrollLeft();
+    // Reading order advances across physical columns before wrapping back to
+    // the top. Sorting only by y would pick a line in an earlier column.
+    rects.sort(function (a, b) {
+      var aColumn = Math.floor((a.left + scroll + 1) / stride);
+      var bColumn = Math.floor((b.left + scroll + 1) / stride);
+      return aColumn - bColumn || a.top - b.top || a.right - b.right;
+    });
+    return rects.length ? rects[rects.length - 1] : null;
+  }
+
+  function reminderRectOverlaps(a, b, padding) {
+    return a.left < b.right + padding && a.right > b.left - padding &&
+      a.top < b.bottom + padding && a.bottom > b.top - padding;
+  }
+
+  function reminderPlacement(rect, textRects, groups) {
+    var size = 22, gap = 4, scroll = getScrollLeft();
+    var stride = currentStride() / Math.max(1, state.columns);
+    var margin = parsePx(getComputedStyle(document.body).paddingLeft);
+    var columnStart = Math.floor(Math.max(0, rect.left + scroll) / stride) * stride;
+    var top = rect.top + scrollingRoot().scrollTop + (rect.bottom - rect.top - size) / 2;
+    var after = rect.right + scroll + gap;
+    var gutter = Math.min(columnStart + stride - size - 2, columnStart + stride - margin + gap);
+    var candidates = [
+      { left: after, top: top },
+      { left: gutter, top: top },
+      { left: columnStart + margin - size - gap, top: top }
+    ];
+    var flag = document.getElementById("reader-reading-marker");
+    var flagRect = flag && flag.getBoundingClientRect();
+    for (var i = 0; i < candidates.length; i++) {
+      var candidate = candidates[i];
+      candidate.right = candidate.left + size;
+      candidate.bottom = candidate.top + size;
+      if (candidate.left < columnStart + 2 || candidate.right > columnStart + stride - 2) continue;
+      if (textRects.some(function (text) { return reminderRectOverlaps(candidate, text, 1); })) continue;
+      if (flagRect && reminderRectOverlaps(candidate, {
+        left: flagRect.left + scroll, right: flagRect.right + scroll,
+        top: flagRect.top + scrollingRoot().scrollTop, bottom: flagRect.bottom + scrollingRoot().scrollTop
+      }, 2)) continue;
+      var collision = groups.find(function (group) { return reminderRectOverlaps(candidate, group.rect, 2); });
+      return collision ? { group: collision } : { rect: candidate };
+    }
+    // Extremely narrow gutters offer no safe target; do not cover book text.
+    return null;
+  }
+
+  function focusedReminderID(layer) {
+    var active = document.activeElement;
+    return active && layer.contains(active) && active.classList.contains("reader-reminder-badge")
+      ? active.dataset.reminderId : null;
+  }
+
+  function renderReminders(restoreFocusID) {
+    var layer = highlightLayer();
+    var focusedID = restoreFocusID || focusedReminderID(layer);
+    if (focusedReminderID(layer)) post({ type: "reminderFocusChanged", focused: false });
+    Array.prototype.forEach.call(layer.querySelectorAll(".reader-reminder-badge"), function (badge) { badge.remove(); });
+    if (!state.reminders.length) return;
+    var textRects = reminderTextRects(), groups = [], seen = Object.create(null);
+    state.reminders.forEach(function (reminder) {
+      if (!reminder || !reminder.id || seen[reminder.id]) return;
+      seen[reminder.id] = true;
+      var range = reminderRange(reminder);
+      var end = range && reminderEndRect(range);
+      if (!end) return;
+      var placement = reminderPlacement(end, textRects, groups);
+      if (!placement) return;
+      if (placement.group) { placement.group.reminders.push(reminder); return; }
+      groups.push({ rect: placement.rect, reminders: [reminder] });
+    });
+    groups.forEach(function (group) {
+      var button = document.createElement("button");
+      button.type = "button";
+      button.className = "reader-reminder-badge";
+      button.dataset.reminderId = group.reminders[0].id;
+      button.dataset.reminderIds = JSON.stringify(group.reminders.map(function (reminder) { return reminder.id; }));
+      var titles = group.reminders.map(function (reminder) { return String(reminder.title || "Research this passage"); });
+      button.title = titles.join("\n");
+      button.setAttribute("aria-label", (titles.length > 1 ? "Research reminders: " : "Research reminder: ") + titles.join("; "));
+      button.style.setProperty("left", group.rect.left + "px", "important");
+      button.style.setProperty("top", group.rect.top + "px", "important");
+      button.innerHTML = '<svg viewBox="0 0 16 16" aria-hidden="true" focusable="false"><circle cx="6.7" cy="6.7" r="4.2"></circle><path d="m10 10 3.5 3.5"></path></svg>';
+      if (titles.length > 1) {
+        button.dataset.grouped = "true";
+        var count = document.createElement("span");
+        count.className = "reader-reminder-count";
+        count.textContent = String(titles.length);
+        count.setAttribute("aria-hidden", "true");
+        button.appendChild(count);
+      }
+      button.addEventListener("mousedown", function (event) { event.preventDefault(); });
+      button.addEventListener("focus", function () { post({ type: "reminderFocusChanged", focused: true }); });
+      button.addEventListener("blur", function () { post({ type: "reminderFocusChanged", focused: false }); });
+      button.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") activateReminderBadge(button, event);
+      });
+      layer.appendChild(button);
+      if (focusedID && group.reminders.some(function (reminder) { return reminder.id === focusedID; })) {
+        button.focus({ preventScroll: true });
+      }
+    });
+  }
+
+  function normalizeWhitespace(value) {
+    return String(value || "")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+
+  /*
+   * When a locator is stale, find the stored quote in the document and rebuild
+   * a locator from the first match. Whitespace is collapsed so soft hyphens
+   * and line breaks in the EPUB do not defeat the search.
+   */
+  function rangeFromQuote(quote) {
+    var needle = normalizeWhitespace(quote);
+    if (!needle) return null;
+
+    var layer = document.getElementById(LAYER_ID);
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        if (layer && layer.contains(node)) return NodeFilter.FILTER_REJECT;
+        if (!node.textContent || !node.textContent.trim()) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    var nodes = [];
+    var full = "";
+    var map = []; // full-string index → { node, offset }
+    var node;
+    while ((node = walker.nextNode())) {
+      var text = node.textContent;
+      for (var i = 0; i < text.length; i++) {
+        var ch = text.charAt(i);
+        if (/\s/.test(ch)) {
+          if (full.length === 0 || full.charAt(full.length - 1) === " ") continue;
+          full += " ";
+          map.push({ node: node, offset: i });
+        } else {
+          full += ch;
+          map.push({ node: node, offset: i });
+        }
+      }
+      nodes.push(node);
+    }
+    full = full.replace(/\s+$/, "");
+
+    var index = full.indexOf(needle);
+    if (index < 0) return null;
+
+    var startInfo = map[index];
+    var endInfo = map[index + needle.length - 1];
+    if (!startInfo || !endInfo) return null;
+
+    try {
+      var range = document.createRange();
+      range.setStart(startInfo.node, startInfo.offset);
+      range.setEnd(endInfo.node, endInfo.offset + 1);
+      return range;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function locatorPayloadFromRange(range) {
+    return {
+      start: {
+        elementPath: pathOfNode(range.startContainer),
+        offset: range.startOffset,
+      },
+      end: {
+        elementPath: pathOfNode(range.endContainer),
+        offset: range.endOffset,
+      },
+    };
+  }
+
+  /*
+   * Resolve each highlight: use the locator when it still works, otherwise
+   * repair from the stored quote, otherwise mark orphaned and skip painting.
+   */
+  function resolveHighlight(highlight) {
+    var range = rangeFromLocator(highlight);
+    if (range) {
+      return { status: "resolved", range: range, locator: null };
+    }
+
+    if (highlight.text) {
+      var repaired = rangeFromQuote(highlight.text);
+      if (repaired) {
+        return {
+          status: "repaired",
+          range: repaired,
+          locator: locatorPayloadFromRange(repaired),
+        };
+      }
+    }
+
+    return { status: "orphaned", range: null, locator: null };
+  }
+
+  // Element boxes can span several lines or paragraphs in converted EPUBs.
+  // Paint text fragments alone so a saved highlight follows the glyphs.
+  function highlightRects(range) {
+    var merged = [];
+    var rects = [];
+    function collect(node) {
+      if (!range.intersectsNode(node)) return;
+      var text = document.createRange();
+      text.selectNodeContents(node);
+      if (node === range.startContainer) text.setStart(node, range.startOffset);
+      if (node === range.endContainer) text.setEnd(node, range.endOffset);
+      var fragments = text.getClientRects();
+      for (var i = 0; i < fragments.length; i++) rects.push(fragments[i]);
+    }
+    var ancestor = range.commonAncestorContainer;
+    if (ancestor.nodeType === Node.TEXT_NODE) {
+      collect(ancestor);
+    } else {
+      var walker = document.createTreeWalker(ancestor, NodeFilter.SHOW_TEXT, null);
+      var node;
+      while ((node = walker.nextNode())) collect(node);
+    }
+    for (var i = 0; i < rects.length; i++) {
+      var rect = rects[i];
+      if (rect.width < 1 || rect.height < 1) continue;
+      var current = {
+        left: rect.left,
+        top: rect.top,
+        right: rect.right,
+        bottom: rect.bottom,
+      };
+
+      for (var j = 0; j < merged.length;) {
+        var other = merged[j];
+        var centerDistance = Math.abs(
+          (current.top + current.bottom - other.top - other.bottom) / 2
+        );
+        var sameLine = centerDistance <=
+          Math.min(current.bottom - current.top, other.bottom - other.top) / 2;
+        var horizontalOverlap = current.left <= other.right + 0.5 &&
+          other.left <= current.right + 0.5;
+        if (sameLine && horizontalOverlap) {
+          current.left = Math.min(current.left, other.left);
+          current.top = Math.min(current.top, other.top);
+          current.right = Math.max(current.right, other.right);
+          current.bottom = Math.max(current.bottom, other.bottom);
+          merged.splice(j, 1);
+          j = 0;
+        } else {
+          j++;
+        }
+      }
+      merged.push(current);
+    }
+    return merged.sort(function (a, b) { return a.top - b.top || a.left - b.left; });
+  }
+
+  function renderHighlights() {
+    var layer = highlightLayer();
+    var focusedID = focusedReminderID(layer);
+    if (focusedID) post({ type: "reminderFocusChanged", focused: false });
+    layer.textContent = "";
+    if (state.highlights.length === 0) {
+      renderReadingMarker();
+      renderReminders(focusedID);
+      post({ type: "highlightsResolved", results: [] });
+      return;
+    }
+
+    var scrollLeft = getScrollLeft();
+    var scrollTop = scrollingRoot().scrollTop;
+    var fragment = document.createDocumentFragment();
+    var results = [];
+
+    for (var i = 0; i < state.highlights.length; i++) {
+      var highlight = state.highlights[i];
+      var resolved = resolveHighlight(highlight);
+      var entry = { id: highlight.id, status: resolved.status };
+      if (resolved.locator) entry.locator = resolved.locator;
+      results.push(entry);
+
+      if (!resolved.range) continue;
+
+      // Keep the in-memory highlight locator updated so later paints work.
+      if (resolved.locator) {
+        highlight.start = resolved.locator.start;
+        highlight.end = resolved.locator.end;
+      }
+
+      var rects = highlightRects(resolved.range);
+      for (var r = 0; r < rects.length; r++) {
+        var rect = rects[r];
+
+        var div = document.createElement("div");
+        div.className = "reader-highlight-rect";
+        div.dataset.highlightId = highlight.id;
+        div.dataset.style = highlight.style || "fill";
+        if (highlight.hasNote && r === 0) div.dataset.hasNote = "true";
+        div.style.left = rect.left + scrollLeft + "px";
+        div.style.top = rect.top + scrollTop + "px";
+        div.style.width = rect.right - rect.left + "px";
+        div.style.height = rect.bottom - rect.top + "px";
+        div.style.backgroundColor = highlight.color || "rgba(255, 214, 69, 0.45)";
+        if (highlight.style === "underline") {
+          div.style.setProperty("--highlight-underline-color", highlight.color);
+        }
+        fragment.appendChild(div);
+      }
+    }
+    layer.appendChild(fragment);
+    renderReadingMarker();
+    renderReminders(focusedID);
+    post({ type: "highlightsResolved", results: results });
+  }
+
+  // ------------------------------------------------------- passage context
+
+  var SKIP_CONTEXT_TAGS = { SCRIPT: 1, STYLE: 1, NOSCRIPT: 1, SVG: 1, RT: 1, RP: 1 };
+
+  function isReadableTextNode(node) {
+    if (!node || !node.textContent) return false;
+    var highlight = document.getElementById(LAYER_ID);
+    if (highlight && highlight.contains(node)) return false;
+    var el = node.parentElement;
+    while (el && el !== document.body) {
+      if (SKIP_CONTEXT_TAGS[el.tagName]) return false;
+      if (el.hasAttribute("hidden") || el.getAttribute("aria-hidden") === "true") {
+        return false;
+      }
+      el = el.parentElement;
+    }
+    return true;
+  }
+
+  function collectReadableNodes() {
+    var walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+      acceptNode: function (node) {
+        return isReadableTextNode(node) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      },
+    });
+    var nodes = [];
+    var node;
+    while ((node = walker.nextNode())) nodes.push(node);
+    return nodes;
+  }
+
+  function narrationPassages(spineIndex, selectedStart, selectedEnd, fromChapterStart) {
+    if (!state.ready || spineIndex !== state.spineIndex) return null;
+    var position = selectedStart || (fromChapterStart ? null : currentPosition());
+    var start = position && nodeAtPath(position.elementPath);
+    var end = selectedEnd && nodeAtPath(selectedEnd.elementPath);
+    var boundary = null;
+    var endBoundary = null;
+    var offset = 0;
+    if (start) {
+      var isText = start.nodeType === Node.TEXT_NODE;
+      offset = clamp(position.offset, 0, isText ? start.length : start.childNodes.length);
+      // The viewport caret can land just inside the first visible word.
+      if (!selectedStart && isText && /^[\p{L}\p{N}\p{M}]/u.test(start.data.slice(offset))) {
+        var prefix = start.data.slice(0, offset).match(/[\p{L}\p{N}\p{M}]+$/u);
+        if (prefix) offset -= prefix[0].length;
+      }
+      boundary = document.createRange();
+      boundary.setStart(start, offset);
+      boundary.collapse(true);
+    }
+    if (end) {
+      endBoundary = document.createRange();
+      endBoundary.setStart(end, clamp(selectedEnd.offset, 0,
+        end.nodeType === Node.TEXT_NODE ? end.length : end.childNodes.length));
+      endBoundary.collapse(true);
+    }
+
+    var blocks = [];
+    var text = "";
+    var map = [];
+    var parent = null;
+    var excluded = new WeakMap();
+    function isExcluded(el) {
+      if (!el) return false;
+      if (excluded.has(el)) return excluded.get(el);
+      // EPUB chapters served as XHTML preserve the original tag case.
+      var tag = el.localName.toUpperCase();
+      var result = SKIP_CONTEXT_TAGS[tag] || /^(NAV|IFRAME|OBJECT|BUTTON|SELECT|TEXTAREA)$/.test(tag) ||
+        el.getAttribute("role") === "navigation" || getComputedStyle(el).display === "none" ||
+        isExcluded(el.parentElement);
+      excluded.set(el, result);
+      return result;
+    }
+
+    function appendBlock() {
+      var trimmedEnd = text.trimEnd().length;
+      var cursor = 0;
+      while (cursor < trimmedEnd) {
+        while (cursor < trimmedEnd && /\s/.test(text[cursor])) cursor++;
+        if (cursor >= trimmedEnd) break;
+        var limit = Math.min(trimmedEnd, cursor + 400);
+        var cut = limit;
+        if (limit < trimmedEnd) {
+          var prefix = text.slice(cursor, limit);
+          var sentences = /[.!?…]["'”’)]*\s+/g;
+          var match;
+          while ((match = sentences.exec(prefix))) cut = cursor + match.index + match[0].length;
+          if (cut === limit) {
+            var space = prefix.lastIndexOf(" ");
+            if (space > 0) cut = cursor + space;
+          }
+          // Keep UTF-16 surrogate pairs together at a forced word split.
+          if (/[\uDC00-\uDFFF]/.test(text[cut])) cut--;
+        }
+        var contentEnd = cut;
+        while (contentEnd > cursor && /\s/.test(text[contentEnd - 1])) contentEnd--;
+        var first = map[cursor], last = map[contentEnd - 1];
+        if (first && last && /[\p{L}\p{N}]/u.test(text.slice(cursor, contentEnd))) {
+          var spoken = text.slice(cursor, contentEnd);
+          blocks.push({ text: spoken, locator: {
+            spineIndex: spineIndex,
+            start: { elementPath: pathOfNode(first.node), offset: first.offset },
+            end: { elementPath: pathOfNode(last.node), offset: last.offset + 1 },
+            text: spoken
+          }});
+        }
+        cursor = cut;
+      }
+      text = "";
+      map = [];
+    }
+
+    collectReadableNodes().forEach(function (node) {
+      if (boundary && boundary.comparePoint(node, node.length) < 0) return;
+      if (endBoundary && endBoundary.comparePoint(node, 0) > 0) return;
+      var element = node.parentElement;
+      if (isExcluded(element) || getComputedStyle(element).visibility !== "visible") return;
+      var block = blockParent(node);
+      if (parent !== block) {
+        appendBlock();
+        parent = block;
+      }
+      if (node.previousSibling && node.previousSibling.localName === "br" && text && !text.endsWith(" ")) {
+        text += " ";
+        map.push({ node: node, offset: 0 });
+      }
+      var begin = node === start ? offset : 0;
+      var finish = node === end ? selectedEnd.offset : node.length;
+      for (var i = begin; i < finish; i++) {
+        var character = node.data[i];
+        if (character === "\u00ad") continue;
+        if (/\s/.test(character)) {
+          if (!text || text.endsWith(" ")) continue;
+          character = " ";
+        }
+        text += character;
+        map.push({ node: node, offset: i });
+      }
+    });
+    appendBlock();
+    return blocks;
+  }
+
+  function setNarrationRange(locator, follow) {
+    if (!window.CSS || !CSS.highlights) return;
+    var highlight = CSS.highlights.get("kodi-narration");
+    if (!highlight) {
+      highlight = new Highlight();
+      CSS.highlights.set("kodi-narration", highlight);
+    }
+    // Reuse the registered Highlight so WebKit invalidates the previous painted range.
+    highlight.clear();
+    if (!locator || locator.spineIndex !== state.spineIndex) return;
+    var range = rangeFromLocator(locator);
+    if (!range) return;
+    highlight.add(range);
+    if (follow) goToPosition(locator.start, false);
+  }
+
+  function blockParent(node) {
+    var el = node.nodeType === Node.ELEMENT_NODE ? node : node.parentElement;
+    while (el && el !== document.body) {
+      var display = "";
+      try {
+        display = window.getComputedStyle(el).display;
+      } catch (error) {
+        display = "";
+      }
+      if (
+        display === "block" ||
+        display === "list-item" ||
+        display === "table" ||
+        display === "flex" ||
+        display === "grid" ||
+        /^(P|H1|H2|H3|H4|H5|H6|LI|BLOCKQUOTE|PRE|DIV|SECTION|ARTICLE|FIGCAPTION|DT|DD|TR)$/.test(
+          el.tagName
+        )
+      ) {
+        return el;
+      }
+      el = el.parentElement;
+    }
+    return el || document.body;
+  }
+
+  var SURROUNDING_BLOCK_RADIUS = 2;
+  var SURROUNDING_MAX_CHARS = 2400;
+
+  function blockPlainText(block) {
+    var parts = [];
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      parts.push(block.nodes[i].textContent || "");
+    }
+    return parts.join("").replace(/\s+/g, " ").trim();
+  }
+
+  function textBeforeInBlock(block, node, offset) {
+    var out = "";
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      var n = block.nodes[i];
+      if (n === node) {
+        out += (n.textContent || "").slice(0, Math.max(0, offset));
+        break;
+      }
+      out += n.textContent || "";
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+
+  function textAfterInBlock(block, node, offset) {
+    var out = "";
+    var seen = false;
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      var n = block.nodes[i];
+      if (!seen) {
+        if (n === node) {
+          seen = true;
+          out += (n.textContent || "").slice(Math.max(0, offset));
+        }
+        continue;
+      }
+      out += n.textContent || "";
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+
+  function firstTextNode(node) {
+    if (!node) return null;
+    if (node.nodeType === Node.TEXT_NODE) return node;
+    var walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT, null);
+    return walker.nextNode();
+  }
+
+  function groupReadableBlocks() {
+    var nodes = collectReadableNodes();
+    var blocks = [];
+    var current = null;
+    var i;
+    for (i = 0; i < nodes.length; i++) {
+      var node = nodes[i];
+      if (!/\S/.test(node.textContent || "")) continue;
+      var parent = blockParent(node);
+      if (!current || current.el !== parent) {
+        current = { el: parent, nodes: [node] };
+        blocks.push(current);
+      } else {
+        current.nodes.push(node);
+      }
+    }
+    return blocks;
+  }
+
+  function blockContainsNode(block, node) {
+    if (!node) return false;
+    var i;
+    for (i = 0; i < block.nodes.length; i++) {
+      if (block.nodes[i] === node) return true;
+    }
+    return false;
+  }
+
+  function joinParagraphs(parts) {
+    return parts.filter(function (part) { return part; }).join("\n\n");
+  }
+
+  function trimSurroundingWindow(before, quote, after) {
+    function total() {
+      return before.length + quote.length + after.length;
+    }
+    while (total() > SURROUNDING_MAX_CHARS && (before || after)) {
+      if (before.length >= after.length) {
+        var cut = before.indexOf("\n\n");
+        if (cut >= 0) {
+          before = before.slice(cut + 2);
+        } else {
+          before = "";
+        }
+      } else {
+        var last = after.lastIndexOf("\n\n");
+        if (last >= 0) {
+          after = after.slice(0, last);
+        } else {
+          after = "";
+        }
+      }
+    }
+    return { before: before, after: after };
+  }
+
+  function extractSurroundingPassage(start, end) {
+    var empty = { before: "", quote: "", after: "" };
+    if (!start || !start.elementPath) return empty;
+
+    var startNode = firstTextNode(nodeAtPath(start.elementPath));
+    var endPos = end && end.elementPath ? end : start;
+    var endNode = firstTextNode(nodeAtPath(endPos.elementPath)) || startNode;
+    if (!startNode || !endNode) return empty;
+
+    var startOffset = start.offset || 0;
+    var endOffset = endPos.offset != null ? endPos.offset : startOffset;
+    var blocks = groupReadableBlocks();
+    if (!blocks.length) return empty;
+
+    var firstHit = -1;
+    var lastHit = -1;
+    var i;
+    for (i = 0; i < blocks.length; i++) {
+      if (blockContainsNode(blocks[i], startNode) || blockContainsNode(blocks[i], endNode)) {
+        if (firstHit < 0) firstHit = i;
+        lastHit = i;
+      }
+    }
+    if (firstHit < 0) {
+      var startBlock = blockParent(startNode);
+      var endBlock = blockParent(endNode);
+      for (i = 0; i < blocks.length; i++) {
+        if (blocks[i].el === startBlock || blocks[i].el === endBlock) {
+          if (firstHit < 0) firstHit = i;
+          lastHit = i;
+        }
+      }
+    }
+    if (firstHit < 0) return empty;
+
+    var from = Math.max(0, firstHit - SURROUNDING_BLOCK_RADIUS);
+    var to = Math.min(blocks.length - 1, lastHit + SURROUNDING_BLOCK_RADIUS);
+
+    var quote = "";
+    try {
+      var range = document.createRange();
+      range.setStart(startNode, Math.min(startOffset, startNode.textContent.length));
+      range.setEnd(endNode, Math.min(endOffset, endNode.textContent.length));
+      quote = range.toString().replace(/\s+/g, " ").trim();
+    } catch (error) {
+      quote = "";
+    }
+
+    var beforeParts = [];
+    for (i = from; i < firstHit; i++) {
+      beforeParts.push(blockPlainText(blocks[i]));
+    }
+    beforeParts.push(textBeforeInBlock(blocks[firstHit], startNode, startOffset));
+
+    var afterParts = [];
+    afterParts.push(textAfterInBlock(blocks[lastHit], endNode, endOffset));
+    for (i = lastHit + 1; i <= to; i++) {
+      afterParts.push(blockPlainText(blocks[i]));
+    }
+
+    var trimmed = trimSurroundingWindow(
+      joinParagraphs(beforeParts),
+      quote,
+      joinParagraphs(afterParts)
+    );
+    return { before: trimmed.before, quote: quote, after: trimmed.after };
+  }
+
+  // ----------------------------------------------------------------- theme
+
+  var SURFACE_ATTR = "data-reader-surface";
+  var LIGHT_BG_LUMINANCE = 0.6;
+
+  function applyStyles(variables) {
+    var root = document.documentElement;
+    Object.keys(variables || {}).forEach(function (key) {
+      root.style.setProperty(key, variables[key]);
+    });
+    // Paint chrome immediately (with !important) so author sheets like
+    // Gutenberg's `body { background-color: white }` cannot flash on scroll.
+    var pageBg = (variables && variables["--color-background"]) || "";
+    if (pageBg) {
+      root.style.setProperty("background-color", pageBg, "important");
+      if (document.body) {
+        document.body.style.setProperty("background-color", pageBg, "important");
+        if (variables["--color-text"]) {
+          document.body.style.setProperty("color", variables["--color-text"], "important");
+        }
+      }
+      root.style.setProperty("color-scheme", pageIsDark() ? "dark" : "light");
+    }
+    remapAuthorSurfaces();
+  }
+
+  function parseRGBA(color) {
+    if (!color || color === "transparent") return null;
+    var match = /^rgba?\(\s*([0-9.]+)\s*,\s*([0-9.]+)\s*,\s*([0-9.]+)(?:\s*,\s*([0-9.]+))?\s*\)$/.exec(
+      color
+    );
+    if (!match) return null;
+    return {
+      r: Number(match[1]),
+      g: Number(match[2]),
+      b: Number(match[3]),
+      a: match[4] === undefined ? 1 : Number(match[4]),
+    };
+  }
+
+  function relativeLuminance(r, g, b) {
+    function channel(value) {
+      var c = value / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    }
+    return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  }
+
+  function pageIsDark() {
+    var bg = getComputedStyle(document.documentElement).getPropertyValue("--color-background").trim();
+    if (!bg) return false;
+    // Hex from our theme variables (#rrggbb).
+    var hex = /^#([0-9a-f]{6})$/i.exec(bg);
+    if (hex) {
+      var n = parseInt(hex[1], 16);
+      return relativeLuminance((n >> 16) & 255, (n >> 8) & 255, n & 255) < 0.5;
+    }
+    var rgba = parseRGBA(bg);
+    return rgba ? relativeLuminance(rgba.r, rgba.g, rgba.b) < 0.5 : false;
+  }
+
+  function clearRemappedSurfaces() {
+    var nodes = document.querySelectorAll("[" + SURFACE_ATTR + "]");
+    for (var i = 0; i < nodes.length; i++) {
+      nodes[i].style.removeProperty("background-color");
+      nodes[i].removeAttribute(SURFACE_ATTR);
+    }
+  }
+
+  function isReaderChrome(el) {
+    if (!el || el.nodeType !== 1) return true;
+    if (el.id === LAYER_ID) return true;
+    if (
+      el.classList &&
+      (el.classList.contains("reader-highlight-rect") ||
+        el.classList.contains("reader-highlight-layer"))
+    ) {
+      return true;
+    }
+    return !!(el.closest && el.closest("#" + LAYER_ID));
+  }
+
+  /*
+   * EPUB callouts often keep a light paper fill in dark mode while we force
+   * light text — remap those fills to --color-surface so the box stays visible
+   * and readable.
+   */
+  function remapAuthorSurfaces() {
+    clearRemappedSurfaces();
+    if (!pageIsDark() || !document.body) return;
+
+    var elements = document.body.querySelectorAll("*");
+    for (var i = 0; i < elements.length; i++) {
+      var el = elements[i];
+      if (isReaderChrome(el)) continue;
+
+      var rgba = parseRGBA(getComputedStyle(el).backgroundColor);
+      if (!rgba || rgba.a < 0.08) continue;
+      if (relativeLuminance(rgba.r, rgba.g, rgba.b) < LIGHT_BG_LUMINANCE) continue;
+
+      el.style.setProperty("background-color", "var(--color-surface)", "important");
+      el.setAttribute(SURFACE_ATTR, "1");
+    }
+  }
+
+  /* Typography changes reflow the text, so re-page around the current spot. */
+  function configure(options, preservePosition) {
+    var anchor = preservePosition === false ? null : currentPosition();
+    Object.keys(options || {}).forEach(function (key) {
+      if (key in settings) settings[key] = options[key];
+    });
+    if (options && options.variables) applyStyles(options.variables);
+    else remapAuthorSurfaces();
+    relayout(anchor);
+  }
+
+  // ----------------------------------------------------------------- input
+
+  function onClick(event) {
+    var down = markerPointerDown;
+    markerPointerDown = null;
+    var target = event.target;
+    var reminderButton = target && target.closest ? target.closest(".reader-reminder-badge") : null;
+    if (reminderButton) { activateReminderBadge(reminderButton, event); return; }
+    var link = target && target.closest ? target.closest("a") : null;
+    if (link && link.getAttribute("href")) {
+      event.preventDefault();
+      if (pendingScrollTarget != null) scrollToOffset(pendingScrollTarget, false);
+      post({ type: "link", href: link.getAttribute("href"),
+        spineIndex: state.spineIndex, position: currentPosition() });
+      return;
+    }
+
+    if (state.placingReadingMarker) {
+      var activeSelection = window.getSelection();
+      if (activeSelection && !activeSelection.isCollapsed) return;
+      event.preventDefault();
+      event.stopPropagation();
+      placeReadingMarkerFromClick(event);
+      return;
+    }
+
+    var activeSelection = window.getSelection();
+    if (down && !down.dragged && event.button === 0 && event.detail === 1 &&
+        !event.shiftKey && !event.metaKey && !event.altKey && !event.ctrlKey &&
+        Math.hypot(event.clientX - down.x, event.clientY - down.y) <= 4 &&
+        (!activeSelection || activeSelection.isCollapsed)) {
+      var lineStart = markerLineStartAtPoint(event.clientX, event.clientY);
+      if (lineStart) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (event.clientX < lineStart.rect.left) {
+          commitReadingMarker(lineStart.position, lineStart.text, true);
+        } else {
+          // A first-glyph click may become a word-selecting double click.
+          // The gutter is immediate; text waits for the system click interval.
+          var x = event.clientX, y = event.clientY;
+          showReadingMarkerCue(lineStart);
+          markerClickTimer = setTimeout(function () {
+            markerClickTimer = null;
+            var selection = window.getSelection();
+            var current = markerLineStartAtPoint(x, y);
+            if ((!selection || selection.isCollapsed) && current &&
+                current.position.offset === lineStart.position.offset &&
+                current.position.elementPath.join(",") === lineStart.position.elementPath.join(",")) {
+              commitReadingMarker(current.position, current.text, true);
+            }
+          }, settings.markerClickDelay);
+        }
+        return;
+      }
+    }
+
+    if (!settings.edgeTapPaging) return;
+    var selection = window.getSelection();
+    if (selection && !selection.isCollapsed) return;
+
+    // Highlight rects sit over the text; never steal those clicks for paging.
+    if (target && target.closest && target.closest("#" + LAYER_ID)) return;
+
+    // Only the empty page chrome (padding on body/html) is a tap zone.
+    // Clicks on paragraphs, images, and other content must not turn the page.
+    if (target !== document.body && target !== document.documentElement) return;
+
+    var margin = settings.marginX;
+    if (event.clientX < margin) {
+      if (!previousPage()) post({ type: "reachedStart" });
+    } else if (event.clientX > window.innerWidth - margin) {
+      if (!nextPage()) post({ type: "reachedEnd" });
+    }
+  }
+
+  function onWheel(event) {
+    if (event.defaultPrevented || event.ctrlKey || event.metaKey) return;
+    var horizontal = Math.abs(event.deltaX) > Math.abs(event.deltaY);
+    var delta = horizontal ? event.deltaX : event.deltaY;
+    var unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1;
+    // Let authored scrollable panels consume movement within their bounds.
+    var element = event.target && event.target.nodeType === Node.ELEMENT_NODE ? event.target : null;
+    while (element && element !== document.body && element !== document.documentElement) {
+      var style = getComputedStyle(element);
+      var overflow = horizontal ? style.overflowX : style.overflowY;
+      var position = horizontal ? element.scrollLeft : element.scrollTop;
+      var maximum = horizontal ? element.scrollWidth - element.clientWidth : element.scrollHeight - element.clientHeight;
+      if (/^(auto|scroll)$/.test(overflow) && maximum > 1 &&
+          (delta > 0 ? position < maximum - 1 : position > 1)) return;
+      element = element.parentElement;
+    }
+    // Vertical and diagonal wheel packets can also pan WebKit's column canvas.
+    event.preventDefault();
+    if (!delta || !state.ready || viewportResizePending) return;
+    if (wheelResetTimer) clearTimeout(wheelResetTimer);
+    wheelResetTimer = setTimeout(function () {
+      wheelDistance = 0;
+      wheelConsumed = false;
+      wheelResetTimer = null;
+    }, 180);
+    if (wheelConsumed) return;
+    if (wheelDistance * delta < 0) wheelDistance = 0;
+    wheelDistance += delta * unit;
+    if (Math.abs(wheelDistance) < 24) return;
+    wheelConsumed = true;
+    if (wheelDistance > 0) {
+      if (!nextPage()) post({ type: "reachedEnd" });
+    } else {
+      if (!previousPage()) post({ type: "reachedStart" });
+    }
+  }
+
+  var wheelDistance = 0;
+  var wheelConsumed = false;
+  var wheelResetTimer = null;
+
+  var resizeTimer = null;
+  function onResize() {
+    if (workspaceClosing) scheduleWorkspaceRelease();
+    viewportResizePending = true;
+    if (workspaceLayout) {
+      // Resize events run before the next paint. Update the gutters and
+      // scroll offset now, rather than exposing 90 ms of temporary reflow
+      // while the ordinary resize debounce waits to settle.
+      applyLayout();
+      scrollToOffset(workspaceLayout.columnOffset * currentStride() / workspaceLayout.columns, false);
+      workspaceLayout.renderedWidth = window.innerWidth;
+      renderHighlights();
+    }
+    if (viewportCaptureTimer) {
+      clearTimeout(viewportCaptureTimer);
+      viewportCaptureTimer = null;
+    }
+    // The event may arrive after WebKit has reset scrollLeft. Use the last
+    // settled position instead of trusting a now-first-page caret probe.
+    if (!pinnedRestore && !workspaceLayout && !pinnedRestoreOnce && lastViewportPosition) {
+      pinnedRestoreOnce = copyPosition(lastViewportPosition);
+    } else {
+      pinRestoreCurrentOnce();
+    }
+    if (resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function () {
+      // A pinned locator (Draw, or a Swift pin before a sidebar toggle) wins.
+      relayout(pinnedRestore || pinnedRestoreOnce || currentPosition());
+    }, 90);
+  }
+
+  function onScroll() {
+    cancelDirectReadingMarkerClick();
+    markerPointerDown = null;
+    clearReadingMarkerCue();
+    if (viewportResizePending) return;
+    if (viewportCaptureTimer) clearTimeout(viewportCaptureTimer);
+    viewportCaptureTimer = setTimeout(function () {
+      viewportCaptureTimer = null;
+      if (viewportResizePending) return;
+      // Honor an interrupted page turn's exact destination. Uncontrolled
+      // native scrolling must settle on a whole physical column as well.
+      var columnStride = currentStride() / Math.max(1, state.columns);
+      var target = pendingScrollTarget != null ? pendingScrollTarget :
+        Math.round(getScrollLeft() / columnStride) * columnStride;
+      if (Math.abs(getScrollLeft() - clamp(target, 0, maxScrollLeft())) > 1) {
+        scrollToOffset(target, false);
+      } else {
+        if (scrollSettleTimer) clearTimeout(scrollSettleTimer);
+        scrollSettleTimer = null;
+        pendingPageTarget = null;
+        pendingScrollTarget = null;
+      }
+      notifyPageChanged();
+    }, 120);
+  }
+
+  // ------------------------------------------------------------------ boot
+
+  function start(options) {
+    try {
+      // Theme variables first — before layout — so page turns never flash white paper.
+      if (options && options.variables) applyStyles(options.variables);
+
+      if (options) {
+        Object.keys(options).forEach(function (key) {
+          if (key in settings) settings[key] = options[key];
+        });
+        if (!options.variables) remapAuthorSurfaces();
+        if (typeof options.spineIndex === "number") state.spineIndex = options.spineIndex;
+        if (options.documentID) state.documentID = options.documentID;
+      } else {
+        remapAuthorSurfaces();
+      }
+
+      if (options && options.workspaceLayout) {
+        workspaceLayout = Object.assign({}, options.workspaceLayout, { columnOffset: 0 });
+      }
+      applyLayout();
+      measure();
+
+      document.addEventListener("selectionchange", handleSelectionChange);
+      document.addEventListener("click", onClick, true);
+      document.addEventListener("mousemove", onMarkerPointerMove, { passive: true });
+      document.addEventListener("mousedown", onMarkerPointerDown, true);
+      document.documentElement.addEventListener("mouseleave", clearReadingMarkerCue);
+      window.addEventListener("blur", clearReadingMarkerCue);
+      window.addEventListener("resize", onResize);
+      // WebKit can deliver the window resize event after its layout phase.
+      // Observe the viewport itself as well, so horizontal compensation is
+      // committed before paint even when a later spread is scrolled into view.
+      if (typeof ResizeObserver === "function") {
+        new ResizeObserver(function () {
+          if (workspaceLayout && Math.abs(window.innerWidth - workspaceLayout.renderedWidth) > 1) {
+            onResize();
+          }
+        }).observe(document.documentElement);
+      }
+      window.addEventListener("scroll", onScroll, { passive: true });
+      window.addEventListener("wheel", onWheel, { passive: false });
+
+      state.ready = true;
+      post({
+        type: "ready",
+        spineIndex: state.spineIndex,
+        pageCount: state.pageCount,
+        title: document.title || null,
+      });
+    } catch (error) {
+      reportError("start", error);
+    }
+  }
+
+  window.__reader = {
+    start: start,
+    configure: configure,
+    goToPage: goToPage,
+    nextPage: nextPage,
+    previousPage: previousPage,
+    goToFragment: goToFragment,
+    referenceDestination: referenceDestination,
+    restoreReferencePosition: function (position) {
+      if (!position || (position.elementPath.length && !rangeFromPosition(position))) return false;
+      goToPosition(position, false);
+      return true;
+    },
+    goToPosition: goToPosition,
+    pinRestore: pinRestore,
+    pinRestoreOnce: pinRestoreOnce,
+    pinRestoreCurrentOnce: pinRestoreCurrentOnce,
+    beginWorkspaceRestore: beginWorkspaceRestore,
+    endWorkspaceRestore: endWorkspaceRestore,
+    goToEnd: goToEnd,
+    setHighlights: setHighlights,
+    setReminders: setReminders,
+    setReadingMarker: setReadingMarker,
+    setReadingMarkerPlacement: setReadingMarkerPlacement,
+    clearSelection: clearSelection,
+    narrationText: function (spineIndex) {
+      var passages = narrationPassages(spineIndex);
+      return passages && passages.map(function (passage) { return passage.text; }).join("\n\n");
+    },
+    narrationPassages: function (spineIndex, start, end, fromChapterStart) {
+      return JSON.stringify(narrationPassages(spineIndex, start, end, fromChapterStart));
+    },
+    setNarrationRange: setNarrationRange,
+    extractSurroundingPassage: function (start, end) {
+      try {
+        return JSON.stringify(extractSurroundingPassage(start, end));
+      } catch (error) {
+        reportError("extractSurroundingPassage", error);
+        return JSON.stringify({ before: "", quote: "", after: "" });
+      }
+    },
+    /*
+     * Re-measures and reports where we are. The app calls this once a freshly
+     * loaded document has been positioned, so that opening a book emits a
+     * position even when no restore or fragment jump was needed.
+     */
+    notifyState: function () {
+      measure();
+      notifyPageChanged();
+    },
+    relayout: function () {
+      relayout(currentPosition());
+    },
+    state: function () {
+      remeasureBounds();
+      return {
+        spineIndex: state.spineIndex,
+        page: state.currentPage,
+        pageCount: state.pageCount,
+        columns: state.columns,
+        position: currentPosition(),
+      };
+    },
+  };
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", function () {
+      post({ type: "domReady" });
+    });
+  } else {
+    post({ type: "domReady" });
+  }
+})();

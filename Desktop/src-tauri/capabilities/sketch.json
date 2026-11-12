@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "sketch",
+  "description": "Bundled drawing editor can access only its current drawing.",
+  "webviews": ["sketch-*"],
+  "permissions": ["allow-sketch-event"]
+}

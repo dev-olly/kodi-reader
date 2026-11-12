@@ -1,0 +1,123 @@
+name: Desktop Windows and Linux
+
+on:
+  pull_request:
+    paths: ['Desktop/**', '.github/workflows/desktop.yml', '.github/workflows/desktop-release.yml']
+  push:
+    branches: [main]
+    paths: ['Desktop/**', '.github/workflows/desktop.yml', '.github/workflows/desktop-release.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-build:
+    name: Native build and tests (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    env:
+      # Public desktop client settings; unset values keep offline features usable.
+      KODI_SUPABASE_URL: ${{ vars.KODI_SUPABASE_URL }}
+      KODI_SUPABASE_PUBLISHABLE_KEY: ${{ vars.KODI_SUPABASE_PUBLISHABLE_KEY }}
+      KODI_AI_BASE_URL: ${{ vars.KODI_AI_BASE_URL }}
+      KODI_AI_MODEL: ${{ vars.KODI_AI_MODEL }}
+      KODI_GOOGLE_CLIENT_ID: ${{ vars.KODI_GOOGLE_CLIENT_ID }}
+      KODI_GOOGLE_CLIENT_SECRET: ${{ secrets.KODI_GOOGLE_CLIENT_SECRET }}
+      KODI_PAYMENTS_ENABLED: ${{ vars.KODI_PAYMENTS_ENABLED || 'NO' }}
+      APPIMAGE_EXTRACT_AND_RUN: '1'
+    defaults:
+      run:
+        working-directory: Desktop
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: Desktop/package-lock.json
+      - name: Install Linux native dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y build-essential curl gnupg xz-utils pkg-config cmake libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev libsecret-1-dev libdbus-1-dev dbus-x11 webkit2gtk-driver xvfb xauth libfuse2t64
+      - name: Install pinned Rust toolchain
+        run: rustup toolchain install 1.90.0 --profile minimal --component rustfmt --component clippy
+      - name: Install desktop dependencies
+        run: npm ci
+      - name: Check protected Apple files and desktop frontend
+        run: npm run check
+      - name: Check and test portable Rust crates
+        working-directory: Desktop/src-tauri
+        run: |
+          cargo fmt --all -- --check
+          cargo test --locked --workspace
+          cargo clippy --locked -p kodi-reader-core --all-targets -- -D warnings
+      - name: Set up UCRT64 for the Windows codec source build
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@ec48f7c5447b3140e2b088413ae3a55687bccb6e # v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            make curl tar xz gnupg diffutils pkgconf
+            mingw-w64-ucrt-x86_64-gcc
+      - name: Build verified Linux audio codec
+        if: runner.os == 'Linux'
+        run: bash scripts/build-ffmpeg.sh ${{ matrix.target }}
+      - name: Build verified Windows audio codec
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: bash scripts/build-ffmpeg.sh ${{ matrix.target }}
+      - name: Test the codec pipeline
+        shell: bash
+        run: node scripts/codec-smoke.mjs src-tauri/binaries/kodi-ffmpeg-${{ matrix.target }}${{ runner.os == 'Windows' && '.exe' || '' }}
+      - name: Prepare internal bundle configuration
+        run: |
+          node scripts/collect-notices.mjs
+          node scripts/write-release-config.mjs
+      - name: Build internal installers with local speech enabled
+        run: npm run tauri -- build --config src-tauri/tauri.ci.conf.json --features kodi-desktop-services/speech
+      - name: Build offline smoke fixture
+        working-directory: Desktop/src-tauri
+        run: cargo run --locked -p kodi-reader-core --example smoke_fixture -- ../native-smoke.epub
+      - name: Install native Linux WebDriver
+        if: runner.os == 'Linux'
+        run: cargo install tauri-driver --locked
+      - name: Native X11 app smoke
+        if: runner.os == 'Linux'
+        env:
+          KODI_SMOKE_OUTPUT: native-smoke-results
+        run: dbus-run-session -- xvfb-run -a node scripts/native-smoke.mjs src-tauri/target/release/kodi-reader-desktop native-smoke.epub
+      - name: Collect checksummed preview installers and corresponding sources
+        run: node scripts/collect-internal.mjs ${{ matrix.target }}
+      - name: Upload internal test installers and evidence
+        if: success()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: internal-desktop-${{ matrix.target }}-${{ github.sha }}
+          path: Desktop/internal-output/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Preserve failed native smoke diagnostics
+        if: failure() && runner.os == 'Linux'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: failed-native-smoke-${{ matrix.target }}-${{ github.sha }}
+          path: Desktop/native-smoke-results/
+          if-no-files-found: ignore
+          retention-days: 7

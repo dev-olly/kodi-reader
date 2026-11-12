@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-publication-get"
+description = "Enables the publication_get command without any pre-configured scope."
+commands.allow = ["publication_get"]
+
+[[permission]]
+identifier = "deny-publication-get"
+description = "Denies the publication_get command without any pre-configured scope."
+commands.deny = ["publication_get"]

@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "checks": {
+    "windows11": { "passed": false, "evidence": "" },
+    "ubuntu2404Wayland": { "passed": false, "evidence": "" },
+    "ubuntu2404X11": { "passed": false, "evidence": "" },
+    "ubuntu2604Wayland": { "passed": false, "evidence": "" },
+    "fedoraWayland": { "passed": false, "evidence": "" },
+    "macDriveRoundTrip": { "passed": false, "evidence": "" },
+    "offlineAudio": { "passed": false, "evidence": "" },
+    "signedUpdateUpgrade": { "passed": false, "evidence": "" },
+    "installerDataRetention": { "passed": false, "evidence": "" }
+  }
+}

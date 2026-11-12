@@ -1,0 +1,18 @@
+.excalidraw.excalidraw {
+  --color-selection: #245744;
+  --color-primary: #245744;
+  --color-primary-darker: #193c2f;
+  --color-primary-darkest: #142e25;
+  --color-primary-hover: #d9e8dd;
+  --color-primary-light: #e5efe8;
+  --color-primary-light-darker: #c8dece;
+}
+.excalidraw.excalidraw.theme--dark {
+  --color-selection: #acd5b4;
+  --color-primary: #acd5b4;
+  --color-primary-darker: #c3e0c9;
+  --color-primary-darkest: #e0eee3;
+  --color-primary-hover: #34493b;
+  --color-primary-light: #304035;
+  --color-primary-light-darker: #3c5544;
+}

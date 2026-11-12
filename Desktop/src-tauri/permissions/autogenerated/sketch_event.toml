@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sketch-event"
+description = "Enables the sketch_event command without any pre-configured scope."
+commands.allow = ["sketch_event"]
+
+[[permission]]
+identifier = "deny-sketch-event"
+description = "Denies the sketch_event command without any pre-configured scope."
+commands.deny = ["sketch_event"]

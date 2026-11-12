@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-sketch-open"
+description = "Enables the sketch_open command without any pre-configured scope."
+commands.allow = ["sketch_open"]
+
+[[permission]]
+identifier = "deny-sketch-open"
+description = "Denies the sketch_open command without any pre-configured scope."
+commands.deny = ["sketch_open"]

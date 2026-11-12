@@ -6,6 +6,33 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Kodi Reader</title>
         <item>
+            <title>0.4.12</title>
+            <pubDate>Thu, 12 Nov 2026 23:28:06 +0100</pubDate>
+            <link>https://www.kodi-reader.app</link>
+            <sparkle:version>20</sparkle:version>
+            <sparkle:shortVersionString>0.4.12</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
+            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
+            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.12
+
+- A new Mac library with a quiet green sidebar, spacious cover cards, reading
+  filters, search, sorting, and grid or list views.
+- Browse highlights and notes across your library, then open a note directly in
+  its source book. Reach research reminders and settings from the sidebar.
+- Save a public webpage as an offline article to read and annotate in Kodi.
+- Ask AI now gives short, simple, direct answers by default, with more detail or
+  examples when you ask for them.
+- Refreshed audio-note recording and playback cards, with an option to add a
+  transcript to your note.
+- Improve highlight actions, opening notes, and switching between reading
+  panels while preserving live edits and your reading position.
+
+Requires Apple Silicon and macOS 15 or later. Includes iCloud and Google Drive
+sync support.
+]]></description>
+            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.12/KodiReader.dmg" length="21937395" type="application/octet-stream" sparkle:edSignature="pAkeNN7Ns8K9CME3hn3dzEvu85R3p5Nr3+R9RcC7SwQLnHVG9WiLGorGVKTkL0dd6Fbjuf5WPGuXQloAvZf5CQ=="/>
+        </item>
+        <item>
             <title>0.4.11</title>
             <pubDate>Sun, 08 Nov 2026 19:45:22 +0100</pubDate>
             <link>https://www.kodi-reader.app</link>
@@ -60,45 +87,9 @@ the optional voice files have downloaded.
 ]]></description>
             <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.10/KodiReader.dmg" length="21687240" type="application/octet-stream" sparkle:edSignature="flqyH2tskP6B0ghq2EhAvtMHRuHoJinB2Ij7xaciF8dmrHlVIRiRA9TOa1AIU00wG05/6E4f6f59jv5gyc2FAw=="/>
         </item>
-        <item>
-            <title>0.4.9</title>
-            <pubDate>Sat, 07 Nov 2026 12:32:54 +0100</pubDate>
-            <link>https://www.kodi-reader.app</link>
-            <sparkle:version>17</sparkle:version>
-            <sparkle:shortVersionString>0.4.9</sparkle:shortVersionString>
-            <sparkle:minimumSystemVersion>15.0</sparkle:minimumSystemVersion>
-            <sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>
-            <description sparkle:format="markdown"><![CDATA[# Kodi Reader 0.4.9
-
-- Record audio notes alongside your highlights and text notes. Pause, resume,
-  play back, rename, export, and manage recordings from the note editor.
-- Listen to selected passages or the rest of the current English EPUB chapter
-  with on-device read aloud, and transcribe audio notes locally. Optional voice
-  files and speech-model setup happen when you use these features.
-- Save research reminders tied to passages or pages, return to their notes,
-  and keep reminders and audio attachments with your optional library sync.
-- Search, sort, and filter your library more easily, including sorting by the
-  date a document was added.
-- Improve reader engagement analytics, meaningful note and drawing counts,
-  Ask AI outcomes, and approximate connection-country reporting. A one-time
-  notice and Settings → Privacy make usage sharing easy to turn off. Book text,
-  note content, drawings, recordings, transcripts, and AI content are excluded
-  from analytics.
-- Keep note-sheet activity in engagement time, ignore idle time and canvas
-  navigation, and avoid inflating feature counts with repeated autosaves.
-- Keep deliberate page turns when closing or resizing the notes sidebar.
-- Refine note editing, exports, syncing, and passage selection. The standalone
-  web browser has been removed; existing saved web documents remain readable.
-
-Requires Apple Silicon and macOS 15 or later. Includes iCloud and Google Drive
-sync support. Update Kodi on every Mac before managing reminders and audio
-attachments across devices. Local audio models require a separate download.
-]]></description>
-            <enclosure url="https://github.com/dev-olly/kodi-reader/releases/download/v0.4.9/KodiReader.dmg" length="21511566" type="application/octet-stream" sparkle:edSignature="KCDlrrVO32YULg2y6GvLkE4EtdNczXLnvwtlRIm2f7+H+gKx90vyWyIZhl4AuZ4qnmFFjpSA7misZH53YWlyBA=="/>
-        </item>
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: QU9fpBsCLTilKnRrsVOlVAvawHulNab37aZikIFhvMHYwbw6uUmTglRhmfPCIGCLiMCgRv3lL75oHSjNbc89Cg==
-length: 6283
+edSignature: DW2THbpMBDGPjkQLTvit0+Bga2TOfaOKYqLErpD1J8zKj+M3qZ7ObODMxZkez2dLeMVOQdY6x3iDG19F2TUVBA==
+length: 5524
 -->

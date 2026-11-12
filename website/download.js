@@ -1,7 +1,7 @@
 (function wireDownloads() {
   "use strict";
 
-  const MAC_INSTALLER = "https://github.com/dev-olly/kodi-reader/releases/download/v0.4.11/KodiReader.dmg";
+  const MAC_INSTALLER = "https://github.com/dev-olly/kodi-reader/releases/download/v0.4.12/KodiReader.dmg";
   const RELEASES_API = "https://api.github.com/repos/dev-olly/kodi-reader/releases?per_page=30";
   const REPOSITORY_PATH = "/dev-olly/kodi-reader/releases/download/";
   const macLinks = document.querySelectorAll('[data-download-platform="macos"], [data-download]');

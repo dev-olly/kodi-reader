@@ -6,7 +6,7 @@ import { runInNewContext } from 'node:vm';
 const script = readFileSync(new URL('../download.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const site = 'https://www.kodi-reader.app/';
-const fallback = 'https://github.com/dev-olly/kodi-reader/releases/download/v0.4.11/KodiReader.dmg';
+const fallback = 'https://github.com/dev-olly/kodi-reader/releases/download/v0.4.12/KodiReader.dmg';
 
 // The harness reads the real page's download anchors and card text. It implements
 // only the DOM operations used by the production script; unexpected selectors
@@ -147,16 +147,16 @@ test('metadata network failures retain the immutable Mac installer and pending d
   for (const failure of [{ failReleases: true, failManifest: true }, { failManifest: true }, { manifest: null }]) {
     const dom = await runDownloads(failure);
     assert.equal(dom.link('macos').href, fallback);
-    assert.equal(dom.text('macos', 'data-platform-version'), 'v0.4.11');
+    assert.equal(dom.text('macos', 'data-platform-version'), 'v0.4.12');
     assertPending(dom);
   }
 });
 
 test('a failed manifest does not prevent an independently published Mac update', async () => {
-  const dmg = asset('v0.4.12', 'KodiReader.dmg');
-  const dom = await runDownloads({ releases: [{ tag_name: 'v0.4.12', assets: [dmg] }], failManifest: true });
+  const dmg = asset('v0.4.13', 'KodiReader.dmg');
+  const dom = await runDownloads({ releases: [{ tag_name: 'v0.4.13', assets: [dmg] }], failManifest: true });
   assert.equal(dom.link('macos').href, dmg.browser_download_url);
-  assert.equal(dom.text('macos', 'data-platform-version'), 'v0.4.12');
+  assert.equal(dom.text('macos', 'data-platform-version'), 'v0.4.13');
   assertPending(dom);
 });
 

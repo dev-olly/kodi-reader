@@ -60,3 +60,45 @@ test('byte-exact checkout settings prevent Windows newline conversion from tripp
     assert.equal(check(), 0, 'byte-exact checkout passes without relaxing protection');
   } finally { rmSync(root, { recursive: true, force: true }); }
 });
+
+test('pinned upstream CI snapshot requires a complete tree and never changes the original local boundary', () => {
+  const root = mkdtempSync(join(tmpdir(), 'kodi-upstream-boundary-'));
+  const hash = text => createHash('sha256').update(text).digest('hex');
+  const git = (...args) => {
+    const result = spawnSync('git', args, { cwd: root, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+  };
+  try {
+    mkdirSync(join(root, 'Desktop/scripts'), { recursive: true });
+    mkdirSync(join(root, 'App'));
+    const script = join(root, 'Desktop/scripts/protect-apple.mjs');
+    writeFileSync(script, readFileSync(resolve(import.meta.dirname, '../scripts/protect-apple.mjs')));
+    const original = { version: 2, paths: ['App'], files: { 'App/one.swift': hash('old one'), 'App/two.swift': hash('old two') }, committedFiles: { 'App/one.swift': hash('old one'), 'App/two.swift': hash('old two') } };
+    const originalBytes = JSON.stringify(original);
+    const originalPath = join(root, 'Desktop/protected-apple.json');
+    writeFileSync(originalPath, originalBytes);
+    const upstream = { version: 1, sourceCommit: 'a'.repeat(40), reason: 'Independent native Mac release fixture', paths: ['App'], files: { 'App/one.swift': hash('new one'), 'App/two.swift': hash('new two'), 'App/new.swift': hash('new file') } };
+    writeFileSync(join(root, 'Desktop/protected-apple-upstream-ci.json'), JSON.stringify(upstream));
+    writeFileSync(join(root, 'App/one.swift'), 'new one');
+    writeFileSync(join(root, 'App/two.swift'), 'new two');
+    writeFileSync(join(root, 'App/new.swift'), 'new file');
+    git('init', '--quiet'); git('-c', 'core.autocrlf=false', 'add', 'App');
+    const run = ci => spawnSync(process.execPath, [script], { env: { ...process.env, CI: ci }, encoding: 'utf8' }).status;
+    assert.equal(run('true'), 0, 'complete pinned upstream tree passes shallow CI');
+    assert.equal(run(''), 1, 'local verification still requires the original snapshot');
+    assert.equal(run('false'), 1, 'a false CI flag never enables upstream acceptance');
+    writeFileSync(join(root, 'App/one.swift'), 'old one');
+    assert.equal(run('true'), 1, 'old and new snapshots cannot be mixed per file');
+    writeFileSync(join(root, 'App/one.swift'), 'new one');
+    writeFileSync(join(root, 'App/two.swift'), 'later edit');
+    assert.equal(run('true'), 1, 'later upstream mutations are rejected');
+    writeFileSync(join(root, 'App/two.swift'), 'new two');
+    rmSync(join(root, 'App/new.swift'));
+    assert.equal(run('true'), 1, 'missing pinned files are rejected');
+    writeFileSync(join(root, 'App/new.swift'), 'new file');
+    writeFileSync(join(root, 'App/extra.swift'), 'later added source');
+    git('-c', 'core.autocrlf=false', 'add', 'App/extra.swift');
+    assert.equal(run('true'), 1, 'extra tracked protected files are rejected');
+    assert.equal(readFileSync(originalPath, 'utf8'), originalBytes, 'the original manifest is never rewritten');
+  } finally { rmSync(root, { recursive: true, force: true }); }
+});

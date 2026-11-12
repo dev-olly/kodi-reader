@@ -15,7 +15,7 @@ BINARY_DIR="$DESKTOP_DIR/src-tauri/binaries"
 ARCHIVE="$BUILD_ROOT/ffmpeg-$VERSION.tar.xz"
 mkdir -p "$BUILD_ROOT" "$RESOURCE_DIR" "$BINARY_DIR"
 
-for tool in curl tar make gpg; do
+for tool in curl tar make gpg gpgv; do
   command -v "$tool" >/dev/null || { echo "Missing FFmpeg build prerequisite: $tool" >&2; exit 1; }
 done
 checksum() {
@@ -27,14 +27,8 @@ if [[ ! -f "$ARCHIVE" ]]; then download "https://ffmpeg.org/releases/ffmpeg-$VER
 [[ "$(checksum "$ARCHIVE")" == "$SOURCE_SHA256" ]] || { echo 'FFmpeg source checksum mismatch; refusing to build.' >&2; exit 1; }
 download "https://ffmpeg.org/releases/ffmpeg-$VERSION.tar.xz.asc" "$ARCHIVE.asc"
 download https://ffmpeg.org/ffmpeg-devel.asc "$BUILD_ROOT/release-key.asc"
-KEY_DIR="$(mktemp -d "$BUILD_ROOT/gnupg.XXXXXX")"
-trap 'rm -rf "$KEY_DIR"' EXIT
-chmod 700 "$KEY_DIR"
-gpg --homedir "$KEY_DIR" --batch --import "$BUILD_ROOT/release-key.asc"
-gpg --homedir "$KEY_DIR" --batch --status-fd 1 --verify "$ARCHIVE.asc" "$ARCHIVE" > "$BUILD_ROOT/signature-status.txt"
-awk -v fingerprint="$SIGNER" '$2 == "VALIDSIG" && ($3 == fingerprint || $NF == fingerprint) { valid=1 } END { exit !valid }' "$BUILD_ROOT/signature-status.txt" || {
-  echo 'FFmpeg release signature does not match its pinned signing key.' >&2; exit 1;
-}
+bash "$SCRIPT_DIR/verify-source-signature.sh" "$ARCHIVE" "$ARCHIVE.asc" "$BUILD_ROOT/release-key.asc" "$SIGNER" > "$BUILD_ROOT/signature-status.txt"
+bash "$SCRIPT_DIR/test-source-signature.sh" "$ARCHIVE" "$ARCHIVE.asc" "$BUILD_ROOT/release-key.asc" "$SIGNER"
 
 SOURCE_DIR="$BUILD_ROOT/ffmpeg-$VERSION"
 if [[ ! -d "$SOURCE_DIR" ]]; then tar -xJf "$ARCHIVE" -C "$BUILD_ROOT"; fi

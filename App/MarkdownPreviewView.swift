@@ -21,7 +21,8 @@ struct NoteMarkdownPreview: View {
                     ReminderInlineRow(title: reminder?.title ?? title,
                         isCompleted: reminder?.isCompleted ?? false, isAvailable: reminder != nil,
                         onToggle: reminders.map { context in { context.onToggle(id) } },
-                        onEdit: reminders.map { context in { context.onEdit(id) } })
+                        onEdit: reminders.map { context in { context.onEdit(id) } },
+                        sourceTitle: reminder?.chapterTitle)
                 case let .audio(id, title):
                     if let audio { audio.player(id: id, title: title, isDark: colorScheme == .dark) }
                     else { Label(title, systemImage: "waveform").foregroundStyle(.secondary) }

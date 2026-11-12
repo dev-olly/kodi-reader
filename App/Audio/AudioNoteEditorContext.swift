@@ -21,6 +21,7 @@ struct AudioNoteEditorContext {
     var expandedTranscripts: Set<UUID> = []
     var onTranscribe: ((UUID) -> Void)? = nil
     var onToggleTranscript: ((UUID) -> Void)? = nil
+    var onAddTranscriptToNote: ((UUID) -> Void)? = nil
 
     func player(id: UUID, title: String, isDark: Bool) -> some View {
         var recording = recordings[id] ?? NoteAudio(id: id, title: title, duration: 0, createdAt: .distantPast)
@@ -32,14 +33,16 @@ struct AudioNoteEditorContext {
                        expanded: expandedTranscripts.contains(id),
                        onTranscribe: onTranscribe.map { action in { action(id) } },
                        onToggleTranscript: onToggleTranscript.map { action in { action(id) } },
+                       onAddTranscriptToNote: onAddTranscriptToNote.map { action in { action(id) } },
                        transcriptionError: transcriptionErrors[id])
     }
 
     func height(id: UUID, title: String, isDraft: Bool) -> CGFloat {
-        if isDraft { return draftError == nil ? 44 : 70 }
+        if isDraft { return AudioNoteCardLayout.recordingHeight + (draftError == nil ? 0 : AudioNoteCardLayout.draftErrorExtraHeight) }
         let audio = recordings[id] ?? NoteAudio(id: id, title: title)
         return AudioNoteCardLayout.height(audio: audio, expanded: expandedTranscripts.contains(id),
-                                         hasStatus: transcriptionBusyID == id || transcriptionErrors[id] != nil)
+                                         hasStatus: transcriptionBusyID == id || transcriptionErrors[id] != nil,
+                                         canAddTranscript: onAddTranscriptToNote != nil)
     }
 
     func recorder(isDark: Bool) -> some View {
@@ -48,16 +51,45 @@ struct AudioNoteEditorContext {
                                 onDone: onFinishDraft, onDiscard: onDiscardDraft)
             if let draftError {
                 HStack(spacing: 8) {
-                    Text(draftError).lineLimit(1).help(draftError)
+                    Text(draftError).lineLimit(2).help(draftError)
                     Spacer(minLength: 0)
                     Button("Retry", action: onFinishDraft)
-                    Button("Discard", action: onDiscardDraft)
                 }
                 .font(.system(size: 11))
-                .foregroundStyle(isDark ? Color(red: 0.95, green: 0.79, blue: 0.41) : Color(red: 0.48, green: 0.34, blue: 0.06))
+                .foregroundStyle(isDark ? Color(red: 0.67, green: 0.80, blue: 0.62) : Color(red: 0.25, green: 0.42, blue: 0.30))
                 .padding(.horizontal, 8)
+                .frame(height: AudioNoteCardLayout.draftErrorExtraHeight - 4)
             }
         }
+    }
+}
+
+/// A transcript becomes ordinary note prose; Markdown-looking speech stays literal.
+struct AudioTranscriptInsertion {
+    let note: String
+    let selection: NSRange
+    let plainText: String
+    let caretOffset: Int
+
+    static func make(in note: String, after audioID: UUID, transcript: String,
+                     referenceRange: NSRange? = nil) -> AudioTranscriptInsertion? {
+        let transcript = transcript.replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !transcript.isEmpty,
+              let reference = AudioReference.references(in: note).first(where: {
+                  $0.id == audioID && (referenceRange == nil || $0.range == referenceRange)
+              }) else { return nil }
+        let location = NSMaxRange(reference.range)
+        let suffix = (note as NSString).substring(from: location)
+        let trailing = suffix.hasPrefix("\n\n") || suffix.hasPrefix("\r\n\r\n") ? ""
+            : suffix.hasPrefix("\n") || suffix.hasPrefix("\r") ? "\n" : "\n\n"
+        let encoded = RichNoteCodec.encode(NSAttributedString(string: transcript, attributes: RichNoteCodec.attributes(dark: false)))
+        let updated = NSMutableString(string: note)
+        updated.insert("\n\n" + encoded + trailing, at: location)
+        return AudioTranscriptInsertion(note: updated as String,
+            selection: NSRange(location: location + 2 + encoded.utf16.count, length: 0),
+            plainText: "\n\n" + transcript + trailing, caretOffset: 2 + transcript.utf16.count)
     }
 }
 

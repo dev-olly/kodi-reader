@@ -62,7 +62,7 @@ final class AudioNoteController: NSObject, AVAudioRecorderDelegate, AVAudioPlaye
             case .busy: return "Finish or discard the current recording first."
             case .startFailed: return "Couldn’t start recording. Check that a microphone is connected and try again."
             case .noRecording: return "There’s no recording to save."
-            case .emptyRecording: return "The recording is empty. Record a thought before choosing Done."
+            case .emptyRecording: return "The recording is empty. Record a thought before saving."
             case .playbackUnavailable: return "This recording is unavailable. Wait for it to download or try syncing again."
             }
         }

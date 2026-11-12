@@ -23,39 +23,28 @@ final class AppModel {
     var isShowingReminders = false
     var reminderNoteToOpen: UUID?
     @ObservationIgnored private var pendingReminderDestination: (bookID: String, reminder: ResearchReminder)?
+    @ObservationIgnored private var pendingLibraryAnnotation: (bookID: String, annotationID: UUID)?
     var documentToRename: BookRecord?
 
     var errorMessage: String?
     var isShowingContents = false
     var aiNoteTarget: AINoteTarget?
-    enum Workspace: String { case closed, notes, reminders, askAI }
-    private var visibleWorkspace: Workspace = .closed
-    @ObservationIgnored private var workspaceTransition = 0
-    @ObservationIgnored private var requestedWorkspace: Workspace = .closed
+    typealias Workspace = ReaderWorkspacePresentation.Workspace
+    private let workspacePresentation = ReaderWorkspacePresentation()
+    var isPreparingWorkspaceLayout: Bool { workspacePresentation.isPreparingLayout }
     var workspace: Workspace {
-        get { visibleWorkspace }
+        get { workspacePresentation.visible }
         set {
-            let previousRequest = requestedWorkspace
-            requestedWorkspace = newValue
-            workspaceTransition += 1
-            let transition = workspaceTransition
-            guard newValue != visibleWorkspace || newValue != previousRequest else { return }
-            let commit = { [weak self] in
-                guard let self, self.workspaceTransition == transition else { return }
-                self.visibleWorkspace = newValue
-            }
-            let navigate = { [weak self] in
-                guard let self, self.workspaceTransition == transition else { return }
-                guard let reader = self.reader else { commit(); return }
-                if newValue == .closed {
-                    reader.endWorkspaceRestore(completion: commit)
-                } else if self.visibleWorkspace == .closed || previousRequest == .closed {
-                    reader.beginWorkspaceRestore(completion: commit)
-                } else { commit() }
-            }
-            if visibleWorkspace == .notes, newValue != .notes {
-                flush { succeeded in if succeeded { navigate() } }
-            } else { navigate() }
+            workspacePresentation.request(newValue,
+                prepareLayout: { [weak self] finished in
+                    guard let reader = self?.reader else { finished(); return }
+                    reader.beginWorkspaceRestore(completion: finished)
+                },
+                releaseLayout: { [weak self] finished in
+                    guard let reader = self?.reader else { finished(); return }
+                    reader.endWorkspaceRestore(completion: finished)
+                },
+                flushNotes: { [weak self] finished in self?.flush(completion: finished) })
         }
     }
     var isShowingAnnotations: Bool {
@@ -228,6 +217,7 @@ final class AppModel {
 
     func open(url: URL, sourceURL: URL? = nil, expectedIdentity: String? = nil, preferredLocalID: String? = nil) {
         if preferredLocalID != pendingReminderDestination?.bookID { pendingReminderDestination = nil }
+        if preferredLocalID != pendingLibraryAnnotation?.bookID { pendingLibraryAnnotation = nil }
         closeBook { [self] in
             beginOpening(url: url, sourceURL: sourceURL, expectedIdentity: expectedIdentity, preferredLocalID: preferredLocalID)
         }
@@ -244,6 +234,7 @@ final class AppModel {
                 guard openingID == operation else { return }
                 if let expectedIdentity, identity != expectedIdentity {
                     pendingReminderDestination = nil
+                    pendingLibraryAnnotation = nil
                     errorMessage = "This is a different edition or file. Locate the same book to attach its synced notes."
                     return
                 }
@@ -251,6 +242,7 @@ final class AppModel {
             } catch {
                 if openingID == operation {
                     pendingReminderDestination = nil
+                    pendingLibraryAnnotation = nil
                     errorMessage = error.localizedDescription
                 }
             }
@@ -350,6 +342,7 @@ final class AppModel {
             if didScope { url.stopAccessingSecurityScopedResource() }
             pendingReminderDestination = nil
             errorMessage = error.localizedDescription
+            pendingLibraryAnnotation = nil
         }
     }
 
@@ -402,6 +395,7 @@ final class AppModel {
 
         guard panel.runModal() == .OK, let url = panel.url else {
             pendingReminderDestination = nil
+            pendingLibraryAnnotation = nil
             return
         }
         open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
@@ -425,6 +419,7 @@ final class AppModel {
     /// Leaves the current book and returns to the welcome screen.
     func goHome() {
         pendingReminderDestination = nil
+        pendingLibraryAnnotation = nil
         reminderNoteToOpen = nil
         closeBook()
     }
@@ -469,6 +464,7 @@ final class AppModel {
         scopedURL?.stopAccessingSecurityScopedResource()
         scopedURL = nil
         recents = store.recentBooks(limit: .max)
+        reminderBooks = store.allBooks()
     }
 
     func removeFromRecents(_ record: BookRecord) {
@@ -489,17 +485,25 @@ final class AppModel {
 
     func flush(completion: ((Bool) -> Void)? = nil) {
         readingProgress.checkpoint()
+        flushNoteEditors { [self] succeeded in
+            if succeeded { sync.checkpoint() }
+            completion?(succeeded)
+        }
+    }
+
+    /// Opening a note only needs to protect live edits, not checkpoint the
+    /// entire library and sync journal before presenting its editor.
+    func flushNoteEditors(completion: @escaping (Bool) -> Void) {
         let handlers = Array(noteFlushHandlers.values)
         var remaining = handlers.count
         var succeeded = true
-        guard remaining > 0 else { sync.checkpoint(); completion?(true); return }
+        guard remaining > 0 else { completion(true); return }
         for flushEditor in handlers {
-            flushEditor { [self] result in
+            flushEditor { result in
                 if case .failure = result { succeeded = false }
                 remaining -= 1
                 if remaining == 0 {
-                    if succeeded { sync.checkpoint() }
-                    completion?(succeeded)
+                    completion(succeeded)
                 }
             }
         }
@@ -578,15 +582,20 @@ final class AppModel {
     func downloadForOffline(_ record: BookRecord, openAfter: Bool = false) {
         guard sync.status.downloads[record.id] == nil else { return }
         let wasReminderNavigation = pendingReminderDestination?.bookID == record.id
+        let wasAnnotationNavigation = pendingLibraryAnnotation?.bookID == record.id
         Task {
             do {
                 let url = try await sync.download(record)
-                if pendingReminderDestination?.bookID == record.id || (openAfter && !wasReminderNavigation) {
+                if pendingReminderDestination?.bookID == record.id
+                    || pendingLibraryAnnotation?.bookID == record.id
+                    || (openAfter && !wasReminderNavigation && !wasAnnotationNavigation) {
                     open(url: url, expectedIdentity: record.cloudIdentity, preferredLocalID: record.id)
                 }
             } catch {
                 if wasReminderNavigation, pendingReminderDestination?.bookID != record.id { return }
+                if wasAnnotationNavigation, pendingLibraryAnnotation?.bookID != record.id { return }
                 if pendingReminderDestination?.bookID == record.id { pendingReminderDestination = nil }
+                if pendingLibraryAnnotation?.bookID == record.id { pendingLibraryAnnotation = nil }
                 errorMessage = error.localizedDescription
             }
         }
@@ -672,9 +681,20 @@ final class AppModel {
                 reminderNoteToOpen = id
             }
             analytics.record(.reminderOpened, content: analyticsContentType(for: record))
+        } else if let destination = pendingLibraryAnnotation, destination.bookID == record.id {
+            pendingLibraryAnnotation = nil
+            let annotation = record.annotations.first { $0.id == destination.annotationID }
+            reader.start(at: annotation?.locator ?? record.position, annotations: record.annotations)
+            reminderNoteToOpen = annotation?.id
         } else {
             reader.start(at: record.position, annotations: record.annotations)
         }
+    }
+
+    /// The destination survives library dismissal, file location, and cloud download.
+    func openLibraryAnnotation(_ annotation: Annotation, in target: BookRecord) {
+        pendingLibraryAnnotation = (target.id, annotation.id)
+        reopen(target)
     }
 
     // MARK: - Research reminders
@@ -898,10 +918,10 @@ final class AppModel {
     /// Creates a highlight from the current selection and clears it.
     /// Returns the new annotation so the UI can open the note editor immediately.
     @discardableResult
-    func addHighlight(color: HighlightColor) -> Annotation? {
+    func addHighlight(color: HighlightColor, from capturedSelection: ReaderSelection? = nil) -> Annotation? {
         guard
             let reader,
-            let selection = reader.selection,
+            let selection = capturedSelection ?? reader.selection,
             let bookID = book?.bookID
         else { return nil }
 

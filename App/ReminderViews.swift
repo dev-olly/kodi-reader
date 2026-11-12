@@ -13,6 +13,7 @@ struct RemindersListView: View {
     @State private var editing: ReminderListEntry?
     @State private var deleted: ReminderListEntry?
     @State private var errorMessage: String?
+    private var palette: ReminderPopoverPalette { .init(isDark: model.settings.theme.isDark) }
 
     private var entries: [ReminderListEntry] {
         model.reminderBooks.flatMap { book in
@@ -59,14 +60,15 @@ struct RemindersListView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 26) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         ForEach(filteredEntries) { entry in
                             row(entry)
-                            Rectangle().fill(model.settings.theme.border.opacity(0.65)).frame(height: 1)
+                                .padding(.vertical, 14)
+                            Rectangle().fill(palette.border).frame(height: 1)
                         }
                     }
                     .padding(.horizontal, 24)
-                    .padding(.vertical, 24)
+                    .padding(.vertical, 8)
                 }
             }
             if let deleted {
@@ -89,8 +91,8 @@ struct RemindersListView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .foregroundStyle(model.settings.theme.uiForeground)
-        .background(model.settings.theme.surface)
+        .foregroundStyle(palette.ink)
+        .background(palette.paper)
         .sheet(item: $editing) { entry in
             ReminderTitleEditor(entry: entry)
                 .environment(model)
@@ -107,14 +109,25 @@ struct RemindersListView: View {
 
     private var controls: some View {
         VStack(alignment: .leading, spacing: 14) {
+            HStack(spacing: 10) {
+                Text("YOUR REMINDERS")
+                    .tracking(0.7)
+                    .foregroundStyle(palette.muted)
+                Text(String(format: "%02d", filteredEntries.count) + (showCompleted ? " COMPLETED" : " OPEN"))
+                    .foregroundStyle(palette.accent)
+                Spacer(minLength: 0)
+            }
+            .font(.system(size: 8, weight: .medium))
             Picker("Reminder status", selection: $showCompleted) {
                 Text("Open").tag(false)
                 Text("Completed").tag(true)
             }
             .pickerStyle(.segmented)
+            .labelsHidden()
+            .tint(palette.accent)
             HStack(spacing: 8) {
                 Image(systemName: "magnifyingglass")
-                    .foregroundStyle(model.settings.theme.muted)
+                    .foregroundStyle(palette.muted)
                 TextField("Search reminders", text: $query)
                     .textFieldStyle(.plain)
                     .accessibilityLabel("Search reminders")
@@ -127,6 +140,10 @@ struct RemindersListView: View {
                 }
             }
             .font(.system(size: 11))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 9)
+            .background(palette.field, in: .rect(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).strokeBorder(palette.border))
             HStack(spacing: 12) {
                 Menu {
                     Picker("Book", selection: $bookFilter) {
@@ -148,27 +165,25 @@ struct RemindersListView: View {
                 .fixedSize(horizontal: false, vertical: true)
                 .accessibilityLabel("Filter reminders by book")
                 Spacer(minLength: 4)
-                Text("\(filteredEntries.count) \(filteredEntries.count == 1 ? "reminder" : "reminders")")
-                    .fixedSize()
             }
             .font(.system(size: 10))
-            .foregroundStyle(model.settings.theme.muted)
+            .foregroundStyle(palette.muted)
         }
         .padding(.horizontal, 24)
         .padding(.top, 20)
         .padding(.bottom, 16)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(model.settings.theme.border.opacity(0.65)).frame(height: 1)
+            Rectangle().fill(palette.border).frame(height: 1)
         }
     }
 
     private func row(_ entry: ReminderListEntry) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 12) {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(alignment: .top, spacing: 10) {
                 Button { toggle(entry) } label: {
-                    Image(systemName: entry.reminder.isCompleted ? "checkmark.circle.fill" : "circle")
-                        .font(.system(size: 20, weight: .light))
-                        .foregroundStyle(model.settings.theme.accent)
+                    Image(systemName: entry.reminder.isCompleted ? "checkmark.square.fill" : "square")
+                        .font(.system(size: 16, weight: .regular))
+                        .foregroundStyle(palette.accent)
                         .frame(width: 24, height: 26)
                         .contentShape(.rect)
                 }
@@ -178,9 +193,10 @@ struct RemindersListView: View {
 
                 Button { open(entry) } label: {
                     Text(entry.reminder.title)
-                        .font(.custom("Georgia", size: 18))
+                        .font(.system(size: 13))
                         .lineSpacing(4)
                         .strikethrough(entry.reminder.isCompleted)
+                        .foregroundStyle(entry.reminder.isCompleted ? palette.muted : palette.ink)
                         .multilineTextAlignment(.leading)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .contentShape(.rect)
@@ -196,6 +212,8 @@ struct RemindersListView: View {
                     Button("Delete reminder", role: .destructive) { delete(entry) }
                 } label: {
                     Image(systemName: "ellipsis")
+                        .font(.system(size: 12))
+                        .foregroundStyle(palette.muted)
                         .frame(width: 24, height: 24)
                         .contentShape(.rect)
                 }
@@ -205,32 +223,20 @@ struct RemindersListView: View {
                 .accessibilityLabel("Actions for reminder: " + entry.reminder.title)
             }
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text(entry.book.title)
-                    .font(.system(size: 11, weight: .medium))
-                    .lineLimit(2)
-                if !entry.reminder.quotedText.isEmpty {
-                    Text(entry.reminder.quotedText)
-                        .font(.system(size: 12))
-                        .lineSpacing(3)
-                        .lineLimit(3)
-                        .foregroundStyle(model.settings.theme.muted)
-                        .padding(.leading, 10)
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(model.settings.theme.border).frame(width: 2)
-                        }
-                }
-                Button { open(entry) } label: {
-                    Label(sourceLabel(entry), systemImage: "arrow.up.right")
-                        .font(.system(size: 10))
+            Button { open(entry) } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Text(entry.book.title + " · " + sourceLabel(entry))
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
+                    Image(systemName: "arrow.up.right").font(.system(size: 8))
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(model.settings.theme.accent)
-                .accessibilityLabel("Open source in " + entry.book.title)
+                .font(.system(size: 10))
             }
-            .padding(.leading, 36)
+            .buttonStyle(.plain)
+            .foregroundStyle(palette.muted)
+            .accessibilityLabel("Open source in " + entry.book.title)
+            .help("Return to the source")
+            .padding(.leading, 34)
         }
         .contextMenu {
             Button("Edit reminder…") { editing = entry }
@@ -242,15 +248,17 @@ struct RemindersListView: View {
     private var emptyState: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Image(systemName: "bookmark.circle")
-                    .font(.system(size: 28, weight: .light))
-                    .foregroundStyle(model.settings.theme.accent)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 20, weight: .regular))
+                    .foregroundStyle(palette.accent)
+                    .frame(width: 37, height: 37)
+                    .background(palette.iconBackground, in: .rect(cornerRadius: 11))
                 Text("A thought for later.")
-                    .font(.system(size: 25, weight: .regular, design: .serif))
+                    .font(.custom("Georgia", size: 23))
                 Text("Keep reading. Save the topics you want to come back to here.")
                     .font(.system(size: 13))
                     .lineSpacing(4)
-                    .foregroundStyle(model.settings.theme.muted)
+                    .foregroundStyle(palette.muted)
                 Divider().padding(.vertical, 6)
                 Label("Select a passage and choose Add reminder.", systemImage: "text.cursor")
                 Label("In a note, type /remind or /task.", systemImage: "square.and.pencil")
@@ -309,7 +317,7 @@ struct RemindersSheet: View {
         VStack(spacing: 0) {
             HStack {
                 Text("Research reminders")
-                    .font(.system(size: 22, design: .serif))
+                    .font(.custom("Georgia", size: 23))
                 Spacer()
                 Button { dismiss() } label: {
                     Image(systemName: "xmark").frame(width: 28, height: 28)
@@ -327,7 +335,7 @@ struct RemindersSheet: View {
         }
         .frame(minWidth: 420, idealWidth: 520, minHeight: 460, idealHeight: 620)
         .foregroundStyle(model.settings.theme.uiForeground)
-        .background(model.settings.theme.surface)
+        .background(ReminderPopoverPalette(isDark: model.settings.theme.isDark).paper)
     }
 }
 
@@ -343,7 +351,6 @@ private struct ReminderTitleEditor: View {
     let entry: ReminderListEntry
     @State private var title: String
     @State private var errorMessage: String?
-    @FocusState private var titleFocused: Bool
 
     init(entry: ReminderListEntry) {
         self.entry = entry
@@ -351,32 +358,13 @@ private struct ReminderTitleEditor: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Edit reminder").font(.headline)
-            TextField("What would you like to research?", text: $title, axis: .vertical)
-                .textFieldStyle(.roundedBorder)
-                .lineLimit(2...5)
-                .focused($titleFocused)
-            Text(entry.book.title)
-                .font(.caption)
-                .foregroundStyle(model.settings.theme.muted)
-            if let errorMessage {
-                Text(errorMessage).font(.caption).foregroundStyle(.red)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel", role: .cancel) { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Save") { save() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(24)
-        .frame(width: 380)
-        .background(model.settings.theme.surface)
-        .foregroundStyle(model.settings.theme.uiForeground)
-        .onAppear { titleFocused = true }
+        ReminderCaptureComposer(title: $title, quotedText: entry.reminder.quotedText,
+            isEditing: true, errorMessage: errorMessage,
+            onSave: save, onCancel: { dismiss() })
+            .padding(20)
+            .frame(width: 440)
+            .background(model.settings.theme.surface)
+            .environment(\.colorScheme, model.settings.theme.colorScheme)
     }
 
     private func save() {

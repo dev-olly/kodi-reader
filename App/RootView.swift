@@ -185,7 +185,9 @@ struct RootView: View {
                     // web view and its scheme handler are recreated cleanly.
                     .id(book.bookID)
             } else {
-                WelcomeView()
+                WelcomeView(onOpenNote: { book, annotation in
+                    model.openLibraryAnnotation(annotation, in: book)
+                })
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)

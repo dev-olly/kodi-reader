@@ -116,7 +116,8 @@ import SwiftUI
             }
         }
         assert(draftAttachments == 1)
-        assert(liveDraft!.attachmentCell!.cellSize().height == 44, "The inline recorder retains its compact 44-point height")
+        assert(liveDraft!.attachmentCell!.cellSize().height == AudioNoteCardLayout.recordingHeight,
+               "The inline recorder reserves the full waveform card height")
         view.textStorage?.setAttributedString(draftCards)
         view.insertText(NSAttributedString(string: "An earlier thought 👋\n\n", attributes: RichNoteCodec.attributes(dark: true)),
                         replacementRange: NSRange(location: 0, length: 0))
@@ -431,6 +432,42 @@ import SwiftUI
         assert(!liveAudioCell.hasLiveOverlay && attachmentPaintsPixels(liveAudioCell),
                "Removing the editor context restores audio fallback rendering")
 
+        // A full recording card and its save-error row must occupy real text
+        // layout space, so a thought typed below the recording stays readable.
+        let fullDraftID = UUID()
+        let fullDraftNote = "Before\n\n" + AudioDraftReference.marker(fullDraftID) + "\n\nAfter the audio."
+        view.audioContext = AudioNoteEditorContext(controller: controller,
+            recordings: [:], fileURL: { _ in nil },
+            onRename: { _ in }, onExport: { _ in }, onDelete: { _ in },
+            draftID: fullDraftID, draftError: nil, onFinishDraft: {}, onDiscardDraft: {})
+        view.textStorage?.setAttributedString(RichNoteCodec.decode(fullDraftNote, dark: false, audioDraftID: fullDraftID))
+        view.resizeSketchCards()
+        let recorderHost = view.subviews.compactMap { $0 as? NSHostingView<AnyView> }.first!
+        settleLayout(recorderHost)
+        let afterRecording = (view.string as NSString).range(of: "After the audio.")
+        func followingTextRect() -> NSRect {
+            let glyphs = view.layoutManager!.glyphRange(forCharacterRange: afterRecording, actualCharacterRange: nil)
+            return view.layoutManager!.boundingRect(forGlyphRange: glyphs, in: view.textContainer!)
+                .offsetBy(dx: view.textContainerOrigin.x, dy: view.textContainerOrigin.y)
+        }
+        assert(recorderHost.frame.height == AudioNoteCardLayout.recordingHeight)
+        assert(followingTextRect().minY >= recorderHost.frame.maxY,
+               "The note below a recording must sit below the complete card")
+        view.audioContext!.draftError = "Couldn’t save this take. Your recording is still available."
+        view.resizeSketchCards()
+        settleLayout(recorderHost)
+        assert(recorderHost.frame.height == AudioNoteCardLayout.recordingHeight + AudioNoteCardLayout.draftErrorExtraHeight)
+        assert(followingTextRect().minY >= recorderHost.frame.maxY,
+               "A save error must grow the attachment rather than cover following text")
+        view.setFrameSize(NSSize(width: 260, height: 640))
+        view.resizeSketchCards()
+        settleLayout(recorderHost)
+        assert(recorderHost.frame.maxX <= view.bounds.maxX && followingTextRect().minY >= recorderHost.frame.maxY)
+        assert(RichNoteCodec.encode(view.textStorage!) == fullDraftNote,
+               "Recording-card resizing must preserve the draft anchor and surrounding note")
+        view.audioContext = nil
+        view.resizeSketchCards()
+
         // Cut can remove the source's last live file before a different note
         // receives Paste. Clipboard retention must own an independent file.
         let clipboardRoot = FileManager.default.temporaryDirectory.appendingPathComponent("kodi-editor-clipboard-" + UUID().uuidString, isDirectory: true)
@@ -575,6 +612,7 @@ import SwiftUI
         view.resizeSketchCards()
         assert(view.subviews.compactMap { $0 as? NSHostingView<ReminderInlineRow> }.isEmpty)
         assert(canonical.id == reminder.id, "Unlinking a note reference leaves canonical reminder storage alone")
+        testAddingTranscriptToNote()
         print("Reminder aliases, command tails, shared slash selection, rich/source mapping, native Undo, canonical refresh, and 300pt rows passed")
 
         print("Rich and Source slash suggestions, native Return routing, prefix activation, Escape, paste suppression, and normal Enter passed")
@@ -583,6 +621,78 @@ import SwiftUI
         print("Audio fallback suppression, stable host/focus/frame/pixels, metadata/download/appearance refresh, and transcript/status attachment heights passed")
         print("Keyboard bold, undo, list continuation/exit, and source protection passed; \(samples.count - failures)/\(samples.count) round trips passed")
         if failures > 0 { exit(1) }
+    }
+
+    @MainActor private static func testAddingTranscriptToNote() {
+        let first = NoteAudio(title: "First recording")
+        let transcript = "A **literal** thought 👋.\n\n[Just words](kodi-audio://\(UUID().uuidString))\n# A spoken heading"
+        let recording = NoteAudio(title: "Second recording", duration: 42, transcript: transcript)
+        let original = "Before **bold** 👋\n\n" + first.markdown + "\n\nBetween\n\n" + recording.markdown + "\n\nAfter *text*"
+        let expected = AudioTranscriptInsertion.make(in: original, after: recording.id, transcript: transcript)!
+        assert(expected.note.hasPrefix("Before **bold** 👋\n\n" + first.markdown + "\n\nBetween\n\n" + recording.markdown))
+        assert(expected.note.hasSuffix("\n\nAfter *text*"))
+        assert(AudioReference.references(in: expected.note).map(\.id) == [first.id, recording.id],
+               "Transcript text that resembles a media link must remain ordinary prose")
+        let plain = RichNoteCodec.decode(expected.note, dark: false).string
+        assert(plain.contains(transcript), "Markdown punctuation and Unicode in the transcript remain literal text")
+        assert(expected.selection.location < expected.note.utf16.count)
+        assert(AudioTranscriptInsertion.make(in: original, after: recording.id, transcript: " \n\t") == nil)
+        assert(AudioTranscriptInsertion.make(in: original, after: UUID(), transcript: transcript) == nil)
+        for suffix in ["", "\nNext paragraph", "\n\nNext paragraph"] {
+            let insertion = AudioTranscriptInsertion.make(in: recording.markdown + suffix, after: recording.id, transcript: "A thought.")!
+            assert(insertion.note.hasPrefix(recording.markdown + "\n\nA thought.\n\n"),
+                   "The added transcript is a separate paragraph, including at the end of a note")
+        }
+
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 300, height: 700), styleMask: [.titled], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        defer { window.contentView = nil; window.orderOut(nil) }
+        let view = RichNoteTextView(frame: window.contentView!.bounds)
+        view.isRichText = true; view.isEditable = true; view.allowsUndo = true
+        let controller = AudioNoteController(permission: { false })
+        view.audioContext = AudioNoteEditorContext(controller: controller,
+            recordings: [first.id: first, recording.id: recording], fileURL: { _ in nil },
+            onRename: { _ in }, onExport: { _ in }, onDelete: { _ in },
+            draftID: nil, draftError: nil, onFinishDraft: {}, onDiscardDraft: {},
+            expandedTranscripts: [recording.id], onAddTranscriptToNote: { _ in })
+        window.contentView = view
+        window.makeFirstResponder(view)
+        view.textStorage?.setAttributedString(RichNoteCodec.decode(original, dark: false))
+        view.resizeSketchCards()
+        view.undoManager?.removeAllActions()
+        var attachments: [AudioTextAttachment] = []
+        view.textStorage!.enumerateAttribute(.attachment, in: NSRange(location: 0, length: view.textStorage!.length)) { value, _, _ in
+            if let audio = value as? AudioTextAttachment { attachments.append(audio) }
+        }
+        view.setSelectedRange(NSRange(location: 0, length: 6))
+        view.insertTranscript(after: attachments[1])
+        assert(RichNoteCodec.encode(view.textStorage!) == expected.note,
+               "Adding a transcript targets its recording rather than replacing the current selection")
+        assert(view.audioContext!.recordings[recording.id] == recording, "The audio attachment and saved transcript are preserved")
+        assert(window.firstResponder === view && view.selectedRange().length == 0)
+        assert(view.undoManager?.canUndo == true)
+        view.undoManager?.undo()
+        assert(RichNoteCodec.encode(view.textStorage!) == original, "Undo removes only the inserted prose")
+        view.undoManager?.redo()
+        assert(RichNoteCodec.encode(view.textStorage!) == expected.note)
+
+        let duplicate = original + "\n\n" + recording.markdown
+        view.textStorage?.setAttributedString(RichNoteCodec.decode(duplicate, dark: false))
+        attachments = []
+        view.textStorage!.enumerateAttribute(.attachment, in: NSRange(location: 0, length: view.textStorage!.length)) { value, _, _ in
+            if let audio = value as? AudioTextAttachment { attachments.append(audio) }
+        }
+        let lastReference = AudioReference.references(in: duplicate).last!
+        let lastExpected = AudioTranscriptInsertion.make(in: duplicate, after: recording.id,
+            transcript: transcript, referenceRange: lastReference.range)!
+        view.insertTranscript(after: attachments.last!)
+        assert(RichNoteCodec.encode(view.textStorage!) == lastExpected.note,
+               "Repeated references to one recording insert below the particular card that was clicked")
+        let unchanged = RichNoteCodec.encode(view.textStorage!)
+        view.audioContext!.onAddTranscriptToNote = nil
+        view.insertTranscript(after: attachments.last!)
+        assert(RichNoteCodec.encode(view.textStorage!) == unchanged)
+        print("Transcript insertion: literal text, separate paragraphs, multiple recordings, selected-card targeting, preserved audio, caret, and Undo/Redo passed")
     }
 
     @MainActor private static func accessibilityNodes(_ element: Any, depth: Int = 0) -> [any NSAccessibilityProtocol] {

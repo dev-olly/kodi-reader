@@ -70,7 +70,7 @@ struct NoteEditor: View {
     @State private var audioSaving = false
     @State private var audioSaveWaiters: [(Result<Void, Error>) -> Void] = []
     @State private var audioDraftError: String?
-    @State private var expandedAudioTranscripts: Set<UUID> = []
+    @State private var collapsedAudioTranscripts: Set<UUID> = []
 
     private enum EditorMode {
         case edit
@@ -443,16 +443,17 @@ struct NoteEditor: View {
             transcription: model.audioTranscription,
             transcriptionScope: scope,
             transcriptionBusyID: model.audioTranscription.activeScope == scope ? model.audioTranscription.activeID : nil,
-            transcriptionErrors: errors, expandedTranscripts: expandedAudioTranscripts,
+            transcriptionErrors: errors, expandedTranscripts: Set(recordings.map(\.id)).subtracting(collapsedAudioTranscripts),
             onTranscribe: { id in
                 model.transcribeAudio(id, annotationID: annotation.id) { success in
-                    if success { expandedAudioTranscripts.insert(id) }
+                    if success { collapsedAudioTranscripts.remove(id) }
                 }
             },
             onToggleTranscript: { id in
-                if expandedAudioTranscripts.contains(id) { expandedAudioTranscripts.remove(id) }
-                else { expandedAudioTranscripts.insert(id) }
-            })
+                if collapsedAudioTranscripts.contains(id) { collapsedAudioTranscripts.remove(id) }
+                else { collapsedAudioTranscripts.insert(id) }
+            },
+            onAddTranscriptToNote: reminderDraft == nil && !audioSaving ? addTranscriptToNote : nil)
     }
 
     private var sketchBrowser: some View {
@@ -631,32 +632,10 @@ struct NoteEditor: View {
     }
 
     private var reminderComposer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label(reminderDraft?.existingID == nil ? "Add reminder" : "Edit reminder", systemImage: "checklist")
-                .font(.system(size: 12, weight: .medium))
-            TextField("Research database sharding…", text: $reminderTitle)
-                .textFieldStyle(.roundedBorder)
-                .focused($reminderFieldFocused)
-                .onSubmit(saveReminderDraft)
-                .disabled(isSavingReminder)
-                .accessibilityLabel("Reminder topic")
-            if let reminderError {
-                Text(reminderError).font(.caption).foregroundStyle(.red)
-            }
-            HStack {
-                Text("Saved to your reminders, linked to this note.")
-                    .font(.caption2).foregroundStyle(theme.muted)
-                Spacer(minLength: 8)
-                Button("Cancel", action: cancelReminderDraft).disabled(isSavingReminder)
-                Button(reminderDraft?.existingID == nil ? "Add" : "Save", action: saveReminderDraft)
-                    .buttonStyle(.borderedProminent)
-                    .tint(theme.accent)
-                    .disabled(isSavingReminder || reminderTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-        .padding(14)
-        .background(theme.accent.opacity(0.05), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(theme.border, lineWidth: 1))
+        ReminderCaptureComposer(title: $reminderTitle, quotedText: annotation.text,
+            isEditing: reminderDraft?.existingID != nil, isEmbedded: true,
+            isSaving: isSavingReminder, errorMessage: reminderError, focus: $reminderFieldFocused,
+            onSave: saveReminderDraft, onCancel: cancelReminderDraft)
         .padding(.horizontal, horizontalPadding)
         .padding(.vertical, 12)
         .onExitCommand { if !isSavingReminder { cancelReminderDraft() } }
@@ -1017,6 +996,18 @@ struct NoteEditor: View {
             try model.renameAudio(id, title: title, note: durable, annotationID: annotation.id)
             text = updated; lastSavedText = durable; previewRevision += 1
         } catch { saveStatus = .failed(error.localizedDescription) }
+    }
+
+    private func addTranscriptToNote(_ id: UUID) {
+        guard reminderDraft == nil, !audioSaving,
+              let transcript = recordings.first(where: { $0.id == id })?.transcript,
+              let insertion = AudioTranscriptInsertion.make(in: text, after: id, transcript: transcript) else { return }
+        text = insertion.note
+        selectedRange = insertion.selection
+        if mode == .preview {
+            sourceModeReason = sourceModeFallbackReason(for: text)
+            mode = sourceModeReason == nil ? .edit : .source
+        }
     }
 
     private func deleteAudio(_ id: UUID) {

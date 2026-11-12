@@ -765,6 +765,7 @@ final class RichNoteTextView: SketchCommandTextView {
         var transcriptionController: ObjectIdentifier?
         var transcriptionScope: AudioTranscriptionScope?
         var canTranscribe: Bool
+        var canAddTranscript: Bool
     }
 
     override func drawInsertionPoint(in rect: NSRect, color: NSColor, turnedOn flag: Bool) {
@@ -825,7 +826,7 @@ final class RichNoteTextView: SketchCommandTextView {
             if let attachment = value as? AudioTextAttachment,
                !attachment.isRetiredDraft, let cell = attachment.attachmentCell as? AudioAttachmentCell {
                 let height = audioContext?.height(id: attachment.id, title: attachment.title, isDraft: attachment.isDraft)
-                    ?? (attachment.isDraft ? 44 : AudioNoteCardLayout.baseHeight)
+                    ?? (attachment.isDraft ? AudioNoteCardLayout.recordingHeight : AudioNoteCardLayout.baseHeight)
                 if cell.cardWidth != width || cell.cardHeight != height {
                     cell.cardWidth = width; cell.cardHeight = height
                     changed = true
@@ -870,7 +871,8 @@ final class RichNoteTextView: SketchCommandTextView {
                     controller: ObjectIdentifier(context.controller),
                     transcriptionController: context.transcription.map(ObjectIdentifier.init),
                     transcriptionScope: context.transcriptionScope,
-                    canTranscribe: context.onTranscribe != nil)
+                    canTranscribe: context.onTranscribe != nil,
+                    canAddTranscript: context.onAddTranscriptToNote != nil)
                 let host: NSHostingView<AnyView>
                 if let existing = audioViews[key] {
                     host = existing
@@ -915,8 +917,38 @@ final class RichNoteTextView: SketchCommandTextView {
         live.onDiscardDraft = { [weak self] in self?.audioContext?.onDiscardDraft() }
         live.onTranscribe = context.onTranscribe.map { _ in { [weak self] id in self?.audioContext?.onTranscribe?(id) } }
         live.onToggleTranscript = context.onToggleTranscript.map { _ in { [weak self] id in self?.audioContext?.onToggleTranscript?(id) } }
+        live.onAddTranscriptToNote = context.onAddTranscriptToNote.map { _ in
+            { [weak self, weak attachment] _ in
+                guard let attachment else { return }
+                self?.insertTranscript(after: attachment)
+            }
+        }
         return attachment.isDraft ? AnyView(live.recorder(isDark: dark))
             : AnyView(live.player(id: attachment.id, title: attachment.title, isDark: dark))
+    }
+
+    func insertTranscript(after attachment: AudioTextAttachment) {
+        guard isEditable, !attachment.isDraft, let storage = textStorage,
+              audioContext?.onAddTranscriptToNote != nil,
+              let transcript = audioContext?.recordings[attachment.id]?.transcript else { return }
+        var anchor: NSRange?
+        storage.enumerateAttribute(.attachment, in: NSRange(location: 0, length: storage.length)) { value, range, _ in
+            if (value as? AudioTextAttachment) === attachment { anchor = range }
+        }
+        guard let anchor,
+              let insertion = AudioTranscriptInsertion.make(in: RichNoteCodec.encode(storage), after: attachment.id,
+                  transcript: transcript, referenceRange: RichNoteCodec.markdownRange(anchor, in: storage)) else { return }
+        let location = NSMaxRange(anchor)
+        breakUndoCoalescing()
+        insertText(NSAttributedString(string: insertion.plainText, attributes: RichNoteCodec.attributes(dark: dark)),
+                   replacementRange: NSRange(location: location, length: 0))
+        undoManager?.setActionName("Add transcript to note")
+        breakUndoCoalescing()
+        typingAttributes = RichNoteCodec.attributes(dark: dark)
+        let caret = NSRange(location: location + insertion.caretOffset, length: 0)
+        setSelectedRange(caret)
+        window?.makeFirstResponder(self)
+        scrollRangeToVisible(caret)
     }
 
     private func refreshReminderOverlays() {
@@ -937,7 +969,8 @@ final class RichNoteTextView: SketchCommandTextView {
             let content = ReminderInlineRow(title: reminder?.title ?? attachment.title,
                 isCompleted: reminder?.isCompleted ?? false, isAvailable: reminder != nil,
                 onToggle: { [weak self] in self?.reminderContext?.onToggle(attachment.id) },
-                onEdit: { [weak self] in self?.reminderContext?.onEdit(attachment.id) })
+                onEdit: { [weak self] in self?.reminderContext?.onEdit(attachment.id) },
+                sourceTitle: reminder?.chapterTitle)
             let host: NSHostingView<ReminderInlineRow>
             if let existing = reminderViews[key] { host = existing; host.rootView = content }
             else { host = NSHostingView(rootView: content); reminderViews[key] = host; addSubview(host) }
@@ -1547,13 +1580,16 @@ struct ReminderInlineRow: View {
     var isAvailable = true
     var onToggle: (() -> Void)? = nil
     var onEdit: (() -> Void)? = nil
+    var sourceTitle: String? = nil
+    @Environment(\.colorScheme) private var colorScheme
+    private var palette: ReminderPopoverPalette { .init(isDark: colorScheme == .dark) }
 
     var body: some View {
         HStack(spacing: 12) {
             Button { onToggle?() } label: {
-                Image(systemName: isCompleted ? "checkmark.circle.fill" : "circle")
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(isCompleted ? Color.accentColor : .secondary)
+                Image(systemName: isCompleted ? "checkmark.square.fill" : "square")
+                    .font(.system(size: 16, weight: .regular))
+                    .foregroundStyle(palette.accent)
                     .frame(width: 28, height: 36)
                     .contentShape(Rectangle())
             }
@@ -1561,16 +1597,18 @@ struct ReminderInlineRow: View {
             .disabled(!isAvailable || onToggle == nil)
             .accessibilityLabel((isCompleted ? "Mark reminder incomplete: " : "Complete reminder: ") + title)
 
-            VStack(alignment: .leading, spacing: 3) {
-                Text(isAvailable ? "RESEARCH LATER" : "REMINDER UNAVAILABLE")
-                    .font(.system(size: 9, weight: .medium))
-                    .tracking(0.8)
-                    .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 5) {
                 Text(title)
-                    .font(.system(size: 13))
+                    .font(.system(size: 12))
+                    .lineSpacing(2)
                     .strikethrough(isCompleted)
-                    .foregroundStyle(isCompleted ? .secondary : .primary)
+                    .foregroundStyle(isCompleted ? palette.muted : palette.ink)
                     .lineLimit(2)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(isAvailable ? (sourceTitle ?? "Research later") : "Reminder unavailable")
+                    .font(.system(size: 9))
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
 
@@ -1578,7 +1616,7 @@ struct ReminderInlineRow: View {
                 Button(action: onEdit) {
                     Image(systemName: "pencil")
                         .font(.system(size: 12))
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(palette.muted)
                         .frame(width: 28, height: 36)
                         .contentShape(Rectangle())
                 }
@@ -1588,9 +1626,10 @@ struct ReminderInlineRow: View {
             }
         }
         .padding(.horizontal, 12)
-        .frame(maxWidth: .infinity, minHeight: 64)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 9))
-        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Color.primary.opacity(0.1), lineWidth: 1))
+        .frame(maxWidth: .infinity)
+        .frame(height: 64)
+        .background(palette.field, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).strokeBorder(palette.border, lineWidth: 1))
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Research reminder: " + title)
     }
@@ -1635,7 +1674,7 @@ final class AudioTextAttachment: NSTextAttachment {
         self.id = id; self.title = title; self.isDraft = isDraft
         super.init(data: nil, ofType: nil)
         let cell = AudioAttachmentCell(title: title)
-        cell.cardHeight = isDraft ? 44 : AudioNoteCardLayout.baseHeight
+        cell.cardHeight = isDraft ? AudioNoteCardLayout.recordingHeight : AudioNoteCardLayout.baseHeight
         attachmentCell = cell
     }
     required init?(coder: NSCoder) { return nil }

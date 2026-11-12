@@ -18,6 +18,7 @@ struct ReaderScreen: View {
     @State private var followSpokenText = true
     @State private var narrationCover: NSImage?
     @State private var editingAnnotation: Annotation?
+    @State private var noteEditorRequestID: UUID?
     @State private var activeHighlight: ActiveHighlight?
     @State private var activeReminder: ActiveReminder?
     @State private var reminderDraft: ReminderCaptureDraft?
@@ -169,6 +170,7 @@ struct ReaderScreen: View {
                 if capturedReminder?.id == id { capturedReminder = nil }
             }
             .onChange(of: model.isShowingAnnotations) { _, showing in
+                if !showing { noteEditorRequestID = nil }
                 reader.pinRestoreCurrentPositionOnce()
                 if !showing, model.workspace == .closed, model.settings.noteEditorPlacement == .sidebar {
                     editingAnnotation = nil
@@ -180,6 +182,7 @@ struct ReaderScreen: View {
             }
             .onChange(of: windowWidth) { _, _ in reader.pinRestoreCurrentPositionOnce() }
             .onDisappear {
+                noteEditorRequestID = nil
                 reader.onReminderActivated = nil
                 reader.onReferenceNavigationWillBegin = nil
                 narration.stop()
@@ -197,7 +200,8 @@ struct ReaderScreen: View {
 
     private var usesWorkspaceOverlay: Bool {
         let remainingWidth = windowWidth - workspaceWidth - 2 * Self.navRailWidth
-        return windowWidth < 900
+        return model.isPreparingWorkspaceLayout
+            || windowWidth < 900
             || (reader.workspaceMinimumWidth > 0 && remainingWidth < reader.workspaceMinimumWidth)
             || (model.workspace == .notes && isDrawingExpanded)
     }
@@ -553,7 +557,7 @@ struct ReaderScreen: View {
         } else if let selection = reader.selection {
             HighlightPopoverLayout(anchor: selection.rect) {
                 HighlightPalette(
-                    onPick: { _ = model.addHighlight(color: $0) },
+                    onPick: { _ = model.addHighlight(color: $0, from: selection) },
                     onAddNote: {
                         addNote(from: selection)
                     },
@@ -712,6 +716,14 @@ struct ReaderScreen: View {
             }
         }
         .background(model.settings.theme.surface)
+        .overlay {
+            if noteEditorRequestID != nil {
+                ProgressView()
+                    .controlSize(.small)
+                    .padding(12)
+                    .background(.regularMaterial, in: .rect(cornerRadius: 8))
+            }
+        }
         .animation(reduceMotion ? nil : .easeInOut(duration: 0.22), value: isDrawingExpanded)
     }
 
@@ -732,20 +744,36 @@ struct ReaderScreen: View {
 
     private func addNote(from selection: ReaderSelection) {
         reader.pinRestoreOnce(to: selection.locator.start)
-        guard let created = model.addHighlight(color: model.nextColorForNewNote()) else { return }
-        DispatchQueue.main.async {
-            openNoteEditor(created, autofocus: true)
-        }
+        guard let created = model.addHighlight(color: model.nextColorForNewNote(), from: selection) else { return }
+        openNoteEditor(created, autofocus: true)
     }
 
     private func openNoteEditor(_ annotation: Annotation, autofocus: Bool) {
-        model.flush { succeeded in
-            guard succeeded else { return }
+        if editingAnnotation?.id == annotation.id {
             showNoteEditor(annotation, autofocus: autofocus)
+            return
+        }
+        let requestID = UUID()
+        let bookID = model.book?.bookID
+        noteEditorRequestID = requestID
+        // Present the panel now; keep the old editor mounted until its edits
+        // are safe, rather than hiding the click behind its checkpoint.
+        if isSidebarPlacement, !model.isShowingAnnotations {
+            reader.pinRestoreOnce(to: annotation.locator.start)
+            inspectorOpenedForEditor = true
+            model.isShowingAnnotations = true
+        }
+        model.flushNoteEditors { succeeded in
+            guard noteEditorRequestID == requestID else { return }
+            noteEditorRequestID = nil
+            guard succeeded, model.book?.bookID == bookID,
+                  let current = model.annotation(with: annotation.id) else { return }
+            showNoteEditor(current, autofocus: autofocus)
         }
     }
 
     private func showNoteEditor(_ annotation: Annotation, autofocus: Bool) {
+        noteEditorRequestID = nil
         noteEditorAutofocus = autofocus
         model.aiNoteTarget = .annotation(annotation.id)
         editingAnnotation = annotation
@@ -757,6 +785,7 @@ struct ReaderScreen: View {
     }
 
     private func finishEditing() {
+        noteEditorRequestID = nil
         editingAnnotation = nil
         model.aiNoteTarget = nil
         isDrawingExpanded = false
@@ -768,6 +797,7 @@ struct ReaderScreen: View {
     }
 
     private func backToNotesList() {
+        noteEditorRequestID = nil
         editingAnnotation = nil
         model.aiNoteTarget = nil
         inspectorOpenedForEditor = false
@@ -816,6 +846,7 @@ struct ReaderScreen: View {
     }
 
     private func closeWorkspace() {
+        noteEditorRequestID = nil
         model.flush { succeeded in
             guard succeeded else { return }
             model.workspace = .closed

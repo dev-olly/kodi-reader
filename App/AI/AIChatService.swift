@@ -198,9 +198,10 @@ struct AIChatService {
         if let chapter = context.chapterTitle, !chapter.isEmpty {
             lines.append("They are currently in the chapter “\(chapter)”.")
         }
-        lines.append(
-            "Explain ideas in plain, simple language for a general reader. Prefer short paragraphs, concrete examples, and definitions of difficult terms. Answer using the quoted passages they attach as references, including any surrounding passage provided with a quote. When you rely on a passage, name the chapter if one was provided and include a short quoted phrase from the reference. If the attached text is insufficient, say what is missing rather than inventing book text from outside it."
-        )
+        lines.append(contentsOf: [
+            "Use plain, simple language. Be concise and straightforward by default: give the shortest clear, complete answer, usually a few sentences or a brief list. Start with the answer and skip preambles, repetition, and unsolicited examples or extended explanations. Provide more detail, examples, or a different style or format when the user asks for them.",
+            "Answer using the quoted passages they attach as references, including any surrounding passage provided with a quote. When you rely on a passage, name the chapter if one was provided and include a short quoted phrase from the reference. If the attached text is insufficient, say what is missing rather than inventing book text from outside it."
+        ])
         return lines.joined(separator: "\n")
     }
 

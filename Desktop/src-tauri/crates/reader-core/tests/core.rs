@@ -114,6 +114,38 @@ fn removing_and_reimporting_a_download_preserves_reading_data_and_restores_avail
 }
 
 #[test]
+fn durable_json_roundtrips_preserve_timestamp_precision() {
+    let (_directory, mut store, book) = imported();
+    let added = 1_794_523_988.345_188_1_f64;
+    let created = 1_794_523_988.401_423_5_f64;
+    let modified = 1_794_523_988.401_795_4_f64;
+    let mut note = Annotation::new(Locator::default(), "Precise timestamps".into());
+    note.created_at = created;
+    note.modified_at = modified;
+    store
+        .update_book(&book.id, |book| {
+            book.added_at = added;
+            book.last_opened_at = added;
+            book.annotations = vec![note];
+            Ok(())
+        })
+        .unwrap();
+    let reopened = LibraryStore::open(store.root().to_path_buf()).unwrap();
+    for saved in [
+        store.book(&book.id).unwrap(),
+        reopened.book(&book.id).unwrap(),
+    ] {
+        assert_eq!(saved.added_at.to_bits(), added.to_bits());
+        assert_eq!(saved.last_opened_at.to_bits(), added.to_bits());
+        assert_eq!(saved.annotations[0].created_at.to_bits(), created.to_bits());
+        assert_eq!(
+            saved.annotations[0].modified_at.to_bits(),
+            modified.to_bits()
+        );
+    }
+}
+
+#[test]
 fn keep_data_removal_hides_only_locally_and_reimport_restores_all_reading_data() {
     let (directory, mut store, book) = imported();
     let mut note = Annotation::new(Locator::default(), "Saved passage".into());

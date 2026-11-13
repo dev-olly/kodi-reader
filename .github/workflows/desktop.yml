@@ -41,6 +41,7 @@ jobs:
     defaults:
       run:
         working-directory: Desktop
+        shell: bash
     steps:
       - name: Preserve byte-exact source files on Windows
         if: runner.os == 'Windows'

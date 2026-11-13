@@ -1,0 +1,80 @@
+name: Prepare desktop preview draft
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: Successful Desktop Windows and Linux workflow run
+        required: true
+        type: string
+      tag:
+        description: Preview tag, for example desktop-v0.1.0-preview.1
+        required: true
+        default: desktop-v0.1.0-preview.1
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-preview-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  prepare-draft:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      SOURCE_RUN: ${{ inputs.run_id }}
+      PREVIEW_TAG: ${{ inputs.tag }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Verify the source workflow completed successfully on main
+        id: source
+        shell: bash
+        run: |
+          [[ "$SOURCE_RUN" =~ ^[0-9]+$ ]]
+          gh api "repos/$GH_REPO/actions/runs/$SOURCE_RUN" > source-run.json
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const run=JSON.parse(fs.readFileSync('source-run.json','utf8'));
+          if(run.conclusion!=='success'||run.head_branch!=='main'||run.path!=='.github/workflows/desktop.yml'||run.head_repository?.full_name!==process.env.GH_REPO||!['push','workflow_dispatch'].includes(run.event)||!/^[a-f0-9]{40}$/.test(run.head_sha)) throw Error('Only successful trusted main desktop builds may enter a preview draft.');
+          fs.appendFileSync(process.env.GITHUB_OUTPUT,`sha=${run.head_sha}\n`);
+          NODE
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          pattern: internal-desktop-*
+          path: preview-input
+      - name: Verify artifacts and prepare installers with source notices
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          node --test .github/scripts/prepare-desktop-preview.test.mjs
+          node .github/scripts/prepare-desktop-preview.mjs preview-input preview-upload "$SOURCE_SHA" "$SOURCE_RUN"
+      - name: Create a reviewable unsigned preview draft
+        env:
+          SOURCE_SHA: ${{ steps.source.outputs.sha }}
+        shell: bash
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          const m=JSON.parse(fs.readFileSync('preview-upload/release-manifest.json','utf8'));
+          const prefix=`desktop-v${m.version}-preview.`;
+          if(!process.env.PREVIEW_TAG.startsWith(prefix)||!/^\d+$/.test(process.env.PREVIEW_TAG.slice(prefix.length)))throw Error('Preview tag must match the verified package version.');
+          fs.writeFileSync('preview-notes.txt',`Windows and Linux test packages from ${m.sourceCommit}.\n\nThese are unsigned previews with separate Preview application data and automatic updates disabled. The native build/test checks passed on Windows Server 2022 and Ubuntu 24.04 X11. Manual Windows 11, Wayland/Fedora, audio/device, Drive round-trip, installation and signing acceptance remain pending. This is not the stable public release.\n\nThe packages include the approved account/Drive client configuration. New desktop PDF text highlights and geometry-dependent reminders remain local.\n\nSHA256SUMS verifies the installers, codec-source/notices archives and release manifest. Keep the matching source/notices archive with redistributed installers.\n\nThe signed/notarized Mac app is published separately at https://github.com/dev-olly/kodi-reader/releases/latest.\n\nBuild evidence: ${m.workflowRunURL}\n`);
+          NODE
+          gh release create "$PREVIEW_TAG" --target "$SOURCE_SHA" --draft --prerelease --latest=false --title 'Kodi Reader 0.1.0 — Windows and Linux preview' --notes-file preview-notes.txt preview-upload/*

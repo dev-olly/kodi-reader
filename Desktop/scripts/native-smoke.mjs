@@ -23,6 +23,7 @@ driver.on('error', error => { driverFailure = error; });
 let log = ''; driver.stdout.on('data', value => { log += value; }); driver.stderr.on('data', value => { log += value; });
 const base = `http://127.0.0.1:${port}`;
 let session;
+let captureFailure = async () => {};
 const request = async (method, path, body) => {
   const response = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(45_000) });
   const json = await response.json();
@@ -65,16 +66,37 @@ try {
   if (publication.readingOrder.length !== 1) throw new Error('Native parser returned the wrong reading order.');
   await click('button[aria-label="Read Kodi native smoke fixture"]');
   await poll(() => execute('return !!document.querySelector(".reader-workspace");'), 'opening imported EPUB');
+  const output = resolve(process.env.KODI_SMOKE_OUTPUT ?? 'native-smoke-results');
+  captureFailure = async () => {
+    mkdirSync(output, { recursive: true });
+    const state = await invoke('library_get');
+    const chrome = await execute('return {text:document.body.innerText,location:document.querySelector(".reading-location small")?.textContent,bounds:document.querySelector(".native-reader-slot")?.getBoundingClientRect().toJSON()};');
+    writeFileSync(join(output, 'failure-state.json'), JSON.stringify({ book: state.books[book.id], chrome }, null, 2));
+    const screenshot = await request('GET', `/session/${session}/screenshot`);
+    writeFileSync(join(output, 'failure-window.png'), Buffer.from(screenshot, 'base64'));
+  };
+  // The first position can arrive before chrome preferences and native resize
+  // have finished repaginating. Observe a stable, navigable layout first.
+  let previousLayout = ''; let stableSince = 0;
   const initial = await poll(async () => {
-    const state = await invoke('library_get'); return state.books[book.id]?.position ? state.books[book.id] : null;
-  }, 'receiving a real position event from the native child reader');
+    const location = await execute('return document.querySelector(".reading-location small")?.textContent || "";');
+    const pages = location.match(/^(\d+) of (\d+)$/);
+    const state = await invoke('library_get'); const current = state.books[book.id];
+    if (!current?.position || !pages || Number(pages[2]) <= Number(pages[1])) { previousLayout = ''; stableSince = 0; return null; }
+    const layout = JSON.stringify([location, current.progress, current.position]);
+    if (layout !== previousLayout) { previousLayout = layout; stableSince = Date.now(); return null; }
+    return Date.now() - stableSince >= 1000 ? current : null;
+  }, 'receiving a stable, navigable position from the native child reader');
   await click('button[aria-label="Next page"]');
-  await poll(async () => { const state = await invoke('library_get'); return state.books[book.id]?.progress > initial.progress; }, 'persisting the next native reader page');
+  const advanced = await poll(async () => { const state = await invoke('library_get'); return state.books[book.id]?.progress > initial.progress ? state.books[book.id] : null; }, 'persisting the next native reader page');
   const screenshot = await request('GET', `/session/${session}/screenshot`);
-  const output = resolve(process.env.KODI_SMOKE_OUTPUT ?? 'native-smoke-results'); mkdirSync(output, { recursive: true });
+  mkdirSync(output, { recursive: true });
   writeFileSync(join(output, 'native-window.png'), Buffer.from(screenshot, 'base64'));
-  writeFileSync(join(output, 'result.json'), JSON.stringify({ platform: process.platform, importedBook: book.id, chapters: publication.readingOrder.length, checked: ['native launch', 'real Rust IPC import', 'EPUB parsing', 'native child position event', 'next-page persisted'], manualAcceptance: false }, null, 2));
+  writeFileSync(join(output, 'result.json'), JSON.stringify({ platform: process.platform, importedBook: book.id, chapters: publication.readingOrder.length, progressBefore: initial.progress, progressAfter: advanced.progress, checked: ['native launch', 'real Rust IPC import', 'EPUB parsing', 'native child position event', 'next-page persisted'], manualAcceptance: false }, null, 2));
   console.log('Native launch, import, child rendering events and persisted pagination smoke passed. Physical-device acceptance remains required.');
+} catch (error) {
+  await captureFailure().catch(diagnostic => console.error('Could not capture native failure diagnostics:', String(diagnostic)));
+  throw error;
 } finally {
   if (session) await request('DELETE', `/session/${session}`).catch(() => {});
   driver.kill();

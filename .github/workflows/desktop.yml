@@ -108,6 +108,7 @@ jobs:
         run: cargo install tauri-driver --locked
       - name: Native X11 app smoke
         if: runner.os == 'Linux'
+        timeout-minutes: 5
         env:
           KODI_SMOKE_OUTPUT: native-smoke-results
         run: dbus-run-session -- xvfb-run -a node scripts/native-smoke.mjs src-tauri/target/release/kodi-reader-desktop native-smoke.epub

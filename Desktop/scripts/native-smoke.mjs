@@ -1,7 +1,7 @@
 // Direct W3C WebDriver smoke of a REAL packaged Tauri binary, no browser mocks.
 // Linux: dbus-run-session -- xvfb-run -a node scripts/native-smoke.mjs <binary> <fixture.epub>
 // Windows: install a matching msedgedriver, then invoke this script directly.
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { createServer } from 'node:net';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -17,15 +17,29 @@ const freePort = () => new Promise((resolvePort, reject) => {
 });
 const port = await freePort(); const nativePort = await freePort();
 const env = { ...process.env, XDG_DATA_HOME: join(directory, 'data'), XDG_CONFIG_HOME: join(directory, 'config'), APPDATA: join(directory, 'data'), LOCALAPPDATA: join(directory, 'local') };
-const driver = spawn(process.env.TAURI_DRIVER_PATH ?? 'tauri-driver', ['--port', String(port), '--native-port', String(nativePort)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+const driver = spawn(process.env.TAURI_DRIVER_PATH ?? 'tauri-driver', ['--port', String(port), '--native-port', String(nativePort)], { env, detached: process.platform !== 'win32', stdio: ['ignore', 'pipe', 'pipe'] });
 let driverFailure;
 driver.on('error', error => { driverFailure = error; });
 let log = ''; driver.stdout.on('data', value => { log += value; }); driver.stderr.on('data', value => { log += value; });
 const base = `http://127.0.0.1:${port}`;
 let session;
 let captureFailure = async () => {};
-const request = async (method, path, body) => {
-  const response = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(45_000) });
+let exitCode = 0;
+const stopDriver = () => {
+  if (driver.pid) {
+    if (process.platform === 'win32') spawnSync('taskkill', ['/PID', String(driver.pid), '/T', '/F'], { stdio: 'ignore', timeout: 5000 });
+    else { try { process.kill(-driver.pid, 'SIGKILL'); } catch {} }
+  }
+  driver.stdout.destroy(); driver.stderr.destroy(); driver.unref();
+};
+const deadline = setTimeout(() => {
+  console.error('Native smoke exceeded its three-minute deadline.');
+  stopDriver();
+  if (process.env.KODI_SMOKE_OUTPUT) { mkdirSync(resolve(process.env.KODI_SMOKE_OUTPUT), { recursive: true }); writeFileSync(join(resolve(process.env.KODI_SMOKE_OUTPUT), 'driver.log'), log); }
+  process.exit(1);
+}, 180_000);
+const request = async (method, path, body, timeout = 45_000) => {
+  const response = await fetch(`${base}${path}`, { method, headers: { 'Content-Type': 'application/json' }, body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(timeout) });
   const json = await response.json();
   if (!response.ok || json.value?.error) throw new Error(`Native WebDriver ${path}: ${json.value?.message ?? response.status}`);
   return json.value;
@@ -95,11 +109,16 @@ try {
   writeFileSync(join(output, 'result.json'), JSON.stringify({ platform: process.platform, importedBook: book.id, chapters: publication.readingOrder.length, progressBefore: initial.progress, progressAfter: advanced.progress, checked: ['native launch', 'real Rust IPC import', 'EPUB parsing', 'native child position event', 'next-page persisted'], manualAcceptance: false }, null, 2));
   console.log('Native launch, import, child rendering events and persisted pagination smoke passed. Physical-device acceptance remains required.');
 } catch (error) {
+  exitCode = 1;
   await captureFailure().catch(diagnostic => console.error('Could not capture native failure diagnostics:', String(diagnostic)));
-  throw error;
+  console.error(error);
 } finally {
-  if (session) await request('DELETE', `/session/${session}`).catch(() => {});
-  driver.kill();
+  if (session) await request('DELETE', `/session/${session}`, undefined, 5000).catch(() => {});
+  stopDriver();
   if (process.env.KODI_SMOKE_OUTPUT) { mkdirSync(resolve(process.env.KODI_SMOKE_OUTPUT), { recursive: true }); writeFileSync(join(resolve(process.env.KODI_SMOKE_OUTPUT), 'driver.log'), log); }
   rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+  clearTimeout(deadline);
 }
+// WebKit helpers can retain inherited pipe handles after a successful session.
+// All assertions and diagnostics are complete; preserve their actual outcome.
+process.exit(exitCode);

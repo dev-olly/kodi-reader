@@ -7,6 +7,7 @@ const script = readFileSync(new URL('../download.js', import.meta.url), 'utf8');
 const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
 const site = 'https://www.kodi-reader.app/';
 const fallback = 'https://github.com/dev-olly/kodi-reader/releases/download/v0.4.12/KodiReader.dmg';
+const pageConfig = JSON.parse(html.match(/<script id="desktop-download-config"[^>]*>([^<]*)<\/script>/)[1]);
 
 // The harness reads the real page's download anchors and card text. It implements
 // only the DOM operations used by the production script; unexpected selectors
@@ -40,6 +41,8 @@ function attributes(markup) {
 function makeDocument(config) {
   const links = [...html.matchAll(/<a\b([^>]*\bdata-download-platform="[^"]+"[^>]*)>([\s\S]*?)<\/a>/g)]
     .map(match => node(attributes(match[1]), match[2].replace(/<[^>]*>/g, '')));
+  const previewLinks = [...html.matchAll(/<a\b([^>]*\bdata-preview-link="[^"]+"[^>]*)>([\s\S]*?)<\/a>/g)]
+    .map(match => node(attributes(match[1]), match[2].replace(/<[^>]*>/g, '')));
   const cards = new Map();
   const summaries = new Map();
   for (const platform of ['macos', 'windows', 'linux']) {
@@ -55,7 +58,7 @@ function makeDocument(config) {
   }
   const packageNote = node();
   const availability = node();
-  const configured = config ?? JSON.parse(html.match(/<script id="desktop-download-config"[^>]*>([^<]*)<\/script>/)[1]);
+  const configured = config ?? pageConfig;
   const document = {
     getElementById(id) {
       assert.equal(id, 'desktop-download-config');
@@ -65,6 +68,8 @@ function makeDocument(config) {
       if (selector === '[data-download-platform="macos"], [data-download]') {
         return links.filter(link => link.getAttribute('data-download-platform') === 'macos' || link.getAttribute('data-download') !== null);
       }
+      const preview = selector.match(/^\[data-preview-link="([^"]+)"\]$/);
+      if (preview) return previewLinks.filter(link => link.getAttribute('data-preview-link') === preview[1]);
       const match = selector.match(/^\[data-download-platform="([^"]+)"\]\[data-download-package="([^"]+)"\]$/);
       assert.ok(match, 'Recognized download selector: ' + selector);
       return links.filter(link => link.getAttribute('data-download-platform') === match[1] && link.getAttribute('data-download-package') === match[2]);
@@ -80,13 +85,14 @@ function makeDocument(config) {
     },
   };
   return {
-    document, links, cards, summaries, packageNote, availability,
+    document, links, previewLinks, cards, summaries, packageNote, availability,
     link(platform, kind) { return links.find(item => item.getAttribute('data-download-platform') === platform && (!kind || item.getAttribute('data-download-package') === kind)); },
+    previewLink(kind) { return previewLinks.find(item => item.getAttribute('data-preview-link') === kind); },
     text(platform, attribute) { return cards.get(platform).querySelector('[' + attribute + ']').textContent; },
   };
 }
 
-async function runDownloads({ releases = [], manifest = null, config, failReleases = false, failManifest = false } = {}) {
+async function runDownloads({ releases = [], manifest = null, config = { manifestUrl: '/api/desktop-update', channel: 'stable' }, failReleases = false, failManifest = false } = {}) {
   const dom = makeDocument(config);
   const requests = [];
   const fetch = async raw => {
@@ -97,7 +103,7 @@ async function runDownloads({ releases = [], manifest = null, config, failReleas
       return Response.json(releases);
     }
     assert.equal(url.origin, new URL(site).origin, 'Manifest requests remain on this website');
-    assert.equal(url.pathname, '/api/desktop-update');
+    assert.ok(['/api/desktop-update', '/api/desktop-preview'].includes(url.pathname));
     if (failManifest) throw new Error('Update receiver unavailable');
     return manifest ? Response.json(manifest) : new Response(null, { status: 204 });
   };
@@ -130,6 +136,41 @@ function desktopFixture({ version = '0.1.0', prerelease = false, draft = false }
   return { release, manifest, windows, linux, deb, rpm };
 }
 
+function previewFixture() {
+  const version = '0.1.0';
+  const tag = 'desktop-v0.1.0-preview.1';
+  let sequence = 0;
+  const uploaded = (name, hash, bytes = 1000) => ({ ...asset(tag, name), digest: 'sha256:' + hash, size: bytes, state: 'uploaded' });
+  const platforms = [
+    { target: 'x86_64-pc-windows-msvc', suffix: 'windows-x64', definitions: [['exe', 'windows-x64-setup.exe']] },
+    { target: 'x86_64-unknown-linux-gnu', suffix: 'linux-x86_64', definitions: [['AppImage', 'linux-x86_64.AppImage'], ['deb', 'linux-amd64.deb'], ['rpm', 'linux-x86_64.rpm']] },
+  ];
+  const packages = [];
+  const sources = [];
+  const manifest = {
+    version, channel: 'preview', signed: false, manualAcceptance: false, updaterEnabled: false,
+    sourceCommit: '64410e7c5357ca18c9f0120abe8d37b9bd9de1db',
+    platforms: platforms.map(platform => {
+      const records = platform.definitions.map(([format, suffix]) => {
+        const name = 'KodiReader-Preview-' + version + '-' + suffix;
+        const sha256 = (++sequence).toString().repeat(64);
+        const record = { name, originalName: name, format, bytes: 1000 + sequence, sha256 };
+        packages.push(uploaded(name, sha256, record.bytes));
+        return record;
+      });
+      const support = { name: 'KodiReader-Preview-' + version + '-' + platform.suffix + '-codec-source-and-notices.zip', sha256: 'a'.repeat(64) };
+      sources.push(uploaded(support.name, support.sha256));
+      return { target: platform.target, packages: records, support, nativeSmokeEvidence: platform.target.includes('linux') };
+    }),
+  };
+  const release = {
+    tag_name: tag, prerelease: true, draft: false,
+    assets: [...packages, ...sources, uploaded('release-manifest.json', 'b'.repeat(64)), uploaded('SHA256SUMS', 'c'.repeat(64))],
+  };
+  const config = { manifestUrl: '/api/desktop-preview', channel: 'preview', releaseTag: tag };
+  return { release, manifest, config, packages, sources };
+}
+
 function assertPending(dom) {
   const desktopLinks = dom.links.filter(link => link.getAttribute('data-download-platform') !== 'macos');
   assert.equal(desktopLinks.length, 4);
@@ -143,12 +184,20 @@ function assertPending(dom) {
   }
 }
 
+function assertPreviewPackagesPending(dom) {
+  for (const link of dom.previewLinks) {
+    assert.equal(link.getAttribute('href'), link.getAttribute('data-preview-link') === 'notes'
+      ? 'https://github.com/dev-olly/kodi-reader/releases/tag/desktop-v0.1.0-preview.1' : null);
+  }
+}
+
 test('metadata network failures retain the immutable Mac installer and pending desktop links', async () => {
   for (const failure of [{ failReleases: true, failManifest: true }, { failManifest: true }, { manifest: null }]) {
     const dom = await runDownloads(failure);
     assert.equal(dom.link('macos').href, fallback);
     assert.equal(dom.text('macos', 'data-platform-version'), 'v0.4.12');
     assertPending(dom);
+    assertPreviewPackagesPending(dom);
   }
 });
 
@@ -290,4 +339,93 @@ test('external manifest configuration is ignored in favor of the same-origin sta
   assert.ok(dom.requests.includes(site + 'api/desktop-update'));
   assert.equal(dom.link('macos').href, fallback);
   assertPending(dom);
+});
+
+test('the public page explicitly selects the unsigned preview channel and exact tag', () => {
+  assert.deepEqual(pageConfig, { manifestUrl: '/api/desktop-preview', channel: 'preview', releaseTag: 'desktop-v0.1.0-preview.1' });
+  assert.match(html, /no automatic updates/);
+  assert.match(html, /Windows 11, Wayland\/Fedora/);
+  assert.match(html, /new desktop PDF text highlights and geometry-based reminders stay local/);
+});
+
+test('matching uploaded preview digests and sizes enable all four packages without signatures', async () => {
+  const fixture = previewFixture();
+  const dom = await runDownloads({ releases: [fixture.release], manifest: fixture.manifest, config: pageConfig });
+  for (const [index, platform, kind] of [[0, 'windows', 'nsis'], [1, 'linux', 'appimage'], [2, 'linux', 'deb'], [3, 'linux', 'rpm']]) {
+    assert.equal(dom.link(platform, kind).href, fixture.packages[index].browser_download_url);
+    assert.equal(dom.link(platform, kind).getAttribute('aria-disabled'), null);
+  }
+  for (const platform of ['windows', 'linux']) {
+    assert.equal(dom.text(platform, 'data-platform-status'), 'Unsigned preview');
+    assert.equal(dom.text(platform, 'data-platform-version'), 'v0.1.0-preview.1');
+    assert.equal(dom.summaries.get(platform).textContent, 'Unsigned preview');
+  }
+  assert.match(dom.link('windows', 'nsis').getAttribute('aria-label'), /unsigned, no automatic updates/);
+  assert.match(dom.text('windows', 'data-platform-note'), /Windows 11 acceptance is pending/);
+  assert.equal(dom.previewLink('notes').href, 'https://github.com/dev-olly/kodi-reader/releases/tag/desktop-v0.1.0-preview.1');
+  assert.equal(dom.previewLink('checksums').href, fixture.release.assets.find(item => item.name === 'SHA256SUMS').browser_download_url);
+  assert.equal(dom.previewLink('windows-sources').href, fixture.sources[0].browser_download_url);
+  assert.equal(dom.previewLink('linux-sources').href, fixture.sources[1].browser_download_url);
+  assert.equal(dom.link('macos').href, fallback);
+});
+
+test('unsigned previews never enable downloads on the default stable or signed beta channels', async () => {
+  const fixture = previewFixture();
+  for (const config of [{}, { channel: 'stable' }, { channel: 'beta', releaseTag: 'desktop-v0.1.0-beta.1', manifest: fixture.manifest }]) {
+    const dom = await runDownloads({ releases: [fixture.release], manifest: fixture.manifest, config });
+    assertPending(dom);
+    assert.equal(dom.link('macos').href, fallback);
+    assertPreviewPackagesPending(dom);
+  }
+});
+
+test('any preview digest or byte-count mismatch leaves the complete release disabled', async () => {
+  for (const index of [0, 1, 2, 3]) {
+    for (const field of ['digest', 'size']) {
+      const fixture = previewFixture();
+      fixture.packages[index][field] = field === 'digest' ? 'sha256:' + 'f'.repeat(64) : fixture.packages[index].size + 1;
+      const dom = await runDownloads({ releases: [fixture.release], manifest: fixture.manifest, config: fixture.config });
+      assertPending(dom);
+      assertPreviewPackagesPending(dom);
+    }
+  }
+});
+
+test('preview downloads require a published prerelease, all packages, and explicit no-updater flags', async () => {
+  const mutations = [
+    fixture => { fixture.release.draft = true; },
+    fixture => { fixture.release.prerelease = false; },
+    fixture => { fixture.config.releaseTag = 'desktop-v0.1.0-preview.2'; },
+    fixture => { fixture.manifest.signed = true; },
+    fixture => { fixture.manifest.manualAcceptance = true; },
+    fixture => { fixture.manifest.updaterEnabled = true; },
+    fixture => { fixture.manifest.version = '0.2.0'; },
+    fixture => { fixture.manifest.platforms[1].packages.pop(); },
+    fixture => { fixture.manifest.platforms.push(fixture.manifest.platforms[0]); },
+    fixture => { fixture.release.assets = fixture.release.assets.filter(item => item.name !== 'SHA256SUMS'); },
+    fixture => { fixture.sources[0].digest = 'sha256:' + 'f'.repeat(64); },
+    fixture => { fixture.packages[0].state = 'starter'; },
+    fixture => { fixture.packages[0].browser_download_url = fixture.packages[0].browser_download_url.replace('github.com', 'evil.example'); },
+    fixture => { fixture.packages[0].browser_download_url = fixture.packages[0].browser_download_url.replace('/desktop-v0.1.0-preview.1/', '/desktop-v0.1.0-preview.2/'); },
+    fixture => { fixture.release.assets.push({ ...fixture.packages[0] }); },
+  ];
+  for (const mutate of mutations) {
+    const fixture = previewFixture();
+    mutate(fixture);
+    const dom = await runDownloads({ releases: [fixture.release], manifest: fixture.manifest, config: fixture.config });
+    assertPending(dom);
+    assert.equal(dom.link('macos').href, fallback);
+  }
+});
+
+test('preview publication stays isolated from the signed Mac release', async () => {
+  const fixture = previewFixture();
+  fixture.release.assets.push(asset(fixture.release.tag_name, 'KodiReader.dmg'));
+  const dmg = asset('v0.4.13', 'KodiReader.dmg');
+  const dom = await runDownloads({
+    releases: [fixture.release, { tag_name: 'v0.4.13', assets: [dmg] }], manifest: fixture.manifest, config: fixture.config,
+  });
+  assert.equal(dom.link('macos').href, dmg.browser_download_url);
+  assert.equal(dom.text('macos', 'data-platform-version'), 'v0.4.13');
+  assert.equal(dom.link('windows', 'nsis').href, fixture.packages[0].browser_download_url);
 });

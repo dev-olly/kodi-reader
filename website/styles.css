@@ -145,6 +145,18 @@ h2 { font-size: 48px; font-weight: 500; line-height: 1.13; margin-top: 20px; }
 .release-status { font-size: 9px; font-weight: 600; color: #355f30; background: #dae9cf; border: 1px solid #cedfc3; border-radius: 20px; padding: 6px 10px; white-space: nowrap; }
 .release-status-testing { background: #f3eee0; border-color: #e5dcc5; color: #736441; }
 .release-status-beta { background: #e9eef5; border-color: #d5dfea; color: #48617e; }
+.release-status-preview { background: #f6eacb; border-color: #e4d2a6; color: #79602d; }
+.preview-notice { display: grid; grid-template-columns: minmax(0, 1fr) 200px; gap: 30px; margin-top: 32px; padding: 25px 27px; background: #faf7ed; border: 1px solid #e6dcc0; border-radius: 10px; }
+.preview-notice h3 { margin-top: 14px; font-size: 19px; font-weight: 550; letter-spacing: -.3px; }
+.preview-notice p { margin-top: 10px; max-width: 780px; color: #756c54; font-size: 11px; line-height: 1.85; }
+.preview-notice p + p { font-size: 10px; }
+.preview-notice strong { color: #69582f; font-weight: 600; }
+.preview-resources { display: flex; flex-direction: column; justify-content: center; align-items: flex-start; gap: 12px; font-size: 11px; color: #6b5c39; }
+.preview-resources a { border-bottom: 1px solid #d1c29c; padding-block: 3px; line-height: 1.6; }
+.preview-resources a span, .preview-source span { margin-left: 7px; }
+.preview-resources > span { font-size: 9px; line-height: 1.8; color: #887c60; }
+.preview-source { display: block; width: fit-content; margin-top: 15px; font-size: 10px; color: #6f785f; border-bottom: 1px solid #c7cfbd; line-height: 1.7; }
+[data-preview-link][aria-disabled=true] { color: #92917f; border-color: #dedfce; cursor: default; pointer-events: none; }
 .platform-card h3 { margin-top: 25px; font-size: 30px; font-weight: 500; letter-spacing: -.7px; }
 .platform-description { color: var(--muted); font-size: 13px; line-height: 1.7; margin-top: 11px; }
 .platform-requirements { list-style: none; margin: 26px 0 27px; padding: 20px 0 0; border-top: 1px solid #d9e1d5; color: #5c6c57; font-size: 11px; line-height: 1.9; }
@@ -422,6 +434,9 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
   .platform-requirements { margin-block: 21px; }
   .platform-card .platform-release-note { max-width: 400px; }
   .platform-footnotes { flex-direction: column; gap: 17px; }
+  .preview-notice { grid-template-columns: 1fr; gap: 19px; }
+  .preview-resources { flex-direction: row; flex-wrap: wrap; gap: 9px 20px; }
+  .preview-resources > span { width: 100%; }
 }
 @media (max-width: 600px) {
   .hero { padding-top: 36px; }
@@ -446,6 +461,8 @@ footer { border-top: 1px solid var(--line); padding-block: 30px 24px; }
   .download-heading > p > span { max-width: 310px; font-size: 10px; }
   .download-grid { margin-top: 29px; }
   .platform-card { padding: 26px; }
+  .preview-notice { padding: 23px; margin-top: 25px; }
+  .preview-notice h3 { font-size: 18px; line-height: 1.4; }
   .platform-card h3 { font-size: 29px; }
   .platform-card .button { font-size: 12px; }
   .platform-card .button[aria-disabled=true] { font-size: 11px; }

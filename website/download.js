@@ -31,10 +31,12 @@
       // A release manifest is supplied by this website, never an arbitrary host.
       if (manifestUrl.origin !== window.location.origin || !/^https?:$/.test(manifestUrl.protocol)) return defaults;
       const beta = value.channel === "beta" && /^desktop-v\d+\.\d+\.\d+-(?:alpha|beta|rc)[A-Za-z0-9.-]*$/.test(value.releaseTag || "");
+      const preview = value.channel === "preview" && /^desktop-v\d+\.\d+\.\d+-preview\.[1-9]\d*$/.test(value.releaseTag || "") &&
+        manifestUrl.pathname === "/api/desktop-preview" && !manifestUrl.search && !manifestUrl.hash;
       return {
         manifestUrl: manifestUrl.href,
-        channel: beta ? "beta" : "stable",
-        releaseTag: beta ? value.releaseTag : undefined,
+        channel: preview ? "preview" : beta ? "beta" : "stable",
+        releaseTag: beta || preview ? value.releaseTag : undefined,
         // An explicitly selected beta may use metadata embedded by the release
         // publisher. It must still match published GitHub artifacts below.
         manifest: beta && value.manifest && typeof value.manifest === "object" ? value.manifest : undefined,
@@ -83,6 +85,10 @@
   }
 
   function updateDesktop(releases, manifest) {
+    if (config.channel === "preview") {
+      updatePreview(releases, manifest);
+      return;
+    }
     if (!manifest || typeof manifest.version !== "string" || !manifest.platforms || typeof manifest.platforms !== "object") return;
     const tag = "desktop-v" + manifest.version;
     const beta = config.channel === "beta";
@@ -132,6 +138,93 @@
     }
   }
 
+  function updatePreview(releases, manifest) {
+    if (!manifest || manifest.channel !== "preview" || manifest.signed !== false || manifest.manualAcceptance !== false ||
+        manifest.updaterEnabled !== false || !/^\d+\.\d+\.\d+$/.test(manifest.version || "") ||
+        !/^[a-f0-9]{40}$/.test(manifest.sourceCommit || "") || !Array.isArray(manifest.platforms) || manifest.platforms.length !== 2) return;
+    const tag = config.releaseTag;
+    if (!tag.startsWith("desktop-v" + manifest.version + "-preview.")) return;
+    const release = releases.find(item => item && item.tag_name === tag && !item.draft && item.prerelease === true);
+    if (!release) return;
+    const assets = assetsFor(release);
+    const metadata = assets.find(item => uploaded(item) && safeAsset(item, tag, /^release-manifest\.json$/));
+    const checksums = assets.find(item => uploaded(item) && safeAsset(item, tag, /^SHA256SUMS$/));
+    if (!metadata || !checksums) return;
+
+    const targets = [
+      { target: "x86_64-pc-windows-msvc", platform: "windows", suffix: "windows-x64", formats: [["exe", "nsis", "windows-x64-setup.exe"]] },
+      { target: "x86_64-unknown-linux-gnu", platform: "linux", suffix: "linux-x86_64", formats: [["AppImage", "appimage", "linux-x86_64.AppImage"], ["deb", "deb", "linux-amd64.deb"], ["rpm", "rpm", "linux-x86_64.rpm"]] },
+    ];
+    const packages = [];
+    const sources = [];
+    for (const target of targets) {
+      const matches = manifest.platforms.filter(item => item && item.target === target.target);
+      if (matches.length !== 1) return;
+      const entry = matches[0];
+      if (!Array.isArray(entry.packages) || entry.packages.length !== target.formats.length) return;
+      for (const [format, kind, suffix] of target.formats) {
+        const name = "KodiReader-Preview-" + manifest.version + "-" + suffix;
+        const records = entry.packages.filter(item => item && item.format === format && item.name === name);
+        if (records.length !== 1) return;
+        const record = records[0];
+        const artifact = matchingAsset(record);
+        if (!Number.isSafeInteger(record.bytes) || record.bytes <= 0 || !artifact || artifact.size !== record.bytes) return;
+        packages.push({ platform: target.platform, kind, asset: artifact });
+      }
+      const support = entry.support;
+      if (!support || support.name !== "KodiReader-Preview-" + manifest.version + "-" + target.suffix + "-codec-source-and-notices.zip") return;
+      const source = matchingAsset(support);
+      if (!source) return;
+      sources.push({ platform: target.platform, asset: source });
+    }
+
+    // This is an explicitly selected unsigned preview, never an updater feed.
+    // Validate the complete four-package release before enabling any installer.
+    for (const item of packages) {
+      const label = item.kind === "nsis" ? "Download Windows preview" : item.kind === "appimage" ? "Download AppImage preview" : undefined;
+      enablePackage(item.platform, item.kind, item.asset.browser_download_url, label);
+    }
+    for (const item of sources) enablePreviewLink(item.platform + "-sources", item.asset.browser_download_url);
+    enablePreviewLink("checksums", checksums.browser_download_url);
+    enablePreviewLink("notes", "https://github.com/dev-olly/kodi-reader/releases/tag/" + encodeURIComponent(tag));
+    for (const platform of ["windows", "linux"]) {
+      setCardText(platform, "[data-platform-status]", "Unsigned preview");
+      setCardText(platform, "[data-platform-version]", tag.replace("desktop-", ""));
+      const card = document.querySelector('[data-platform-card="' + platform + '"]');
+      const status = card && card.querySelector("[data-platform-status]");
+      if (status) {
+        status.classList.remove("release-status-testing");
+        status.classList.toggle("release-status-preview", true);
+      }
+      const summary = document.querySelector('[data-platform-summary="' + platform + '"]');
+      if (summary) summary.textContent = "Unsigned preview";
+    }
+    setCardText("windows", "[data-platform-note]", "Unsigned test installer. Windows 11 acceptance is pending. Automatic updates are disabled.");
+    const packageNote = document.querySelector(".linux-packages > span");
+    if (packageNote) packageNote.textContent = "Unsigned previews · automatic updates disabled";
+    const availability = document.querySelector(".download-heading > p > span");
+    if (availability) availability.textContent = "Signed Mac release. Unsigned Windows and Linux previews for testing.";
+
+    function uploaded(item) {
+      return item && item.state === "uploaded" && Number.isSafeInteger(item.size) && item.size > 0 && /^sha256:[a-f0-9]{64}$/.test(item.digest || "");
+    }
+    function matchingAsset(record) {
+      if (!/^[a-f0-9]{64}$/.test(record.sha256 || "")) return null;
+      const matches = assets.filter(item => item && item.name === record.name);
+      const artifact = matches.length === 1 ? matches[0] : null;
+      return uploaded(artifact) && artifact.digest === "sha256:" + record.sha256 && safeAsset(artifact, tag, /./) ? artifact : null;
+    }
+  }
+
+  function enablePreviewLink(kind, url) {
+    document.querySelectorAll('[data-preview-link="' + kind + '"]').forEach(link => {
+      link.href = url;
+      link.removeAttribute("aria-disabled");
+      link.removeAttribute("tabindex");
+      link.removeAttribute("role");
+    });
+  }
+
   function setCardText(platform, selector, value) {
     const card = document.querySelector('[data-platform-card="' + platform + '"]');
     const element = card && card.querySelector(selector);
@@ -147,7 +240,7 @@
       link.classList.remove("button-pending");
       if (label) {
         link.textContent = label + " ↓";
-        link.setAttribute("aria-label", label + (config.channel === "beta" ? " public beta" : ""));
+        link.setAttribute("aria-label", label + (config.channel === "preview" ? ", unsigned, no automatic updates" : config.channel === "beta" ? " public beta" : ""));
       }
     });
   }
